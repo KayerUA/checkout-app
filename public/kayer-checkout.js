@@ -8,9 +8,74 @@
     {
       checkoutApiUrl: "https://checkout.kayer.ua",
       shopDomain: "kayer.myshopify.com",
+      fallbackUrl: "/checkout",
+      audienceMode: "all",
+      customerTags: [],
+      customerEmail: "",
+      allowedCustomerTags: [],
+      allowedCustomerEmails: [],
+      queryParam: "custom_checkout",
+      showB2BBlock: true,
     },
     window.KAYER_CHECKOUT_CONFIG || {}
   );
+
+  function asList(value) {
+    if (Array.isArray(value)) return value;
+    if (typeof value === "string" && value) {
+      return value.split(",").map(function (item) {
+        return item.trim();
+      });
+    }
+    return [];
+  }
+
+  function normalize(value) {
+    return String(value || "").trim().toLowerCase();
+  }
+
+  function hasIntersection(left, right) {
+    var normalizedRight = asList(right).map(normalize);
+    return asList(left).some(function (item) {
+      return normalizedRight.indexOf(normalize(item)) >= 0;
+    });
+  }
+
+  function isAudienceEligible() {
+    var params = new URLSearchParams(window.location.search);
+    if (params.get(config.queryParam) === "1") return true;
+    if (params.get("force_checkout") === "custom") return true;
+    if (params.get("force_checkout") === "shopify") return false;
+
+    if (config.audienceMode === "disabled") return false;
+    if (config.audienceMode === "all") return true;
+    if (config.audienceMode === "query_param") return false;
+
+    var tagMatch = hasIntersection(config.customerTags, config.allowedCustomerTags);
+    var emailMatch =
+      asList(config.allowedCustomerEmails).map(normalize).indexOf(normalize(config.customerEmail)) >= 0;
+
+    if (config.audienceMode === "customer_tags") return tagMatch;
+    if (config.audienceMode === "customer_emails") return emailMatch;
+    if (config.audienceMode === "customer_tags_or_emails") return tagMatch || emailMatch;
+
+    return true;
+  }
+
+  function findCheckoutElement(el) {
+    if (!el || !el.closest) return null;
+    return el.closest(
+      [
+        "[data-kayer-checkout]",
+        'button[name="checkout"]',
+        'input[name="checkout"]',
+        'a[href="/checkout"]',
+        'a[href$="/checkout"]',
+        ".checkout-button",
+        ".cart__checkout",
+      ].join(", ")
+    );
+  }
 
   async function redirectToCheckout() {
     const cartRes = await fetch("/cart.js", { credentials: "same-origin" });
@@ -98,6 +163,7 @@
   }
 
   function injectB2BBlock() {
+    if (!config.showB2BBlock || !isAudienceEligible()) return;
     if (document.querySelector("[data-kayer-b2b]")) return;
     var target =
       document.querySelector("form[action='/cart']") ||
@@ -144,20 +210,53 @@
 
   function bindButtons() {
     injectB2BBlock();
-    document.querySelectorAll("[data-kayer-checkout]").forEach(function (btn) {
+    if (!isAudienceEligible()) return;
+
+    document
+      .querySelectorAll(
+        [
+          "[data-kayer-checkout]",
+          'button[name="checkout"]',
+          'input[name="checkout"]',
+          'a[href="/checkout"]',
+          'a[href$="/checkout"]',
+          ".checkout-button",
+          ".cart__checkout",
+        ].join(", ")
+      )
+      .forEach(function (btn) {
       if (btn.dataset.kayerBound) return;
       btn.dataset.kayerBound = "true";
       btn.addEventListener("click", function (e) {
         e.preventDefault();
-        btn.disabled = true;
+        if (btn.disabled !== undefined) btn.disabled = true;
         redirectToCheckout().catch(function (err) {
           console.error("[KayerCheckout]", err);
-          btn.disabled = false;
-          alert("Не вдалося перейти до оформлення. Спробуйте ще раз.");
+          if (btn.disabled !== undefined) btn.disabled = false;
+          window.location.href = config.fallbackUrl;
         });
       });
     });
   }
+
+  document.addEventListener(
+    "click",
+    function (event) {
+      if (!isAudienceEligible()) return;
+      var target = findCheckoutElement(event.target);
+      if (!target || target.dataset.kayerBound) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      if (target.disabled !== undefined) target.disabled = true;
+      redirectToCheckout().catch(function (err) {
+        console.error("[KayerCheckout]", err);
+        if (target.disabled !== undefined) target.disabled = false;
+        window.location.href = config.fallbackUrl;
+      });
+    },
+    true
+  );
 
   window.KayerCheckout = { redirectToCheckout: redirectToCheckout, config: config };
 
