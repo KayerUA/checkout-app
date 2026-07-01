@@ -1,0 +1,10 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "npm run worker"
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 10
+
+# Railway: create separate services for Postgres, Redis, and this worker.
+# Set the same env vars as Vercel (DATABASE_URL, REDIS_URL, APP_URL, etc.).

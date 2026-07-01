@@ -1,0 +1,419 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum MerchantStatus {
+  ACTIVE
+  SUSPENDED
+  UNINSTALLED
+}
+
+enum CheckoutStatus {
+  DRAFT
+  READY
+  PAYMENT_PENDING
+  PAID
+  COMPLETED
+  ABANDONED
+}
+
+enum PaymentProvider {
+  MONOBANK
+  LIQPAY
+  WAYFORPAY
+  COD
+  BANK_INVOICE
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+enum FiscalStatus {
+  PENDING
+  PROCESSING
+  DONE
+  FAILED
+}
+
+model Merchant {
+  id               String         @id @default(cuid())
+  shopDomain       String         @unique
+  shopifyShopId    String?        @unique
+  name             String?
+  status           MerchantStatus @default(ACTIVE)
+  checkoutBaseUrl  String?
+  defaultCurrency  String         @default("UAH")
+  defaultLocale    String         @default("uk")
+  plan             String         @default("launch")
+  paidOrdersCount  Int            @default(0)
+  themeConfig      Json?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  shopifySession   ShopifySession?
+  paymentConfigs   PaymentProviderConfig[]
+  shippingConfigs  ShippingProviderConfig[]
+  fiscalConfig     FiscalConfig?
+  analyticsConfig  AnalyticsConfig?
+  checkoutSessions CheckoutSession[]
+  webhooks         WebhookDelivery[]
+  auditLogs        AuditLog[]
+}
+
+model ShopifySession {
+  id                   String   @id @default(cuid())
+  merchantId           String   @unique
+  accessTokenEncrypted String
+  scopes               String
+  installedAt          DateTime @default(now())
+  merchant             Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+}
+
+model PaymentProviderConfig {
+  id         String          @id @default(cuid())
+  merchantId String
+  provider   PaymentProvider
+  isEnabled  Boolean         @default(false)
+  isSandbox  Boolean         @default(true)
+  config     Json
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+  merchant   Merchant        @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@unique([merchantId, provider])
+}
+
+model ShippingProviderConfig {
+  id         String   @id @default(cuid())
+  merchantId String
+  provider   String
+  isEnabled  Boolean  @default(false)
+  config     Json
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  merchant   Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@unique([merchantId, provider])
+}
+
+model FiscalConfig {
+  id            String   @id @default(cuid())
+  merchantId    String   @unique
+  isEnabled     Boolean  @default(false)
+  licenseKey    String?
+  cashRegister  String?
+  cashierPin    String?
+  fiscalPolicy  Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  merchant      Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+}
+
+model AnalyticsConfig {
+  id              String   @id @default(cuid())
+  merchantId      String   @unique
+  ga4MeasurementId String?
+  metaPixelId     String?
+  metaAccessToken String?
+  gtmContainerId  String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  merchant        Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+}
+
+model CheckoutSession {
+  id                 String         @id @default(cuid())
+  merchantId         String
+  publicToken        String         @unique
+  status             CheckoutStatus @default(DRAFT)
+  currency           String         @default("UAH")
+  subtotal           Int            @default(0)
+  shippingAmount     Int            @default(0)
+  discountAmount     Int            @default(0)
+  totalAmount        Int            @default(0)
+  buyerEmail         String?
+  buyerPhone         String?
+  buyerFirstName     String?
+  buyerLastName      String?
+  shippingMethodCode String?
+  shippingProvider   String?
+  shippingPayload    Json?
+  billingPayload     Json?
+  paymentProvider    PaymentProvider?
+  customAttributes   Json?
+  sourceIdentifier   String?        @unique
+  abandonedAt        DateTime?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  merchant        Merchant         @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  lines           CheckoutLine[]
+  paymentAttempts PaymentAttempt[]
+  orderLink       OrderLink?
+
+  @@index([merchantId, status])
+  @@index([status, updatedAt])
+}
+
+model CheckoutLine {
+  id                String          @id @default(cuid())
+  checkoutSessionId String
+  variantGid        String
+  productGid        String?
+  sku               String?
+  title             String
+  quantity          Int
+  unitPrice         Int
+  compareAtPrice    Int?
+  lineDiscountAmount Int            @default(0)
+  metadata          Json?
+  checkoutSession   CheckoutSession @relation(fields: [checkoutSessionId], references: [id], onDelete: Cascade)
+}
+
+model PaymentAttempt {
+  id                 String          @id @default(cuid())
+  checkoutSessionId  String
+  provider           PaymentProvider
+  status             PaymentStatus   @default(PENDING)
+  providerReference  String?
+  amount             Int
+  requestPayload     Json?
+  callbackPayload    Json?
+  verifiedAt         DateTime?
+  modifiedAtProvider DateTime?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+  checkoutSession    CheckoutSession @relation(fields: [checkoutSessionId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerReference])
+}
+
+model OrderLink {
+  id                String          @id @default(cuid())
+  checkoutSessionId String          @unique
+  shopifyOrderGid   String?         @unique
+  shopifyOrderName  String?
+  sourceIdentifier  String?         @unique
+  orderStatus       String?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  checkoutSession   CheckoutSession @relation(fields: [checkoutSessionId], references: [id], onDelete: Cascade)
+  fiscalReceipt     FiscalReceipt?
+}
+
+model FiscalReceipt {
+  id           String       @id @default(cuid())
+  orderLinkId  String       @unique
+  provider     String       @default("checkbox")
+  status       FiscalStatus @default(PENDING)
+  relationId   String?
+  receiptId    String?
+  fiscalNumber String?
+  receiptUrl   String?
+  payload      Json?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  orderLink    OrderLink    @relation(fields: [orderLinkId], references: [id], onDelete: Cascade)
+}
+
+model WebhookDelivery {
+  id          String    @id @default(cuid())
+  merchantId  String?
+  source      String
+  deliveryId  String
+  eventId     String?
+  verified    Boolean   @default(false)
+  payload     Json
+  processedAt DateTime?
+  createdAt   DateTime  @default(now())
+  merchant    Merchant? @relation(fields: [merchantId], references: [id], onDelete: SetNull)
+
+  @@unique([source, deliveryId])
+}
+
+model IdempotencyKey {
+  id               String    @id @default(cuid())
+  scope            String
+  key              String
+  requestHash      String?
+  responseSnapshot Json?
+  createdAt        DateTime  @default(now())
+  expiresAt        DateTime?
+
+  @@unique([scope, key])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  merchantId String
+  action     String
+  entityType String?
+  entityId   String?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+  merchant   Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId, createdAt])
+}
+
+model NovaPoshtaCity {
+  id        String   @id @default(cuid())
+  ref       String   @unique
+  name      String
+  nameRu    String?
+  area      String?
+  updatedAt DateTime @updatedAt
+
+  @@index([name])
+}
+
+model NovaPoshtaBranch {
+  id           String   @id @default(cuid())
+  ref          String   @unique
+  cityRef      String
+  number       String
+  shortAddress String
+  type         String   @default("branch")
+  cityName     String?
+  weightLimit  Float?
+  codAllowed   Boolean  @default(true)
+  updatedAt    DateTime @updatedAt
+
+  @@index([cityRef])
+  @@index([number])
+  @@index([shortAddress])
+}
+
+model CheckoutAbAssignment {
+  id              String   @id @default(uuid()) @db.Uuid
+  experimentId    String
+  visitorId       String
+  variant         String
+  firstAssignedAt DateTime @default(now())
+
+  @@unique([experimentId, visitorId])
+  @@index([experimentId, variant])
+  @@map("checkout_ab_assignments")
+}
+
+model CheckoutAbEvent {
+  id                String   @id @default(uuid()) @db.Uuid
+  experimentId      String
+  visitorId         String
+  variant           String
+  eventName         String
+  cartToken         String?
+  checkoutSessionId String?
+  shopifyOrderId    String?
+  emailHash         String?
+  phoneHash         String?
+  revenue           Decimal? @db.Decimal(12, 2)
+  currency          String   @default("UAH")
+  payload           Json?
+  createdAt         DateTime @default(now())
+
+  @@index([experimentId, eventName, createdAt])
+  @@index([visitorId, experimentId])
+  @@map("checkout_ab_events")
+}
+
+model B2BOrder {
+  id                String   @id @default(uuid()) @db.Uuid
+  shopifyOrderId    String   @unique @map("shopify_order_id")
+  shopifyOrderName  String?  @map("shopify_order_name")
+  shopDomain        String?  @map("shop_domain")
+  buyerType         String?  @map("buyer_type")
+  paymentPreference String?  @map("payment_preference")
+  fopName           String?  @map("fop_name")
+  fopTaxId          String?  @map("fop_tax_id")
+  fopLegalAddress   String?  @map("fop_legal_address")
+  docsEmail         String?  @map("docs_email")
+  docsPhone         String?  @map("docs_phone")
+  accountingComment String?  @map("accounting_comment")
+  orderTotalAmount  Decimal? @map("order_total_amount") @db.Decimal(12, 2)
+  orderCurrency     String?  @map("order_currency")
+  status            String   @default("CREATED")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@index([status, updatedAt])
+  @@map("b2b_orders")
+}
+
+model B2BDocument {
+  id             String   @id @default(uuid()) @db.Uuid
+  shopifyOrderId String   @map("shopify_order_id")
+  type           String
+  number         String?
+  status         String
+  pdfUrl         String?  @map("pdf_url")
+  externalId     String?  @map("external_id")
+  metadata       Json?
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@unique([shopifyOrderId, type, number])
+  @@index([shopifyOrderId, type])
+  @@map("b2b_documents")
+}
+
+model BankPayment {
+  id                    String   @id @default(uuid()) @db.Uuid
+  provider              String
+  bankAccountIban       String?  @map("bank_account_iban")
+  transactionId         String   @unique @map("transaction_id")
+  transactionDate       DateTime @map("transaction_date")
+  payerName             String?  @map("payer_name")
+  payerTaxId            String?  @map("payer_tax_id")
+  amount                Decimal  @db.Decimal(12, 2)
+  currency              String
+  paymentDescription    String?  @map("payment_description")
+  matchedShopifyOrderId String?  @map("matched_shopify_order_id")
+  matchConfidence       Decimal? @map("match_confidence") @db.Decimal(4, 2)
+  status                String   @default("NEW")
+  rawPayload            Json?    @map("raw_payload")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  @@index([status, transactionDate])
+  @@index([matchedShopifyOrderId])
+  @@map("bank_payments")
+}
+
+model AutomationLog {
+  id             String   @id @default(uuid()) @db.Uuid
+  shopifyOrderId String?  @map("shopify_order_id")
+  eventType      String?  @map("event_type")
+  step           String?
+  status         String
+  message        String?
+  errorMessage   String?  @map("error_message")
+  metadata       Json?
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([shopifyOrderId, createdAt])
+  @@index([eventType, createdAt])
+  @@map("automation_logs")
+}
+
+model ProcessedWebhook {
+  id          String   @id @default(uuid()) @db.Uuid
+  webhookId   String   @unique @map("webhook_id")
+  topic       String
+  shopDomain  String?  @map("shop_domain")
+  processedAt DateTime @default(now()) @map("processed_at")
+  payloadHash String?  @map("payload_hash")
+
+  @@index([topic, processedAt])
+  @@map("processed_webhooks")
+}
