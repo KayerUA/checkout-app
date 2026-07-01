@@ -59,7 +59,11 @@ export function getEnv(): Env {
   cached = envSchema.parse({
     APP_URL: process.env.APP_URL,
     NODE_ENV: process.env.NODE_ENV,
-    DATABASE_URL: process.env.DATABASE_URL,
+    DATABASE_URL:
+      process.env.DATABASE_URL ||
+      process.env.POSTGRES_PRISMA_URL ||
+      process.env.POSTGRES_URL ||
+      process.env.POSTGRES_URL_NON_POOLING,
     REDIS_URL: process.env.REDIS_URL,
     SESSION_SECRET: process.env.SESSION_SECRET,
     ENCRYPTION_KEY: process.env.ENCRYPTION_KEY,
