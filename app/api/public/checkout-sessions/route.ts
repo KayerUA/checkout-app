@@ -3,6 +3,7 @@ import { z } from "zod";
 import { createCheckoutSession } from "@/lib/checkout/session-service";
 import { prisma } from "@/lib/db";
 import { handleCorsPreflight, withCors } from "@/lib/cors";
+import { getEnv } from "@/lib/env";
 
 const bodySchema = z.object({
   merchantId: z.string().optional(),
@@ -38,16 +39,28 @@ export async function POST(request: NextRequest) {
 
     let merchantId = body.merchantId;
     if (!merchantId && body.shopDomain) {
+      const env = getEnv();
+      const configuredShopDomain = env.SHOPIFY_SHOP_DOMAIN;
       const merchant = await prisma.merchant.findUnique({
         where: { shopDomain: body.shopDomain },
       });
-      if (!merchant) {
+      if (merchant) {
+        merchantId = merchant.id;
+      } else if (configuredShopDomain && body.shopDomain === configuredShopDomain) {
+        const createdMerchant = await prisma.merchant.create({
+          data: {
+            shopDomain: body.shopDomain,
+            name: body.shopDomain.replace(".myshopify.com", ""),
+            checkoutBaseUrl: env.APP_URL,
+          },
+        });
+        merchantId = createdMerchant.id;
+      } else {
         return withCors(
           NextResponse.json({ error: "Merchant not found" }, { status: 404 }),
           origin
         );
       }
-      merchantId = merchant.id;
     }
     if (!merchantId) {
       return withCors(
