@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCheckoutSessionByToken } from "@/lib/checkout/session-service";
 import { reconcilePendingPayments } from "@/lib/payments/reconciliation";
+import { createShopifyOrderIdempotent } from "@/lib/shopify/order-writer";
 
 export async function GET(
   _request: NextRequest,
@@ -21,16 +22,23 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const latestPayment = refreshed.paymentAttempts[0];
+  let finalSession = refreshed;
+  if (refreshed.status === "PAID" && !refreshed.orderLink) {
+    await createShopifyOrderIdempotent(refreshed.id);
+    const withOrder = await getCheckoutSessionByToken(token);
+    if (withOrder) finalSession = withOrder;
+  }
+
+  const latestPayment = finalSession.paymentAttempts[0];
   return NextResponse.json({
-    status: refreshed.status,
+    status: finalSession.status,
     paymentStatus: latestPayment?.status ?? null,
-    orderLink: refreshed.orderLink
+    orderLink: finalSession.orderLink
       ? {
-          shopifyOrderName: refreshed.orderLink.shopifyOrderName,
-          shopifyOrderGid: refreshed.orderLink.shopifyOrderGid,
+          shopifyOrderName: finalSession.orderLink.shopifyOrderName,
+          shopifyOrderGid: finalSession.orderLink.shopifyOrderGid,
         }
       : null,
-    fiscalReceipt: refreshed.orderLink?.fiscalReceipt ?? null,
+    fiscalReceipt: finalSession.orderLink?.fiscalReceipt ?? null,
   });
 }
