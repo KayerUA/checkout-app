@@ -5,6 +5,8 @@ import { requireMerchantSession } from "@/lib/session";
 import { B2B_TAGS } from "@/lib/b2b/constants";
 import { updateOrderTags } from "@/lib/shopify/b2b-admin";
 import { sendDocumentEmail } from "@/lib/email/resend";
+import { createPdfFromHtml } from "@/lib/documents/pdf";
+import { uploadPrivateDocument } from "@/lib/supabase/storage";
 
 export const runtime = "nodejs";
 
@@ -57,6 +59,35 @@ export async function POST(
       to: order.docsEmail,
       subject: `Рахунок на оплату ${invoice.number} — KAYER UA`,
       html: `<p>Повторно надсилаємо рахунок на оплату.</p><p><a href="${invoice.pdfUrl}">${invoice.pdfUrl}</a></p>`,
+    });
+  } else if (action === "regenerate_invoice") {
+    const invoice = await prisma.b2BDocument.findFirst({
+      where: { shopifyOrderId, type: "invoice" },
+      orderBy: { createdAt: "desc" },
+    });
+    const metadata = invoice?.metadata as { html?: unknown } | null;
+    const html = typeof metadata?.html === "string" ? metadata.html : null;
+    if (!invoice?.number || !html) {
+      return NextResponse.json({ error: "Invoice HTML missing" }, { status: 400 });
+    }
+
+    const pdf = await createPdfFromHtml(html);
+    const pdfUrl = await uploadPrivateDocument({
+      path: `${shopifyOrderId}/invoice-${invoice.number}.pdf`,
+      contentType: "application/pdf",
+      body: pdf,
+    });
+
+    await prisma.b2BDocument.update({
+      where: { id: invoice.id },
+      data: {
+        status: "CREATED",
+        pdfUrl,
+        metadata: {
+          ...(typeof invoice.metadata === "object" && invoice.metadata ? invoice.metadata : {}),
+          regeneratedAt: new Date().toISOString(),
+        },
+      },
     });
   }
 

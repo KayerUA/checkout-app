@@ -84,6 +84,7 @@ export default async function B2BOrdersPage() {
                         <form action={`/api/admin/b2b-orders/${order.shopifyOrderId}`} method="post" className="flex flex-wrap gap-2">
                           <Button name="action" value="confirm_payment" size="sm" variant="outline">Confirm</Button>
                           <Button name="action" value="needs_review" size="sm" variant="outline">Review</Button>
+                          <Button name="action" value="regenerate_invoice" size="sm" variant="outline">Regenerate</Button>
                           <Button name="action" value="resend_invoice" size="sm" variant="outline">Resend</Button>
                         </form>
                       </td>
