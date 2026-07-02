@@ -276,12 +276,26 @@ audienceMode: "disabled"
 
 ## 9. Банк и сверка оплат
 
-На MVP:
+Основной production путь:
 
-```env
-BANK_PROVIDER=mock
-BANK_ACCOUNT_IBAN=UA273052990000026005035040022
+1. Открыть `https://checkout.kayer.ua/admin/bank`.
+2. Вставить ID додатка / User-Agent из Privat24 Business.
+3. Вставить token из Privat24 Business.
+4. Вставить IBAN расчётного счёта.
+5. Включить Privat24 и сохранить.
+6. Нажать `Перевірити з'єднання`.
+
+Для ключа Privat24 в кабинете API оставлять IP restrictions пустыми, если нет отдельного static outbound IP.
+
+API используется через Autoclient:
+
+```text
+GET https://acp.privatbank.ua/api/statements/transactions
+headers: User-Agent, token, Content-Type: application/json;charset=cp1251
+params: acc, startDate=DD-MM-YYYY, endDate=DD-MM-YYYY, followId, limit
 ```
+
+CSV import оставить только как emergency fallback:
 
 CSV import:
 

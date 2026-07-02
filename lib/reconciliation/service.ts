@@ -34,7 +34,7 @@ async function saveBankTransaction(tx: BankTransaction) {
 export async function reconcileBankPayments(input?: { from?: Date; to?: Date }) {
   const to = input?.to ?? new Date();
   const from = input?.from ?? new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-  const provider = getBankStatementProvider();
+  const provider = await getBankStatementProvider();
   const transactions = await provider.fetchTransactions(from, to);
   return reconcileBankTransactions(transactions, { from, to });
 }
