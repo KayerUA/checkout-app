@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import { getPaymentAdapter } from "@/lib/payments/index";
 import { getLiqPayCallbackUrl } from "@/lib/payments/liqpay";
 import { getMonobankCallbackUrl } from "@/lib/payments/monobank";
+import { parseLiqPayData } from "@/lib/payments/types";
 import { getEnv } from "@/lib/env";
 import { enqueueJob, QUEUE_NAMES } from "@/lib/queue";
 import { logWithCorrelation } from "@/lib/logger";
@@ -11,6 +12,32 @@ function getCallbackUrl(provider: PaymentProvider) {
   if (provider === "LIQPAY") return getLiqPayCallbackUrl();
   if (provider === "MONOBANK") return getMonobankCallbackUrl();
   return `${getEnv().APP_URL}/api/callbacks/${provider.toLowerCase()}`;
+}
+
+function extractUnverifiedProviderReference(
+  provider: PaymentProvider,
+  rawBody: string | Buffer
+): string | null {
+  try {
+    const bodyText = Buffer.isBuffer(rawBody) ? rawBody.toString("utf8") : rawBody;
+    const body = JSON.parse(bodyText) as Record<string, unknown>;
+
+    if (provider === "LIQPAY") {
+      const data = typeof body.data === "string" ? body.data : null;
+      if (!data) return null;
+      const parsed = parseLiqPayData(data) as Record<string, unknown>;
+      return typeof parsed.order_id === "string" ? parsed.order_id : null;
+    }
+
+    if (provider === "MONOBANK") {
+      const invoiceId = body.invoiceId ?? body.invoice_id;
+      return typeof invoiceId === "string" ? invoiceId : null;
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
 }
 
 export async function initPaymentForSession(publicToken: string, provider: PaymentProvider) {
@@ -79,25 +106,51 @@ export async function handlePaymentCallback(
   rawBody: string | Buffer,
   headers: Record<string, string | undefined>
 ) {
+  const webhookSource = provider.toLowerCase();
   const deliveryId =
     headers["x-shopify-webhook-id"] ??
     headers["x-sign"]?.slice(0, 32) ??
     Buffer.from(rawBody.toString()).toString("base64").slice(0, 32);
 
+  const adapter = getPaymentAdapter(provider);
+  const providerReference = extractUnverifiedProviderReference(provider, rawBody);
+  if (!providerReference) throw new Error("Payment reference not found");
+
+  const paymentAttempt = await prisma.paymentAttempt.findUnique({
+    where: {
+      provider_providerReference: {
+        provider,
+        providerReference,
+      },
+    },
+    include: {
+      checkoutSession: {
+        include: {
+          merchant: {
+            include: {
+              paymentConfigs: true,
+            },
+          },
+        },
+      },
+    },
+  });
+  if (!paymentAttempt) throw new Error("Payment attempt not found");
+
   const { recordWebhookDelivery } = await import("@/lib/idempotency");
   const isNew = await recordWebhookDelivery({
-    source: provider.toLowerCase(),
+    source: webhookSource,
     deliveryId,
+    merchantId: paymentAttempt.checkoutSession.merchantId,
     payload: rawBody.toString(),
-    verified: true,
+    verified: false,
   });
   if (!isNew) return { duplicate: true };
 
-  const adapter = getPaymentAdapter(provider);
-  const configRecord = await prisma.paymentProviderConfig.findFirst({
-    where: { provider, isEnabled: true },
-  });
-  if (!configRecord) throw new Error("No payment config");
+  const configRecord = paymentAttempt.checkoutSession.merchant.paymentConfigs.find(
+    (config) => config.provider === provider && config.isEnabled
+  );
+  if (!configRecord) throw new Error("Payment config not enabled for merchant");
 
   const parsed = adapter.verifyCallback(
     rawBody,
@@ -106,6 +159,9 @@ export async function handlePaymentCallback(
   );
 
   if (!parsed) throw new Error("Invalid callback");
+  if (parsed.providerReference !== paymentAttempt.providerReference) {
+    throw new Error("Callback payment reference mismatch");
+  }
 
   if (provider === "MONOBANK") {
     const { verifyMonobankCallback } = await import("@/lib/payments/monobank");
@@ -118,14 +174,10 @@ export async function handlePaymentCallback(
     if (!valid) throw new Error("Invalid Monobank signature");
   }
 
-  const paymentAttempt = await prisma.paymentAttempt.findFirst({
-    where: {
-      provider,
-      providerReference: parsed.providerReference,
-    },
-    include: { checkoutSession: true },
+  await prisma.webhookDelivery.update({
+    where: { source_deliveryId: { source: webhookSource, deliveryId } },
+    data: { verified: true },
   });
-  if (!paymentAttempt) throw new Error("Payment attempt not found");
 
   if (
     paymentAttempt.modifiedAtProvider &&
@@ -151,6 +203,11 @@ export async function handlePaymentCallback(
       verifiedAt: new Date(),
       modifiedAtProvider: parsed.modifiedAt,
     },
+  });
+
+  await prisma.webhookDelivery.update({
+    where: { source_deliveryId: { source: webhookSource, deliveryId } },
+    data: { processedAt: new Date() },
   });
 
   if (newStatus === "PAID") {

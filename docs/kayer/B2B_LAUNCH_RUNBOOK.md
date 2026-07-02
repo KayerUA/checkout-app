@@ -308,11 +308,12 @@ transaction_id,transaction_date,payer_name,payer_tax_id,amount,currency,payment_
 
 Cron:
 
-```text
-GET https://checkout.kayer.ua/api/cron/reconcile-bank-payments?secret=YOUR_CRON_SECRET
+```bash
+curl https://checkout.kayer.ua/api/cron/reconcile-bank-payments \
+  -H "x-cron-secret: YOUR_CRON_SECRET"
 ```
 
-Поставить раз в 15-30 минут через Vercel Cron, cron-job.org или Railway Cron.
+Поставить раз в 15-30 минут через Vercel Cron, cron-job.org или Railway Cron. Секрет передаётся только через header `x-cron-secret`, не через query string.
 
 ## 10. Нова Пошта
 

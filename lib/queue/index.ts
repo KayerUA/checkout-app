@@ -9,6 +9,8 @@ export const QUEUE_NAMES = {
   NOVA_POSHTA: "sync-nova-poshta",
 } as const;
 
+export const WORKER_HEARTBEAT_KEY = "kayer:checkout:worker:heartbeat";
+
 const queues = new Map<string, Queue>();
 
 function getConnection(): ConnectionOptions {

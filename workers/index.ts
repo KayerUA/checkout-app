@@ -1,12 +1,42 @@
-import { createWorker, QUEUE_NAMES } from "@/lib/queue";
+import Redis from "ioredis";
+import { createWorker, QUEUE_NAMES, WORKER_HEARTBEAT_KEY } from "@/lib/queue";
 import { createShopifyOrderIdempotent } from "@/lib/shopify/order-writer";
 import { fiscalizeOrder } from "@/lib/fiscal/checkbox";
 import { markAbandonedSessions } from "@/lib/checkout/session-service";
 import { syncNovaPoshtaDictionary } from "@/lib/shipping/nova-poshta";
 import { log } from "@/lib/logger";
+import { getEnv } from "@/lib/env";
+
+function startWorkerHeartbeat() {
+  const redis = new Redis(getEnv().REDIS_URL, { maxRetriesPerRequest: null });
+
+  async function beat() {
+    await redis.set(
+      WORKER_HEARTBEAT_KEY,
+      JSON.stringify({ pid: process.pid, timestamp: new Date().toISOString() }),
+      "EX",
+      90
+    );
+  }
+
+  beat().catch((error) => {
+    log("error", "Worker heartbeat failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
+
+  return setInterval(() => {
+    beat().catch((error) => {
+      log("error", "Worker heartbeat failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }, 30_000);
+}
 
 async function main() {
   log("info", "Starting workers");
+  startWorkerHeartbeat();
 
   createWorker(QUEUE_NAMES.ORDERS, async (job) => {
     if (job.name === "create-shopify-order") {

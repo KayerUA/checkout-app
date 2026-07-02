@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 export async function GET(request: NextRequest) {
   const env = getEnv();
   const expected = env.CRON_SECRET || env.INTERNAL_JOBS_SECRET;
-  const provided = request.headers.get("x-cron-secret") ?? request.nextUrl.searchParams.get("secret");
+  const provided = request.headers.get("x-cron-secret");
   if (expected && provided !== expected) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
