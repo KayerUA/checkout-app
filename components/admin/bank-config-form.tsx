@@ -16,6 +16,16 @@ export type BankConfigInitial = {
   hasToken: boolean;
 };
 
+async function readJsonResponse(response: Response) {
+  const text = await response.text();
+  if (!text) return {};
+  try {
+    return JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    return { error: text };
+  }
+}
+
 export function BankConfigForm({ initial }: { initial: BankConfigInitial }) {
   const [isEnabled, setIsEnabled] = useState(initial.isEnabled);
   const [apiUrl, setApiUrl] = useState(initial.apiUrl);
@@ -48,8 +58,8 @@ export function BankConfigForm({ initial }: { initial: BankConfigInitial }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ isEnabled, config }),
       });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error ?? "Failed to save bank config");
+      const data = await readJsonResponse(res);
+      if (!res.ok) throw new Error(String(data.error ?? "Failed to save bank config"));
       setSuccess(true);
       setToken("");
     } catch (err) {
@@ -65,8 +75,8 @@ export function BankConfigForm({ initial }: { initial: BankConfigInitial }) {
     setTestResult(null);
     try {
       const res = await fetch("/api/merchant/bank", { method: "POST" });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Privat24 test failed");
+      const data = await readJsonResponse(res);
+      if (!res.ok) throw new Error(String(data.error ?? "Privat24 test failed"));
       setTestResult(`З'єднання працює. Отримано транзакцій: ${data.transactions ?? 0}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Помилка перевірки");
