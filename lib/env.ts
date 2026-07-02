@@ -16,6 +16,7 @@ const envSchema = z.object({
     "read_products,read_orders,write_orders,read_inventory,read_customers,write_draft_orders,read_locations"
   ),
   SHOPIFY_API_VERSION: z.string().default("2026-01"),
+  ADMIN_PASSWORD: z.string().min(12).optional(),
   INTERNAL_JOBS_SECRET: z.string().min(16),
   SENTRY_DSN: z.string().optional(),
   NOVA_POSHTA_API_KEY: z.string().optional(),
@@ -75,6 +76,7 @@ export function getEnv(): Env {
     SHOPIFY_WEBHOOK_SECRET: process.env.SHOPIFY_WEBHOOK_SECRET,
     SHOPIFY_SCOPES: process.env.SHOPIFY_SCOPES,
     SHOPIFY_API_VERSION: process.env.SHOPIFY_API_VERSION,
+    ADMIN_PASSWORD: process.env.ADMIN_PASSWORD,
     INTERNAL_JOBS_SECRET: process.env.INTERNAL_JOBS_SECRET,
     SENTRY_DSN: process.env.SENTRY_DSN,
     NOVA_POSHTA_API_KEY: process.env.NOVA_POSHTA_API_KEY,
