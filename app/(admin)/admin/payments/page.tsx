@@ -1,4 +1,5 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { PaymentConfigForm } from "@/components/admin/payment-config-form";
 import { prisma } from "@/lib/db";
 import { requireMerchantSession } from "@/lib/session";
@@ -24,9 +25,14 @@ export default async function PaymentsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">Оплата</h1>
-        <p className="text-sm text-muted-foreground">LiqPay — єдиний спосіб оплати для kayer.ua</p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold">Оплата</h1>
+          <p className="text-sm text-muted-foreground">LiqPay — єдиний спосіб оплати для kayer.ua</p>
+        </div>
+        <form action="/api/admin/reconcile-payments" method="post">
+          <Button type="submit" variant="outline">Check LiqPay pending payments</Button>
+        </form>
       </div>
       <Card>
         <CardHeader>

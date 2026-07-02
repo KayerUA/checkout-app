@@ -53,7 +53,45 @@ export const liqpayAdapter: PaymentAdapter = {
       providerReference: parsed.order_id,
       status,
       amount: Math.round(Number(parsed.amount) * 100),
-      modifiedAt: parsed.end_date ? new Date(parsed.end_date) : undefined,
+      modifiedAt: parsed.end_date ? new Date(Number(parsed.end_date)) : undefined,
+      rawPayload: parsed,
+    };
+  },
+
+  async getFinalStatus(providerReference, config) {
+    const { publicKey, privateKey } = config;
+    const data = {
+      version: 3,
+      public_key: publicKey,
+      action: "status",
+      order_id: providerReference,
+    };
+    const dataBase64 = Buffer.from(JSON.stringify(data)).toString("base64");
+    const signature = crypto
+      .createHash("sha1")
+      .update(privateKey + dataBase64 + privateKey)
+      .digest("base64");
+
+    const response = await fetch("https://www.liqpay.ua/api/request", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ data: dataBase64, signature }),
+    });
+
+    const parsed = (await response.json()) as Record<string, unknown>;
+    const statusValue = String(parsed.status ?? "");
+    const status =
+      statusValue === "success" || statusValue === "sandbox"
+        ? "PAID"
+        : statusValue === "failure" || statusValue === "error" || statusValue === "reversed"
+          ? "FAILED"
+          : "PENDING";
+
+    return {
+      providerReference,
+      status,
+      amount: Math.round(Number(parsed.amount ?? 0) * 100),
+      modifiedAt: parsed.end_date ? new Date(Number(parsed.end_date)) : undefined,
       rawPayload: parsed,
     };
   },

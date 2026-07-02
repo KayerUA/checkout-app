@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCheckoutSessionByToken } from "@/lib/checkout/session-service";
+import { reconcilePendingPayments } from "@/lib/payments/reconciliation";
 
 export async function GET(
   _request: NextRequest,
@@ -11,16 +12,25 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const latestPayment = session.paymentAttempts[0];
+  if (session.status === "PAYMENT_PENDING" && session.paymentAttempts[0]?.status === "PENDING") {
+    await reconcilePendingPayments({ checkoutSessionId: session.id, take: 1 });
+  }
+
+  const refreshed = await getCheckoutSessionByToken(token);
+  if (!refreshed) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  const latestPayment = refreshed.paymentAttempts[0];
   return NextResponse.json({
-    status: session.status,
+    status: refreshed.status,
     paymentStatus: latestPayment?.status ?? null,
-    orderLink: session.orderLink
+    orderLink: refreshed.orderLink
       ? {
-          shopifyOrderName: session.orderLink.shopifyOrderName,
-          shopifyOrderGid: session.orderLink.shopifyOrderGid,
+          shopifyOrderName: refreshed.orderLink.shopifyOrderName,
+          shopifyOrderGid: refreshed.orderLink.shopifyOrderGid,
         }
       : null,
-    fiscalReceipt: session.orderLink?.fiscalReceipt ?? null,
+    fiscalReceipt: refreshed.orderLink?.fiscalReceipt ?? null,
   });
 }
