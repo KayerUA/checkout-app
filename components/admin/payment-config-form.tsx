@@ -5,12 +5,21 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { CheckCircle2, Loader2 } from "lucide-react";
 
-export function PaymentConfigForm() {
-  const [publicKey, setPublicKey] = useState("");
+export type PaymentConfigInitial = {
+  isEnabled: boolean;
+  isSandbox: boolean;
+  publicKey: string;
+  hasPrivateKey: boolean;
+};
+
+export function PaymentConfigForm({ initial }: { initial: PaymentConfigInitial }) {
+  const [publicKey, setPublicKey] = useState(initial.publicKey);
   const [privateKey, setPrivateKey] = useState("");
-  const [isSandbox, setIsSandbox] = useState(true);
+  const [isEnabled, setIsEnabled] = useState(initial.isEnabled);
+  const [isSandbox, setIsSandbox] = useState(initial.isSandbox);
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -22,14 +31,17 @@ export function PaymentConfigForm() {
     setSuccess(false);
 
     try {
+      const config: Record<string, string> = { publicKey };
+      if (privateKey.trim()) config.privateKey = privateKey.trim();
+
       const res = await fetch("/api/merchant/payments", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           provider: "LIQPAY",
-          isEnabled: true,
+          isEnabled,
           isSandbox,
-          config: { publicKey, privateKey },
+          config,
         }),
       });
       if (!res.ok) {
@@ -45,7 +57,24 @@ export function PaymentConfigForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+    <form onSubmit={handleSubmit} className="mt-4 space-y-5">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant={isEnabled ? "default" : "secondary"}>
+          {isEnabled ? "LiqPay увімкнено" : "LiqPay вимкнено"}
+        </Badge>
+        <Badge variant="outline">{isSandbox ? "Sandbox" : "Live"}</Badge>
+        {initial.hasPrivateKey && <Badge variant="outline">Private key збережено</Badge>}
+      </div>
+
+      <label className="flex items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          checked={isEnabled}
+          onChange={(e) => setIsEnabled(e.target.checked)}
+        />
+        Увімкнути оплату карткою через LiqPay
+      </label>
+
       <div className="space-y-2">
         <Label htmlFor="publicKey">LiqPay Public Key</Label>
         <Input
@@ -63,9 +92,13 @@ export function PaymentConfigForm() {
           type="password"
           value={privateKey}
           onChange={(e) => setPrivateKey(e.target.value)}
-          placeholder="sandbox_private_key"
-          required
+          placeholder={initial.hasPrivateKey ? "Залиште порожнім, щоб не змінювати" : "private_key"}
+          required={!initial.hasPrivateKey && isEnabled}
         />
+        <p className="text-xs text-muted-foreground">
+          Private key не показується назад після збереження. Якщо поле порожнє,
+          використовується вже збережений ключ.
+        </p>
       </div>
       <label className="flex items-center gap-2 text-sm">
         <input
@@ -94,7 +127,7 @@ export function PaymentConfigForm() {
       )}
       <Button type="submit" disabled={loading}>
         {loading && <Loader2 className="size-4 animate-spin" />}
-        Зберегти LiqPay
+        {isEnabled ? "Зберегти та увімкнути LiqPay" : "Зберегти та вимкнути LiqPay"}
       </Button>
     </form>
   );

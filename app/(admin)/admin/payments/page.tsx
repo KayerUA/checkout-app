@@ -1,7 +1,27 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { PaymentConfigForm } from "@/components/admin/payment-config-form";
+import { prisma } from "@/lib/db";
+import { requireMerchantSession } from "@/lib/session";
+import { redirect } from "next/navigation";
 
-export default function PaymentsPage() {
+export default async function PaymentsPage() {
+  let session;
+  try {
+    session = await requireMerchantSession();
+  } catch {
+    redirect("/admin");
+  }
+
+  const liqpay = await prisma.paymentProviderConfig.findUnique({
+    where: {
+      merchantId_provider: {
+        merchantId: session.merchantId,
+        provider: "LIQPAY",
+      },
+    },
+  });
+  const liqpayConfig = (liqpay?.config ?? {}) as Record<string, string>;
+
   return (
     <div className="space-y-6">
       <div>
@@ -16,7 +36,14 @@ export default function PaymentsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <PaymentConfigForm />
+          <PaymentConfigForm
+            initial={{
+              isEnabled: liqpay?.isEnabled ?? false,
+              isSandbox: liqpay?.isSandbox ?? true,
+              publicKey: liqpayConfig.publicKey ?? "",
+              hasPrivateKey: Boolean(liqpayConfig.privateKey),
+            }}
+          />
         </CardContent>
       </Card>
     </div>

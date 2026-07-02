@@ -8,7 +8,7 @@ const schema = z.object({
   provider: z.enum(["MONOBANK", "LIQPAY"]),
   isEnabled: z.boolean(),
   isSandbox: z.boolean().optional(),
-  config: z.record(z.string(), z.string()),
+  config: z.record(z.string(), z.string().optional()),
 });
 
 export async function GET() {
@@ -25,6 +25,29 @@ export async function GET() {
 export async function PATCH(request: NextRequest) {
   const session = await requireMerchantSession();
   const body = schema.parse(await request.json());
+  const existing = await prisma.paymentProviderConfig.findUnique({
+    where: {
+      merchantId_provider: {
+        merchantId: session.merchantId,
+        provider: body.provider,
+      },
+    },
+  });
+
+  const existingConfig = (existing?.config ?? {}) as Record<string, string>;
+  const cleanConfig = Object.fromEntries(
+    Object.entries(body.config).filter(([, value]) => typeof value === "string" && value.trim())
+  ) as Record<string, string>;
+  const mergedConfig = { ...existingConfig, ...cleanConfig };
+
+  if (body.provider === "LIQPAY" && body.isEnabled) {
+    if (!mergedConfig.publicKey || !mergedConfig.privateKey) {
+      return NextResponse.json(
+        { error: "LiqPay publicKey and privateKey are required when provider is enabled" },
+        { status: 400 }
+      );
+    }
+  }
 
   const config = await prisma.paymentProviderConfig.upsert({
     where: {
@@ -38,12 +61,12 @@ export async function PATCH(request: NextRequest) {
       provider: body.provider,
       isEnabled: body.isEnabled,
       isSandbox: body.isSandbox ?? true,
-      config: body.config,
+      config: mergedConfig,
     },
     update: {
       isEnabled: body.isEnabled,
       isSandbox: body.isSandbox,
-      config: body.config,
+      config: mergedConfig,
     },
   });
 
