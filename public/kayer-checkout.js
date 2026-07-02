@@ -167,6 +167,12 @@
     return params.get(config.queryParam) === "1" || params.get("force_checkout") === "custom";
   }
 
+  function shopifyRoot() {
+    var root =
+      (window.Shopify && window.Shopify.routes && window.Shopify.routes.root) || "/";
+    return root.endsWith("/") ? root : root + "/";
+  }
+
   function eventPath(event) {
     if (event && typeof event.composedPath === "function") return event.composedPath();
     var path = [];
@@ -204,12 +210,13 @@
     if (window.__kayerRedirectInProgress) return;
     window.__kayerRedirectInProgress = true;
 
-    const cartRes = await fetch("/cart.js", { credentials: "same-origin" });
+    const root = shopifyRoot();
+    const cartRes = await fetch(root + "cart.js", { credentials: "same-origin" });
     if (!cartRes.ok) throw new Error("Failed to load cart");
     const cart = await cartRes.json();
 
     if (!cart.items || cart.items.length === 0) {
-      window.location.href = "/cart";
+      window.location.href = root + "cart";
       return;
     }
 
@@ -278,7 +285,7 @@
 
   function persistB2BAttributes() {
     var attrs = readB2BAttributes({});
-    fetch("/cart/update.js", {
+    fetch(shopifyRoot() + "cart/update.js", {
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
@@ -512,6 +519,7 @@
   window.addEventListener("submit", interceptCheckoutSubmit, true);
   document.addEventListener("submit", interceptCheckoutSubmit, true);
   installForcedCheckoutGuards();
+  scheduleForcedAutoOpen();
 
   window.KayerCheckout = { redirectToCheckout: redirectToCheckout, config: config };
 
