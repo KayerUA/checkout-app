@@ -190,6 +190,7 @@
   }
 
   function handleRedirectError(err, trigger) {
+    window.__kayerRedirectInProgress = false;
     console.error("[KayerCheckout]", err);
     if (trigger && trigger.disabled !== undefined) trigger.disabled = false;
     if (isForcedCustomCheckout()) {
@@ -200,6 +201,9 @@
   }
 
   async function redirectToCheckout() {
+    if (window.__kayerRedirectInProgress) return;
+    window.__kayerRedirectInProgress = true;
+
     const cartRes = await fetch("/cart.js", { credentials: "same-origin" });
     if (!cartRes.ok) throw new Error("Failed to load cart");
     const cart = await cartRes.json();
@@ -480,6 +484,27 @@
     }
   }
 
+  function shouldAutoOpenForcedCheckout() {
+    var params = new URLSearchParams(window.location.search);
+    var explicitlyForced =
+      params.get(config.queryParam) === "1" ||
+      params.get("force_checkout") === "custom";
+    if (!explicitlyForced) return false;
+    if (params.get("kayer_no_auto") === "1") return false;
+    return window.location.pathname.indexOf("/cart") >= 0;
+  }
+
+  function scheduleForcedAutoOpen() {
+    if (!shouldAutoOpenForcedCheckout() || window.__kayerForcedAutoOpenScheduled) return;
+    window.__kayerForcedAutoOpenScheduled = true;
+
+    window.setTimeout(function () {
+      redirectToCheckout().catch(function (err) {
+        handleRedirectError(err, null);
+      });
+    }, 180);
+  }
+
   // Chekly is loaded earlier in the Shopify theme. Window-level capture runs before
   // document/body capture handlers, so forced KAYER checkout can still win.
   window.addEventListener("click", interceptCheckoutEvent, true);
@@ -491,9 +516,13 @@
   window.KayerCheckout = { redirectToCheckout: redirectToCheckout, config: config };
 
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", bindButtons);
+    document.addEventListener("DOMContentLoaded", function () {
+      bindButtons();
+      scheduleForcedAutoOpen();
+    });
   } else {
     bindButtons();
+    scheduleForcedAutoOpen();
   }
 
   // Re-bind for dynamic cart drawers
