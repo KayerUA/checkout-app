@@ -70,17 +70,22 @@
         "[data-chekly]",
         "[data-chekly-checkout]",
         "[data-checkout]",
+        "[formaction*='checkout']",
         'button[name="checkout"]',
         'input[name="checkout"]',
         'input[type="submit"][name="checkout"]',
         'a[href="/checkout"]',
         'a[href$="/checkout"]',
         'a[href*="/checkout"]',
+        'a[href*="/checkouts/"]',
+        'a[href*="checkout"]',
         'a[href*="chekly-app.com"]',
         'button[class*="checkout"]',
         'a[class*="checkout"]',
         'button[class*="chekly"]',
         'a[class*="chekly"]',
+        '[role="button"][class*="checkout"]',
+        '[role="button"][aria-label*="checkout"]',
         ".checkout-button",
         ".cart__checkout",
         ".btn--checkout",
@@ -93,25 +98,39 @@
     var text = normalize(el.textContent || el.value || el.getAttribute("aria-label") || "");
     var href = normalize(el.getAttribute && el.getAttribute("href"));
     var action = normalize(el.getAttribute && el.getAttribute("action"));
+    var formaction = normalize(el.getAttribute && el.getAttribute("formaction"));
     var className = normalize(el.className);
+    var id = normalize(el.id);
+    var name = normalize(el.getAttribute && el.getAttribute("name"));
     return (
       href.indexOf("checkout") >= 0 ||
       href.indexOf("chekly") >= 0 ||
       action.indexOf("checkout") >= 0 ||
       action.indexOf("chekly") >= 0 ||
+      formaction.indexOf("checkout") >= 0 ||
+      formaction.indexOf("chekly") >= 0 ||
       className.indexOf("checkout") >= 0 ||
       className.indexOf("chekly") >= 0 ||
+      id.indexOf("checkout") >= 0 ||
+      id.indexOf("chekly") >= 0 ||
+      name === "checkout" ||
       text.indexOf("checkout") >= 0 ||
+      text.indexOf("check out") >= 0 ||
       text.indexOf("оформити") >= 0 ||
+      text.indexOf("оформлен") >= 0 ||
+      text.indexOf("замовити") >= 0 ||
       text.indexOf("замовлення") >= 0 ||
-      text.indexOf("оплат") >= 0
+      text.indexOf("оплат") >= 0 ||
+      text.indexOf("сплат") >= 0
     );
   }
 
   function findLikelyCheckoutTrigger(el) {
     var explicit = findCheckoutElement(el);
     if (explicit) return explicit;
-    var candidate = el && el.closest ? el.closest("button, a, input[type='submit']") : null;
+    var candidate = el && el.closest
+      ? el.closest("button, a, input, [role='button'], [onclick]")
+      : null;
     return looksLikeCheckoutElement(candidate) ? candidate : null;
   }
 
@@ -121,17 +140,22 @@
       "[data-chekly]",
       "[data-chekly-checkout]",
       "[data-checkout]",
+      "[formaction*='checkout']",
       'button[name="checkout"]',
       'input[name="checkout"]',
       'input[type="submit"][name="checkout"]',
       'a[href="/checkout"]',
       'a[href$="/checkout"]',
       'a[href*="/checkout"]',
+      'a[href*="/checkouts/"]',
+      'a[href*="checkout"]',
       'a[href*="chekly-app.com"]',
       'button[class*="checkout"]',
       'a[class*="checkout"]',
       'button[class*="chekly"]',
       'a[class*="chekly"]',
+      '[role="button"][class*="checkout"]',
+      '[role="button"][aria-label*="checkout"]',
       ".checkout-button",
       ".cart__checkout",
       ".btn--checkout",
@@ -141,6 +165,28 @@
   function isForcedCustomCheckout() {
     var params = new URLSearchParams(window.location.search);
     return params.get(config.queryParam) === "1" || params.get("force_checkout") === "custom";
+  }
+
+  function eventPath(event) {
+    if (event && typeof event.composedPath === "function") return event.composedPath();
+    var path = [];
+    var node = event && event.target;
+    while (node) {
+      path.push(node);
+      node = node.parentNode;
+    }
+    return path;
+  }
+
+  function eventLooksLikeCheckout(event) {
+    var path = eventPath(event);
+    for (var i = 0; i < path.length; i += 1) {
+      var el = path[i];
+      if (!el || el === window || el === document) continue;
+      if (findLikelyCheckoutTrigger(el)) return true;
+      if (el.matches && el.matches("form") && looksLikeCheckoutElement(el)) return true;
+    }
+    return false;
   }
 
   function handleRedirectError(err, trigger) {
@@ -348,7 +394,7 @@
   function interceptCheckoutEvent(event) {
     if (!isAudienceEligible()) return;
     var target = findLikelyCheckoutTrigger(event.target);
-    if (!target) return;
+    if (!target && (!isForcedCustomCheckout() || !eventLooksLikeCheckout(event))) return;
 
     event.preventDefault();
     event.stopPropagation();
@@ -382,12 +428,65 @@
     });
   }
 
+  function installForcedCheckoutGuards() {
+    if (!isForcedCustomCheckout() || window.__kayerForcedCheckoutGuardsInstalled) return;
+    window.__kayerForcedCheckoutGuardsInstalled = true;
+
+    ["pointerdown", "mousedown", "touchstart"].forEach(function (eventName) {
+      window.addEventListener(eventName, interceptCheckoutEvent, true);
+      document.addEventListener(eventName, interceptCheckoutEvent, true);
+    });
+
+    window.addEventListener(
+      "keydown",
+      function (event) {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        interceptCheckoutEvent(event);
+      },
+      true
+    );
+
+    if (!window.HTMLFormElement || window.__kayerNativeSubmitPatched) return;
+    window.__kayerNativeSubmitPatched = true;
+    var nativeSubmit = window.HTMLFormElement.prototype.submit;
+    var nativeRequestSubmit = window.HTMLFormElement.prototype.requestSubmit;
+
+    window.HTMLFormElement.prototype.submit = function () {
+      if (isAudienceEligible() && isForcedCustomCheckout() && looksLikeCheckoutElement(this)) {
+        redirectToCheckout().catch(function (err) {
+          handleRedirectError(err, null);
+        });
+        return;
+      }
+      return nativeSubmit.apply(this, arguments);
+    };
+
+    if (nativeRequestSubmit) {
+      window.HTMLFormElement.prototype.requestSubmit = function (submitter) {
+        var isCheckoutSubmitter = submitter && findLikelyCheckoutTrigger(submitter);
+        var hasCheckoutTrigger = Boolean(this.querySelector(checkoutSelectors().join(", ")));
+        if (
+          isAudienceEligible() &&
+          isForcedCustomCheckout() &&
+          (isCheckoutSubmitter || looksLikeCheckoutElement(this) || hasCheckoutTrigger)
+        ) {
+          redirectToCheckout().catch(function (err) {
+            handleRedirectError(err, null);
+          });
+          return;
+        }
+        return nativeRequestSubmit.apply(this, arguments);
+      };
+    }
+  }
+
   // Chekly is loaded earlier in the Shopify theme. Window-level capture runs before
   // document/body capture handlers, so forced KAYER checkout can still win.
   window.addEventListener("click", interceptCheckoutEvent, true);
   document.addEventListener("click", interceptCheckoutEvent, true);
   window.addEventListener("submit", interceptCheckoutSubmit, true);
   document.addEventListener("submit", interceptCheckoutSubmit, true);
+  installForcedCheckoutGuards();
 
   window.KayerCheckout = { redirectToCheckout: redirectToCheckout, config: config };
 
