@@ -115,6 +115,29 @@
     return looksLikeCheckoutElement(candidate) ? candidate : null;
   }
 
+  function checkoutSelectors() {
+    return [
+      "[data-kayer-checkout]",
+      "[data-chekly]",
+      "[data-chekly-checkout]",
+      "[data-checkout]",
+      'button[name="checkout"]',
+      'input[name="checkout"]',
+      'input[type="submit"][name="checkout"]',
+      'a[href="/checkout"]',
+      'a[href$="/checkout"]',
+      'a[href*="/checkout"]',
+      'a[href*="chekly-app.com"]',
+      'button[class*="checkout"]',
+      'a[class*="checkout"]',
+      'button[class*="chekly"]',
+      'a[class*="chekly"]',
+      ".checkout-button",
+      ".cart__checkout",
+      ".btn--checkout",
+    ];
+  }
+
   function isForcedCustomCheckout() {
     var params = new URLSearchParams(window.location.search);
     return params.get(config.queryParam) === "1" || params.get("force_checkout") === "custom";
@@ -264,30 +287,10 @@
   function bindButtons() {
     injectB2BBlock();
     if (!isAudienceEligible()) return;
+    hardenNativeCheckoutTriggers();
 
     document
-      .querySelectorAll(
-        [
-          "[data-kayer-checkout]",
-          "[data-chekly]",
-          "[data-chekly-checkout]",
-          "[data-checkout]",
-          'button[name="checkout"]',
-          'input[name="checkout"]',
-          'input[type="submit"][name="checkout"]',
-          'a[href="/checkout"]',
-          'a[href$="/checkout"]',
-          'a[href*="/checkout"]',
-          'a[href*="chekly-app.com"]',
-          'button[class*="checkout"]',
-          'a[class*="checkout"]',
-          'button[class*="chekly"]',
-          'a[class*="chekly"]',
-          ".checkout-button",
-          ".cart__checkout",
-          ".btn--checkout",
-        ].join(", ")
-      )
+      .querySelectorAll(checkoutSelectors().join(", "))
       .forEach(function (btn) {
       if (btn.dataset.kayerBound) return;
       btn.dataset.kayerBound = "true";
@@ -299,6 +302,46 @@
           handleRedirectError(err, btn);
         });
       });
+    });
+  }
+
+  function hardenNativeCheckoutTriggers() {
+    if (!isForcedCustomCheckout()) return;
+
+    document.querySelectorAll(checkoutSelectors().join(", ")).forEach(function (trigger) {
+      trigger.setAttribute("data-kayer-checkout", "true");
+      trigger.setAttribute("data-kayer-native-disabled", "true");
+
+      if (trigger.tagName === "A") {
+        trigger.setAttribute("data-kayer-original-href", trigger.getAttribute("href") || "");
+        trigger.setAttribute("href", "javascript:void(0)");
+        trigger.removeAttribute("target");
+      }
+
+      if (trigger.matches("button, input")) {
+        trigger.setAttribute("data-kayer-original-type", trigger.getAttribute("type") || "");
+        trigger.setAttribute("type", "button");
+      }
+
+      if (trigger.getAttribute("name") === "checkout") {
+        trigger.setAttribute("data-kayer-original-name", "checkout");
+        trigger.removeAttribute("name");
+      }
+
+      trigger.onclick = function (event) {
+        interceptCheckoutEvent(event);
+        return false;
+      };
+    });
+
+    document.querySelectorAll("form").forEach(function (form) {
+      if (form.dataset.kayerFormHardened) return;
+      var action = normalize(form.getAttribute("action"));
+      var hasCheckoutTrigger = Boolean(form.querySelector(checkoutSelectors().join(", ")));
+      if (action.indexOf("checkout") < 0 && action.indexOf("chekly") < 0 && !hasCheckoutTrigger) return;
+
+      form.dataset.kayerFormHardened = "true";
+      form.addEventListener("submit", interceptCheckoutSubmit, true);
     });
   }
 
@@ -357,4 +400,8 @@
   // Re-bind for dynamic cart drawers
   var observer = new MutationObserver(bindButtons);
   observer.observe(document.body, { childList: true, subtree: true });
+
+  setInterval(function () {
+    if (isAudienceEligible()) hardenNativeCheckoutTriggers();
+  }, 500);
 })();
