@@ -8,7 +8,7 @@
     {
       checkoutApiUrl: "https://checkout.kayer.ua",
       shopDomain: "kayer.myshopify.com",
-      fallbackUrl: "/checkout",
+      fallbackUrl: "/cart",
       audienceMode: "all",
       customerTags: [],
       customerEmail: "",
@@ -67,14 +67,67 @@
     return el.closest(
       [
         "[data-kayer-checkout]",
+        "[data-chekly]",
+        "[data-chekly-checkout]",
+        "[data-checkout]",
         'button[name="checkout"]',
         'input[name="checkout"]',
+        'input[type="submit"][name="checkout"]',
         'a[href="/checkout"]',
         'a[href$="/checkout"]',
+        'a[href*="/checkout"]',
+        'a[href*="chekly-app.com"]',
+        'button[class*="checkout"]',
+        'a[class*="checkout"]',
+        'button[class*="chekly"]',
+        'a[class*="chekly"]',
         ".checkout-button",
         ".cart__checkout",
+        ".btn--checkout",
       ].join(", ")
     );
+  }
+
+  function looksLikeCheckoutElement(el) {
+    if (!el) return false;
+    var text = normalize(el.textContent || el.value || el.getAttribute("aria-label") || "");
+    var href = normalize(el.getAttribute && el.getAttribute("href"));
+    var action = normalize(el.getAttribute && el.getAttribute("action"));
+    var className = normalize(el.className);
+    return (
+      href.indexOf("checkout") >= 0 ||
+      href.indexOf("chekly") >= 0 ||
+      action.indexOf("checkout") >= 0 ||
+      action.indexOf("chekly") >= 0 ||
+      className.indexOf("checkout") >= 0 ||
+      className.indexOf("chekly") >= 0 ||
+      text.indexOf("checkout") >= 0 ||
+      text.indexOf("оформити") >= 0 ||
+      text.indexOf("замовлення") >= 0 ||
+      text.indexOf("оплат") >= 0
+    );
+  }
+
+  function findLikelyCheckoutTrigger(el) {
+    var explicit = findCheckoutElement(el);
+    if (explicit) return explicit;
+    var candidate = el && el.closest ? el.closest("button, a, input[type='submit']") : null;
+    return looksLikeCheckoutElement(candidate) ? candidate : null;
+  }
+
+  function isForcedCustomCheckout() {
+    var params = new URLSearchParams(window.location.search);
+    return params.get(config.queryParam) === "1" || params.get("force_checkout") === "custom";
+  }
+
+  function handleRedirectError(err, trigger) {
+    console.error("[KayerCheckout]", err);
+    if (trigger && trigger.disabled !== undefined) trigger.disabled = false;
+    if (isForcedCustomCheckout()) {
+      alert("Не вдалося відкрити checkout KAYER. Оновіть кошик і спробуйте ще раз.");
+      return;
+    }
+    window.location.href = config.fallbackUrl;
   }
 
   async function redirectToCheckout() {
@@ -216,12 +269,23 @@
       .querySelectorAll(
         [
           "[data-kayer-checkout]",
+          "[data-chekly]",
+          "[data-chekly-checkout]",
+          "[data-checkout]",
           'button[name="checkout"]',
           'input[name="checkout"]',
+          'input[type="submit"][name="checkout"]',
           'a[href="/checkout"]',
           'a[href$="/checkout"]',
+          'a[href*="/checkout"]',
+          'a[href*="chekly-app.com"]',
+          'button[class*="checkout"]',
+          'a[class*="checkout"]',
+          'button[class*="chekly"]',
+          'a[class*="chekly"]',
           ".checkout-button",
           ".cart__checkout",
+          ".btn--checkout",
         ].join(", ")
       )
       .forEach(function (btn) {
@@ -229,11 +293,10 @@
       btn.dataset.kayerBound = "true";
       btn.addEventListener("click", function (e) {
         e.preventDefault();
+        e.stopImmediatePropagation();
         if (btn.disabled !== undefined) btn.disabled = true;
         redirectToCheckout().catch(function (err) {
-          console.error("[KayerCheckout]", err);
-          if (btn.disabled !== undefined) btn.disabled = false;
-          window.location.href = config.fallbackUrl;
+          handleRedirectError(err, btn);
         });
       });
     });
@@ -243,16 +306,40 @@
     "click",
     function (event) {
       if (!isAudienceEligible()) return;
-      var target = findCheckoutElement(event.target);
+      var target = findLikelyCheckoutTrigger(event.target);
       if (!target || target.dataset.kayerBound) return;
 
       event.preventDefault();
-      event.stopPropagation();
+      event.stopImmediatePropagation();
       if (target.disabled !== undefined) target.disabled = true;
       redirectToCheckout().catch(function (err) {
-        console.error("[KayerCheckout]", err);
-        if (target.disabled !== undefined) target.disabled = false;
-        window.location.href = config.fallbackUrl;
+        handleRedirectError(err, target);
+      });
+    },
+    true
+  );
+
+  document.addEventListener(
+    "submit",
+    function (event) {
+      if (!isAudienceEligible()) return;
+      var form = event.target;
+      if (!form || !form.matches || !form.matches("form")) return;
+      var action = normalize(form.getAttribute("action"));
+      var submitter = event.submitter || document.activeElement;
+      var checkoutSubmitter = findLikelyCheckoutTrigger(submitter);
+      if (
+        action.indexOf("checkout") < 0 &&
+        action.indexOf("chekly") < 0 &&
+        !checkoutSubmitter
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      redirectToCheckout().catch(function (err) {
+        handleRedirectError(err, null);
       });
     },
     true

@@ -5,10 +5,19 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { CheckCircle2, Loader2, RefreshCw } from "lucide-react";
 
-export function ShippingConfigForm() {
-  const [flatRateUah, setFlatRateUah] = useState("90");
+export type ShippingConfigInitial = {
+  isEnabled: boolean;
+  flatRateKopiyky: number;
+  hasApiKey: boolean;
+};
+
+export function ShippingConfigForm({ initial }: { initial: ShippingConfigInitial }) {
+  const [flatRateUah, setFlatRateUah] = useState(String(initial.flatRateKopiyky / 100));
+  const [apiKey, setApiKey] = useState("");
+  const [isEnabled, setIsEnabled] = useState(initial.isEnabled);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -29,17 +38,22 @@ export function ShippingConfigForm() {
     }
 
     try {
+      const config: Record<string, string | number> = { flatRateKopiyky: kopiyky };
+      if (apiKey.trim()) config.apiKey = apiKey.trim();
+
       const res = await fetch("/api/merchant/shipping", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           provider: "nova_poshta",
-          isEnabled: true,
-          config: { flatRateKopiyky: kopiyky },
+          isEnabled,
+          config,
         }),
       });
-      if (!res.ok) throw new Error("Failed to save");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? "Failed to save");
       setSuccess(true);
+      setApiKey("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Помилка");
     } finally {
@@ -68,6 +82,38 @@ export function ShippingConfigForm() {
   return (
     <div className="mt-4 space-y-6">
       <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant={isEnabled ? "default" : "secondary"}>
+            {isEnabled ? "Нова Пошта увімкнена" : "Нова Пошта вимкнена"}
+          </Badge>
+          {initial.hasApiKey && <Badge variant="outline">API key збережено</Badge>}
+        </div>
+
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={isEnabled}
+            onChange={(e) => setIsEnabled(e.target.checked)}
+          />
+          Увімкнути доставку Новою Поштою
+        </label>
+
+        <div className="space-y-2">
+          <Label htmlFor="apiKey">Нова Пошта API Key</Label>
+          <Input
+            id="apiKey"
+            type="password"
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            placeholder={initial.hasApiKey ? "Залиште порожнім, щоб не змінювати" : "API key"}
+            required={!initial.hasApiKey && isEnabled}
+          />
+          <p className="text-xs text-muted-foreground">
+            API key не показується назад після збереження. Якщо поле порожнє,
+            використовується вже збережений ключ.
+          </p>
+        </div>
+
         <div className="space-y-2">
           <Label htmlFor="flatRate">Фіксована вартість доставки (грн)</Label>
           <Input
@@ -88,19 +134,18 @@ export function ShippingConfigForm() {
         {success && (
           <Alert>
             <CheckCircle2 className="size-4" />
-            <AlertDescription>Тариф доставки збережено</AlertDescription>
+            <AlertDescription>Налаштування Нової Пошти збережено</AlertDescription>
           </Alert>
         )}
         <Button type="submit" disabled={loading}>
           {loading && <Loader2 className="size-4 animate-spin" />}
-          Зберегти тариф
+          {isEnabled ? "Зберегти та увімкнути Нову Пошту" : "Зберегти та вимкнути Нову Пошту"}
         </Button>
       </form>
 
       <div className="border-t pt-4">
         <p className="mb-3 text-sm text-muted-foreground">
-          Синхронізуйте довідник міст і відділень Нової Пошти. Потрібен{" "}
-          <code className="rounded bg-muted px-1">NOVA_POSHTA_API_KEY</code> в env.
+          Синхронізуйте довідник міст і відділень Нової Пошти після збереження API key.
         </p>
         <Button type="button" variant="outline" onClick={handleSync} disabled={syncing}>
           {syncing ? (

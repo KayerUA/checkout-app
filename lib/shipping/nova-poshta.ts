@@ -3,6 +3,11 @@ import { prisma } from "@/lib/db";
 
 const NP_API = "https://api.novaposhta.ua/v2.0/json/";
 
+type NovaPoshtaConfig = {
+  apiKey?: string;
+  flatRateKopiyky?: number;
+};
+
 async function novaPoshtaRequest<T>(
   apiKey: string,
   modelName: string,
@@ -43,8 +48,35 @@ export type BranchSearchResult = {
   codAllowed?: boolean;
 };
 
+export async function getConfiguredNovaPoshtaApiKey(merchantId?: string | null) {
+  const env = getEnv();
+  const where = merchantId
+    ? { merchantId_provider: { merchantId, provider: "nova_poshta" } }
+    : env.SHOPIFY_SHOP_DOMAIN
+      ? {
+          merchantId_provider: {
+            merchantId: (
+              await prisma.merchant.findUnique({
+                where: { shopDomain: env.SHOPIFY_SHOP_DOMAIN },
+                select: { id: true },
+              })
+            )?.id ?? "",
+            provider: "nova_poshta",
+          },
+        }
+      : null;
+
+  if (where) {
+    const config = await prisma.shippingProviderConfig.findUnique({ where });
+    const apiKey = (config?.config as NovaPoshtaConfig | null)?.apiKey;
+    if (config?.isEnabled && apiKey) return apiKey;
+  }
+
+  return env.NOVA_POSHTA_API_KEY ?? "";
+}
+
 export async function searchCities(query: string, apiKey?: string) {
-  const key = apiKey ?? getEnv().NOVA_POSHTA_API_KEY ?? "";
+  const key = apiKey ?? await getConfiguredNovaPoshtaApiKey();
   if (!key) {
     return prisma.novaPoshtaCity.findMany({
       where: { name: { contains: query, mode: "insensitive" } },
@@ -99,7 +131,7 @@ export async function searchBranches(input: BranchSearchInput, apiKey?: string) 
     }));
   }
 
-  const key = apiKey ?? getEnv().NOVA_POSHTA_API_KEY ?? "";
+  const key = apiKey ?? await getConfiguredNovaPoshtaApiKey();
   if (!key) return [];
 
   const warehouses = await novaPoshtaRequest<
@@ -122,7 +154,7 @@ export async function searchBranches(input: BranchSearchInput, apiKey?: string) 
 }
 
 export async function syncNovaPoshtaDictionary(apiKey?: string) {
-  const key = apiKey ?? getEnv().NOVA_POSHTA_API_KEY ?? "";
+  const key = apiKey ?? await getConfiguredNovaPoshtaApiKey();
   if (!key) {
     return { cities: 0, branches: 0, skipped: true };
   }
