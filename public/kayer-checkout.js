@@ -302,48 +302,49 @@
     });
   }
 
-  document.addEventListener(
-    "click",
-    function (event) {
-      if (!isAudienceEligible()) return;
-      var target = findLikelyCheckoutTrigger(event.target);
-      if (!target || target.dataset.kayerBound) return;
+  function interceptCheckoutEvent(event) {
+    if (!isAudienceEligible()) return;
+    var target = findLikelyCheckoutTrigger(event.target);
+    if (!target) return;
 
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      if (target.disabled !== undefined) target.disabled = true;
-      redirectToCheckout().catch(function (err) {
-        handleRedirectError(err, target);
-      });
-    },
-    true
-  );
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    if (target.disabled !== undefined) target.disabled = true;
+    redirectToCheckout().catch(function (err) {
+      handleRedirectError(err, target);
+    });
+  }
 
-  document.addEventListener(
-    "submit",
-    function (event) {
-      if (!isAudienceEligible()) return;
-      var form = event.target;
-      if (!form || !form.matches || !form.matches("form")) return;
-      var action = normalize(form.getAttribute("action"));
-      var submitter = event.submitter || document.activeElement;
-      var checkoutSubmitter = findLikelyCheckoutTrigger(submitter);
-      if (
-        action.indexOf("checkout") < 0 &&
-        action.indexOf("chekly") < 0 &&
-        !checkoutSubmitter
-      ) {
-        return;
-      }
+  function interceptCheckoutSubmit(event) {
+    if (!isAudienceEligible()) return;
+    var form = event.target;
+    if (!form || !form.matches || !form.matches("form")) return;
+    var action = normalize(form.getAttribute("action"));
+    var submitter = event.submitter || document.activeElement;
+    var checkoutSubmitter = findLikelyCheckoutTrigger(submitter);
+    if (
+      action.indexOf("checkout") < 0 &&
+      action.indexOf("chekly") < 0 &&
+      !checkoutSubmitter
+    ) {
+      return;
+    }
 
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      redirectToCheckout().catch(function (err) {
-        handleRedirectError(err, null);
-      });
-    },
-    true
-  );
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    redirectToCheckout().catch(function (err) {
+      handleRedirectError(err, null);
+    });
+  }
+
+  // Chekly is loaded earlier in the Shopify theme. Window-level capture runs before
+  // document/body capture handlers, so forced KAYER checkout can still win.
+  window.addEventListener("click", interceptCheckoutEvent, true);
+  document.addEventListener("click", interceptCheckoutEvent, true);
+  window.addEventListener("submit", interceptCheckoutSubmit, true);
+  document.addEventListener("submit", interceptCheckoutSubmit, true);
 
   window.KayerCheckout = { redirectToCheckout: redirectToCheckout, config: config };
 
