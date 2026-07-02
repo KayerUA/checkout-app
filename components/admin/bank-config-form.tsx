@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { CheckCircle2, Loader2, PlugZap } from "lucide-react";
+import { CheckCircle2, Loader2, PlugZap, RefreshCcw } from "lucide-react";
 
 export type BankConfigInitial = {
   isEnabled: boolean;
@@ -26,6 +26,29 @@ async function readJsonResponse(response: Response) {
   }
 }
 
+function summarizeReconciliation(data: Record<string, unknown>) {
+  const results = Array.isArray(data.results) ? data.results : [];
+  const counts = results.reduce(
+    (acc, item) => {
+      const status =
+        item && typeof item === "object" && "status" in item
+          ? String((item as { status?: unknown }).status)
+          : "SKIPPED";
+      acc[status] = (acc[status] ?? 0) + 1;
+      return acc;
+    },
+    {} as Record<string, number>
+  );
+  const checked = Number(data.checked ?? results.length);
+  return [
+    `Звірку виконано. Перевірено транзакцій: ${Number.isFinite(checked) ? checked : results.length}`,
+    `MATCHED: ${counts.MATCHED ?? 0}`,
+    `NEEDS_REVIEW: ${counts.NEEDS_REVIEW ?? 0}`,
+    `NEW: ${counts.NEW ?? 0}`,
+    `ERROR: ${counts.ERROR ?? 0}`,
+  ].join(" · ");
+}
+
 export function BankConfigForm({ initial }: { initial: BankConfigInitial }) {
   const [isEnabled, setIsEnabled] = useState(initial.isEnabled);
   const [apiUrl, setApiUrl] = useState(initial.apiUrl);
@@ -34,8 +57,10 @@ export function BankConfigForm({ initial }: { initial: BankConfigInitial }) {
   const [token, setToken] = useState("");
   const [loading, setLoading] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [reconciling, setReconciling] = useState(false);
   const [success, setSuccess] = useState(false);
   const [testResult, setTestResult] = useState<string | null>(null);
+  const [reconcileResult, setReconcileResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function save(e: React.FormEvent) {
@@ -44,6 +69,7 @@ export function BankConfigForm({ initial }: { initial: BankConfigInitial }) {
     setSuccess(false);
     setError(null);
     setTestResult(null);
+    setReconcileResult(null);
 
     try {
       const config: Record<string, string> = {
@@ -73,6 +99,7 @@ export function BankConfigForm({ initial }: { initial: BankConfigInitial }) {
     setTesting(true);
     setError(null);
     setTestResult(null);
+    setReconcileResult(null);
     try {
       const res = await fetch("/api/merchant/bank", { method: "POST" });
       const data = await readJsonResponse(res);
@@ -82,6 +109,23 @@ export function BankConfigForm({ initial }: { initial: BankConfigInitial }) {
       setError(err instanceof Error ? err.message : "Помилка перевірки");
     } finally {
       setTesting(false);
+    }
+  }
+
+  async function runReconciliation() {
+    setReconciling(true);
+    setError(null);
+    setTestResult(null);
+    setReconcileResult(null);
+    try {
+      const res = await fetch("/api/merchant/bank/reconcile?days=7", { method: "POST" });
+      const data = await readJsonResponse(res);
+      if (!res.ok) throw new Error(String(data.error ?? "Bank reconciliation failed"));
+      setReconcileResult(summarizeReconciliation(data));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Помилка звірки");
+    } finally {
+      setReconciling(false);
     }
   }
 
@@ -158,6 +202,12 @@ export function BankConfigForm({ initial }: { initial: BankConfigInitial }) {
           <AlertDescription>{testResult}</AlertDescription>
         </Alert>
       )}
+      {reconcileResult && (
+        <Alert>
+          <RefreshCcw className="size-4" />
+          <AlertDescription>{reconcileResult}</AlertDescription>
+        </Alert>
+      )}
 
       <div className="flex flex-wrap gap-2">
         <Button type="submit" disabled={loading}>
@@ -167,6 +217,19 @@ export function BankConfigForm({ initial }: { initial: BankConfigInitial }) {
         <Button type="button" variant="outline" disabled={testing} onClick={testConnection}>
           {testing && <Loader2 className="size-4 animate-spin" />}
           Перевірити з&apos;єднання
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          disabled={reconciling || !isEnabled}
+          onClick={runReconciliation}
+        >
+          {reconciling ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <RefreshCcw className="size-4" />
+          )}
+          Запустити звірку зараз
         </Button>
       </div>
     </form>
