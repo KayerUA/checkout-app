@@ -108,9 +108,21 @@ export async function createShopifyOrderIdempotent(checkoutSessionId: string) {
         data: { paidOrdersCount: { increment: 1 } },
       });
 
-      await enqueueJob(QUEUE_NAMES.FISCAL, "fiscalize-order", {
-        orderLinkId: orderLink.id,
-      });
+      try {
+        await enqueueJob(QUEUE_NAMES.FISCAL, "fiscalize-order", {
+          orderLinkId: orderLink.id,
+        });
+      } catch (error) {
+        logWithCorrelation(
+          "warn",
+          "Fiscal queue unavailable, skipping async fiscalization",
+          { checkoutSessionId },
+          {
+            orderLinkId: orderLink.id,
+            error: error instanceof Error ? error.message : String(error),
+          }
+        );
+      }
 
       const { sendPurchaseAnalytics } = await import("@/lib/analytics/server");
       await sendPurchaseAnalytics(session.merchantId, session, orderLink);

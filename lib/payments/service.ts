@@ -40,6 +40,23 @@ function extractUnverifiedProviderReference(
   return null;
 }
 
+async function enqueueShopifyOrderCreation(checkoutSessionId: string) {
+  try {
+    await enqueueJob(QUEUE_NAMES.ORDERS, "create-shopify-order", {
+      checkoutSessionId,
+    });
+  } catch (error) {
+    logWithCorrelation(
+      "warn",
+      "Order queue unavailable, creating Shopify order inline",
+      { checkoutSessionId },
+      { error: error instanceof Error ? error.message : String(error) }
+    );
+    const { createShopifyOrderIdempotent } = await import("@/lib/shopify/order-writer");
+    await createShopifyOrderIdempotent(checkoutSessionId);
+  }
+}
+
 export async function initPaymentForSession(publicToken: string, provider: PaymentProvider) {
   const session = await prisma.checkoutSession.findUnique({
     where: { publicToken },
@@ -216,9 +233,7 @@ export async function handlePaymentCallback(
       data: { status: "PAID" },
     });
 
-    await enqueueJob(QUEUE_NAMES.ORDERS, "create-shopify-order", {
-      checkoutSessionId: paymentAttempt.checkoutSessionId,
-    });
+    await enqueueShopifyOrderCreation(paymentAttempt.checkoutSessionId);
 
     const sessionAttrs = (paymentAttempt.checkoutSession.customAttributes ?? {}) as Record<
       string,
