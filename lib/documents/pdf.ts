@@ -127,6 +127,10 @@ export async function createSimplePdfFromHtml(html: string) {
 }
 
 export async function createPdfFromHtml(html: string) {
+  if (process.env.PDF_RENDERER !== "playwright") {
+    return createSimplePdfFromHtml(html);
+  }
+
   try {
     const importModule = new Function("specifier", "return import(specifier)") as (
       specifier: string
