@@ -30,7 +30,7 @@ function escapeHtml(value: string | number | null | undefined) {
 
 export function invoicePaymentPurpose(invoiceNumber: string, invoiceDate: Date, orderName?: string | null) {
   const order = formatOrderNumber(orderName);
-  return `Оплата замовлення № ${order}, рахунок ${invoiceNumber} від ${formatDate(invoiceDate)}, без ПДВ`.trim();
+  return `Оплата за рахунком ${invoiceNumber} від ${formatDate(invoiceDate)}, замовлення Shopify #${order}, без ПДВ`.trim();
 }
 
 function formatOrderNumber(orderName?: string | null) {
