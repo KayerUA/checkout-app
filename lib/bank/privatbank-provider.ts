@@ -1,6 +1,7 @@
 import type { BankStatementProvider, BankTransaction } from "@/lib/bank/types";
 
 const DEFAULT_API_URL = "https://acp.privatbank.ua/api/statements/transactions";
+const DEFAULT_SETTINGS_URL = "https://acp.privatbank.ua/api/statements/settings";
 
 type PrivatBankProviderOptions = {
   apiUrl?: string;
@@ -43,6 +44,25 @@ function money(record: PrivatTransaction, key: string) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function parsePrivatResponse(text: string, context: string) {
+  if (!text.trim()) {
+    throw new Error(`${context}: empty response from Privat24`);
+  }
+  try {
+    return JSON.parse(text) as {
+      status?: string;
+      error?: string;
+      message?: string;
+      code?: string;
+      exist_next_page?: boolean;
+      next_page_id?: string;
+      transactions?: PrivatTransaction[];
+    };
+  } catch {
+    throw new Error(`${context}: invalid JSON response from Privat24: ${text.slice(0, 300)}`);
+  }
+}
+
 function makeTransactionId(record: PrivatTransaction, index: number) {
   const technical = text(record, "TECHNICAL_TRANSACTION_ID");
   if (technical) return technical;
@@ -81,10 +101,42 @@ function mapTransaction(record: PrivatTransaction, index: number, iban?: string)
 export class PrivatBankStatementProvider implements BankStatementProvider {
   constructor(private options: PrivatBankProviderOptions) {}
 
-  async fetchTransactions(from: Date, to: Date): Promise<BankTransaction[]> {
+  private headers() {
     if (!this.options.token) {
       throw new Error("PrivatBank provider requires token");
     }
+    const clientId = this.options.clientId || "KAYER Checkout";
+    return {
+      "User-Agent": clientId,
+      id: clientId,
+      token: this.options.token,
+      "Content-Type": "application/json;charset=cp1251",
+      Accept: "application/json",
+    };
+  }
+
+  async testSettings() {
+    const response = await fetch(DEFAULT_SETTINGS_URL, {
+      method: "GET",
+      headers: this.headers(),
+    });
+
+    const text = await response.text();
+    if (!response.ok) {
+      throw new Error(`PrivatBank settings check failed: ${text}`);
+    }
+
+    const payload = parsePrivatResponse(text, "PrivatBank settings check failed");
+    if (payload.status && payload.status !== "SUCCESS") {
+      throw new Error(
+        `PrivatBank settings check failed: ${payload.code ? `${payload.code} ` : ""}${payload.error || payload.message || payload.status}`
+      );
+    }
+    return payload;
+  }
+
+  async fetchTransactions(from: Date, to: Date): Promise<BankTransaction[]> {
+    this.headers();
 
     const transactions: BankTransaction[] = [];
     let followId: string | undefined;
@@ -100,26 +152,14 @@ export class PrivatBankStatementProvider implements BankStatementProvider {
 
       const response = await fetch(url, {
         method: "GET",
-        headers: {
-          "User-Agent": this.options.clientId || "KAYER Checkout",
-          token: this.options.token,
-          "Content-Type": "application/json;charset=cp1251",
-          Accept: "application/json",
-        },
+        headers: this.headers(),
       });
 
       if (!response.ok) {
         throw new Error(`PrivatBank statement fetch failed: ${await response.text()}`);
       }
 
-      const payload = (await response.json()) as {
-        status?: string;
-        error?: string;
-        message?: string;
-        exist_next_page?: boolean;
-        next_page_id?: string;
-        transactions?: PrivatTransaction[];
-      };
+      const payload = parsePrivatResponse(await response.text(), "PrivatBank statement fetch failed");
 
       if (payload.status && payload.status !== "SUCCESS") {
         throw new Error(payload.error || payload.message || "PrivatBank API returned non-success status");

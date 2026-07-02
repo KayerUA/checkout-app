@@ -115,6 +115,7 @@ export async function POST() {
       clientId: config.clientId,
       iban: config.iban,
     });
+    await provider.testSettings();
     const to = new Date();
     const from = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
     const transactions = await provider.fetchTransactions(from, to);
