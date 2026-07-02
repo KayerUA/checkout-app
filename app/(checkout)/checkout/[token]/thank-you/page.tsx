@@ -3,7 +3,6 @@ import { notFound, redirect } from "next/navigation";
 import { getCheckoutSessionByToken } from "@/lib/checkout/session-service";
 import { formatMoney } from "@/lib/checkout/pricing";
 import { prisma } from "@/lib/db";
-import { ensureB2BInvoiceForCheckoutSession } from "@/lib/b2b/checkout";
 import { BRAND, CheckoutHeader } from "@/components/checkout/checkout-header";
 import { CheckoutFooter } from "@/components/checkout/checkout-footer";
 import { Badge } from "@/components/ui/badge";
@@ -17,7 +16,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { AlertCircle, CheckCircle2, Download, ExternalLink, FileText, Package } from "lucide-react";
+import { CheckCircle2, ExternalLink, FileText, Package } from "lucide-react";
 
 export const metadata = {
   title: "Дякуємо за замовлення — KAYER",
@@ -42,16 +41,6 @@ export default async function ThankYouPage({
   const isBankInvoice =
     session.paymentProvider === "BANK_INVOICE" ||
     attrs.payment_preference === "bank_invoice";
-
-  let invoiceError: string | null = null;
-  if (isBankInvoice) {
-    try {
-      await ensureB2BInvoiceForCheckoutSession(token);
-    } catch (error) {
-      invoiceError = error instanceof Error ? error.message : "Не вдалося створити рахунок";
-    }
-  }
-
   const b2bOrder = session.orderLink?.shopifyOrderGid
     ? await prisma.b2BOrder.findUnique({
         where: {
@@ -65,9 +54,6 @@ export default async function ThankYouPage({
         orderBy: { createdAt: "desc" },
       })
     : null;
-  const invoiceMetadata = invoice?.metadata as Record<string, unknown> | null;
-  const paymentPurpose =
-    typeof invoiceMetadata?.paymentPurpose === "string" ? invoiceMetadata.paymentPurpose : null;
 
   return (
     <>
@@ -87,17 +73,11 @@ export default async function ThankYouPage({
               {isBankInvoice ? "Очікуємо оплату за рахунком" : "Замовлення прийнято"}
             </Badge>
             <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-              {isBankInvoice
-                ? invoice?.pdfUrl
-                  ? "Рахунок готовий до оплати"
-                  : "Рахунок для оплати створюється"
-                : "Дякуємо за покупку!"}
+              {isBankInvoice ? "Рахунок для оплати готується" : "Дякуємо за покупку!"}
             </h1>
             <p className="text-sm text-muted-foreground">
               {isBankInvoice
-                ? invoice?.pdfUrl
-                  ? "Скачайте рахунок, оплатіть його з підприємницького або юридичного рахунку і вкажіть призначення платежу точно як нижче."
-                  : "Ми створюємо рахунок і надішлемо його на email для документів. Замовлення піде в обробку після надходження коштів."
+                ? "Ми надішлемо рахунок на email для документів. Замовлення піде в обробку після надходження коштів з підприємницького або юридичного рахунку."
                 : "Ми вже отримали ваше замовлення і незабаром почнемо обробку."}
             </p>
           </div>
@@ -134,22 +114,11 @@ export default async function ThankYouPage({
                   <div className="flex justify-between gap-4">
                     <span className="text-muted-foreground">Статус</span>
                     <span className="text-right">
-                      {invoiceError
-                        ? "Потрібна перевірка"
-                        : b2bOrder?.status === "WAITING_BANK_PAYMENT"
+                      {b2bOrder?.status === "WAITING_BANK_PAYMENT"
                         ? "Рахунок надіслано, очікуємо платіж"
                         : b2bOrder?.status ?? "Рахунок створюється"}
                     </span>
                   </div>
-                  {invoiceError && (
-                    <div className="flex gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-destructive">
-                      <AlertCircle className="mt-0.5 size-4 shrink-0" />
-                      <div>
-                        <p className="font-medium">Не вдалося автоматично створити рахунок</p>
-                        <p className="mt-1 text-xs">{invoiceError}</p>
-                      </div>
-                    </div>
-                  )}
                   {invoice?.number && (
                     <div className="flex justify-between gap-4">
                       <span className="text-muted-foreground">Рахунок</span>
@@ -166,14 +135,6 @@ export default async function ThankYouPage({
                       ) : (
                         <span className="font-medium">{invoice.number}</span>
                       )}
-                    </div>
-                  )}
-                  {paymentPurpose && (
-                    <div className="space-y-2">
-                      <span className="text-muted-foreground">Призначення платежу</span>
-                      <div className="rounded-md border bg-background p-3 font-medium leading-relaxed">
-                        {paymentPurpose}
-                      </div>
                     </div>
                   )}
                   <Separator />
@@ -209,22 +170,10 @@ export default async function ThankYouPage({
                 </>
               )}
             </CardContent>
-            <CardFooter className="flex flex-col gap-2 sm:flex-row">
-              {invoice?.pdfUrl && (
-                <Button
-                  className="w-full"
-                  size="lg"
-                  nativeButton={false}
-                  render={<a href={invoice.pdfUrl} target="_blank" rel="noreferrer" />}
-                >
-                  <Download className="size-4" />
-                  Скачати рахунок PDF
-                </Button>
-              )}
+            <CardFooter>
               <Button
                 className="w-full"
                 size="lg"
-                variant={invoice?.pdfUrl ? "outline" : "default"}
                 nativeButton={false}
                 render={<Link href={BRAND.siteUrl} />}
               >

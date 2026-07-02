@@ -121,30 +121,13 @@ export async function handleB2BOrderCreated(order: ShopifyOrderPayload, shopDoma
   });
 
   if (invoice.created && buyer.docs_email) {
-    try {
-      await sendInvoiceEmail({
-        to: buyer.docs_email,
-        invoiceNumber: invoice.document.number ?? "",
-        paymentPurpose: invoice.paymentPurpose,
-        pdfUrl: invoice.document.pdfUrl,
-        pdf: invoice.pdf,
-      });
-    } catch (error) {
-      await updateOrderTags({
-        shopDomain: orderShop,
-        orderId: String(order.id),
-        add: [B2B_TAGS.emailError],
-      });
-      await writeAutomationLog({
-        shopifyOrderId: String(order.id),
-        eventType: "orders/create",
-        step: "invoice_email",
-        status: "ERROR",
-        message: "B2B invoice email failed",
-        error,
-        metadata: { invoiceNumber: invoice.document.number },
-      });
-    }
+    await sendInvoiceEmail({
+      to: buyer.docs_email,
+      invoiceNumber: invoice.document.number ?? "",
+      paymentPurpose: invoice.paymentPurpose,
+      pdfUrl: invoice.document.pdfUrl,
+      pdf: invoice.pdf,
+    });
   }
 
   await writeAutomationLog({
