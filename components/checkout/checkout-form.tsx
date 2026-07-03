@@ -34,6 +34,20 @@ type CheckoutLine = {
   title: string;
   quantity: number;
   unitPrice: number;
+  compareAtPrice?: number | null;
+  imageUrl?: string | null;
+  imageAlt?: string | null;
+};
+
+type CheckoutRecommendation = {
+  productGid: string;
+  variantGid: string;
+  title: string;
+  variantTitle?: string | null;
+  imageUrl?: string | null;
+  imageAlt?: string | null;
+  unitPrice: number;
+  compareAtPrice?: number | null;
 };
 
 type CheckoutData = {
@@ -49,8 +63,9 @@ type CheckoutData = {
   buyerLastName?: string | null;
   shippingPayload?: Record<string, string> | null;
   paymentProvider?: string | null;
-  customAttributes?: Record<string, string> | null;
+  customAttributes?: Record<string, unknown> | null;
   lines: CheckoutLine[];
+  recommendations?: CheckoutRecommendation[];
   theme?: Record<string, string>;
   ab?: Record<string, string> | null;
 };
@@ -120,12 +135,13 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
   const [cities, setCities] = useState<City[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [selectedCityRef, setSelectedCityRef] = useState("");
-  const initialAttrs = initial.customAttributes ?? {};
+  const initialAttrs = (initial.customAttributes ?? {}) as Record<string, string>;
   const [buyerType, setBuyerType] = useState(initialAttrs.buyer_type ?? "individual");
   const [paymentPreference, setPaymentPreference] = useState(
     initialAttrs.payment_preference ?? "card"
   );
   const [searchingCities, setSearchingCities] = useState(false);
+  const [addingVariantGid, setAddingVariantGid] = useState<string | null>(null);
 
   const buttonText = data.theme?.buttonText ?? "Оформити замовлення";
 
@@ -286,6 +302,25 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
     await fetch(`/api/public/checkout-sessions/${data.publicToken}/reprice`, { method: "POST" });
     const refresh = await fetch(`/api/public/checkout-sessions/${data.publicToken}`);
     setData(await refresh.json());
+  }
+
+  async function addRecommendation(recommendation: CheckoutRecommendation) {
+    setAddingVariantGid(recommendation.variantGid);
+    setError(null);
+    try {
+      const res = await fetch(`/api/public/checkout-sessions/${data.publicToken}/lines`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ variantGid: recommendation.variantGid, quantity: 1 }),
+      });
+      const updated = await res.json();
+      if (!res.ok) throw new Error(updated.error ?? "Не вдалося додати товар");
+      setData(updated);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Не вдалося додати товар");
+    } finally {
+      setAddingVariantGid(null);
+    }
   }
 
   return (
@@ -559,6 +594,9 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
           shippingAmount={data.shippingAmount}
           totalAmount={data.totalAmount}
           shippingLabel={data.shippingPayload?.branchName ? "Нова Пошта" : undefined}
+          recommendations={data.recommendations}
+          addingVariantGid={addingVariantGid}
+          onAddRecommendation={addRecommendation}
         />
       </div>
     </div>

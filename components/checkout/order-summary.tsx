@@ -1,5 +1,6 @@
 import { formatMoney } from "@/lib/checkout/pricing";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -9,13 +10,27 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { Package } from "lucide-react";
+import { Loader2, Package, Plus } from "lucide-react";
 
 type Line = {
   id: string;
   title: string;
   quantity: number;
   unitPrice: number;
+  compareAtPrice?: number | null;
+  imageUrl?: string | null;
+  imageAlt?: string | null;
+};
+
+type Recommendation = {
+  productGid: string;
+  variantGid: string;
+  title: string;
+  variantTitle?: string | null;
+  imageUrl?: string | null;
+  imageAlt?: string | null;
+  unitPrice: number;
+  compareAtPrice?: number | null;
 };
 
 type Props = {
@@ -25,6 +40,9 @@ type Props = {
   shippingAmount: number;
   totalAmount: number;
   shippingLabel?: string;
+  recommendations?: Recommendation[];
+  addingVariantGid?: string | null;
+  onAddRecommendation?: (recommendation: Recommendation) => void;
 };
 
 export function OrderSummary({
@@ -34,7 +52,15 @@ export function OrderSummary({
   shippingAmount,
   totalAmount,
   shippingLabel,
+  recommendations = [],
+  addingVariantGid,
+  onAddRecommendation,
 }: Props) {
+  const lineVariantTitles = new Set(lines.map((line) => line.title));
+  const visibleRecommendations = recommendations
+    .filter((item) => !lineVariantTitles.has(`${item.title} — ${item.variantTitle}`))
+    .slice(0, 3);
+
   return (
     <Card className="lg:sticky lg:top-6">
       <CardHeader>
@@ -52,14 +78,30 @@ export function OrderSummary({
         <ul className="max-h-64 space-y-3 overflow-y-auto pr-1">
           {lines.map((line) => (
             <li key={line.id} className="flex gap-3">
-              <div className="flex size-12 shrink-0 items-center justify-center rounded-md bg-muted text-xs font-medium text-muted-foreground">
-                {line.quantity}×
+              <div className="relative flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-md border bg-muted">
+                {line.imageUrl ? (
+                  // Use a plain image here to avoid remote image domain config churn for Shopify CDN.
+                  <img
+                    src={line.imageUrl}
+                    alt={line.imageAlt ?? line.title}
+                    className="size-full object-contain"
+                    loading="lazy"
+                  />
+                ) : (
+                  <Package className="size-5 text-muted-foreground" />
+                )}
+                <span className="absolute right-1 bottom-1 rounded bg-background/90 px-1.5 py-0.5 text-[10px] font-medium shadow-sm">
+                  {line.quantity}×
+                </span>
               </div>
               <div className="min-w-0 flex-1">
                 <p className="line-clamp-2 text-sm leading-snug">{line.title}</p>
-                <p className="mt-0.5 text-xs text-muted-foreground">
-                  {formatMoney(line.unitPrice, currency)} / шт.
-                </p>
+                <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                  <span>{formatMoney(line.unitPrice, currency)} / шт.</span>
+                  {line.compareAtPrice && line.compareAtPrice > line.unitPrice ? (
+                    <span className="line-through">{formatMoney(line.compareAtPrice, currency)}</span>
+                  ) : null}
+                </div>
               </div>
               <p className="shrink-0 text-sm font-medium">
                 {formatMoney(line.unitPrice * line.quantity, currency)}
@@ -67,6 +109,53 @@ export function OrderSummary({
             </li>
           ))}
         </ul>
+
+        {visibleRecommendations.length > 0 && onAddRecommendation ? (
+          <div className="space-y-3 rounded-lg border bg-muted/30 p-3">
+            <div>
+              <p className="text-sm font-medium">Додати до замовлення</p>
+              <p className="text-xs text-muted-foreground">Корисні позиції до поточної покупки</p>
+            </div>
+            <div className="space-y-2">
+              {visibleRecommendations.map((item) => {
+                const loading = addingVariantGid === item.variantGid;
+                return (
+                  <div key={item.variantGid} className="flex gap-2 rounded-md bg-background p-2">
+                    <div className="flex size-12 shrink-0 items-center justify-center overflow-hidden rounded border bg-muted">
+                      {item.imageUrl ? (
+                        <img
+                          src={item.imageUrl}
+                          alt={item.imageAlt ?? item.title}
+                          className="size-full object-contain"
+                          loading="lazy"
+                        />
+                      ) : (
+                        <Package className="size-4 text-muted-foreground" />
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="line-clamp-2 text-xs font-medium leading-snug">{item.title}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {formatMoney(item.unitPrice, currency)}
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-8 shrink-0 px-2"
+                      onClick={() => onAddRecommendation(item)}
+                      disabled={loading}
+                      aria-label={`Додати ${item.title}`}
+                    >
+                      {loading ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
+                    </Button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
       </CardContent>
 
       <CardFooter className="flex-col items-stretch gap-3 border-t">

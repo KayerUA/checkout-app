@@ -15,7 +15,37 @@ const VARIANT_QUERY = `
         sku
         price
         compareAtPrice
+        image { url altText }
         product { id title }
+        product {
+          id
+          title
+          handle
+          featuredImage { url altText }
+        }
+      }
+    }
+  }
+`;
+
+const CHECKOUT_RECOMMENDATIONS_QUERY = `
+  query CheckoutRecommendations {
+    products(first: 8, query: "status:active", sortKey: UPDATED_AT, reverse: true) {
+      nodes {
+        id
+        title
+        handle
+        featuredImage { url altText }
+        variants(first: 1) {
+          nodes {
+            id
+            title
+            sku
+            price
+            compareAtPrice
+            image { url altText }
+          }
+        }
       }
     }
   }
@@ -27,10 +57,33 @@ type VariantNode = {
   sku: string | null;
   price: string;
   compareAtPrice: string | null;
-  product: { id: string; title: string };
+  image: { url: string; altText: string | null } | null;
+  product: {
+    id: string;
+    title: string;
+    handle: string;
+    featuredImage: { url: string; altText: string | null } | null;
+  };
 };
 
-async function resolveAndPriceLines(
+type RecommendationProductNode = {
+  id: string;
+  title: string;
+  handle: string;
+  featuredImage: { url: string; altText: string | null } | null;
+  variants: {
+    nodes: Array<{
+      id: string;
+      title: string;
+      sku: string | null;
+      price: string;
+      compareAtPrice: string | null;
+      image: { url: string; altText: string | null } | null;
+    }>;
+  };
+};
+
+export async function resolveAndPriceLines(
   merchantId: string,
   cartLines: Array<{ variantGid: string; quantity: number }>
 ) {
@@ -58,8 +111,52 @@ async function resolveAndPriceLines(
       quantity: line.quantity,
       unitPrice,
       compareAtPrice,
+      metadata: {
+        imageUrl: variant.image?.url ?? variant.product.featuredImage?.url ?? null,
+        imageAlt: variant.image?.altText ?? variant.product.featuredImage?.altText ?? variant.product.title,
+        productHandle: variant.product.handle,
+      },
     };
   });
+}
+
+async function getCheckoutRecommendations(merchantId: string, excludedProductGids: string[]) {
+  const session = await getMerchantShopifySession(merchantId);
+  if (!session) return [];
+
+  try {
+    const result = await shopifyAdminGraphQL<{
+      data?: { products?: { nodes: RecommendationProductNode[] } };
+    }>(session, CHECKOUT_RECOMMENDATIONS_QUERY);
+    const excluded = new Set(excludedProductGids);
+    return (result.data?.products?.nodes ?? [])
+      .filter((product) => !excluded.has(product.id))
+      .map((product) => {
+        const variant = product.variants.nodes[0];
+        if (!variant) return null;
+        const image = variant.image ?? product.featuredImage;
+        const unitPrice = Math.round(parseFloat(variant.price) * 100);
+        const compareAtPrice = variant.compareAtPrice
+          ? Math.round(parseFloat(variant.compareAtPrice) * 100)
+          : null;
+        return {
+          productGid: product.id,
+          variantGid: variant.id,
+          title: product.title,
+          variantTitle: variant.title,
+          sku: variant.sku,
+          handle: product.handle,
+          imageUrl: image?.url ?? null,
+          imageAlt: image?.altText ?? product.title,
+          unitPrice,
+          compareAtPrice,
+        };
+      })
+      .filter(Boolean)
+      .slice(0, 3);
+  } catch {
+    return [];
+  }
 }
 
 export type CreateCheckoutSessionInput = {
@@ -79,6 +176,10 @@ export type CreateCheckoutSessionInput = {
 
 export async function createCheckoutSession(input: CreateCheckoutSessionInput) {
   const pricedLines = await resolveAndPriceLines(input.merchantId, input.cartLines);
+  const recommendations = await getCheckoutRecommendations(
+    input.merchantId,
+    pricedLines.map((line) => line.productGid).filter(Boolean) as string[]
+  );
   const totals = calcTotals(
     pricedLines.map((l) => ({
       ...l,
@@ -103,6 +204,7 @@ export async function createCheckoutSession(input: CreateCheckoutSessionInput) {
         buyerIp: input.buyerIp ?? null,
         sourceUrl: input.sourceUrl ?? null,
         ab: input.ab ?? null,
+        checkoutRecommendations: recommendations,
       },
       lines: { create: pricedLines },
     },
@@ -110,6 +212,51 @@ export async function createCheckoutSession(input: CreateCheckoutSessionInput) {
   });
 
   return session;
+}
+
+export async function addCheckoutSessionLine(
+  publicToken: string,
+  input: { variantGid: string; quantity?: number }
+) {
+  const session = await prisma.checkoutSession.findUnique({
+    where: { publicToken },
+    include: { lines: true },
+  });
+  if (!session) throw new Error("Session not found");
+  if (!["DRAFT", "READY"].includes(session.status)) {
+    throw new Error("Checkout cannot be changed after payment started");
+  }
+
+  const quantity = input.quantity && input.quantity > 0 ? input.quantity : 1;
+  const [pricedLine] = await resolveAndPriceLines(session.merchantId, [
+    { variantGid: input.variantGid, quantity },
+  ]);
+  const existing = session.lines.find((line) => line.variantGid === pricedLine.variantGid);
+
+  await prisma.$transaction(async (tx) => {
+    if (existing) {
+      await tx.checkoutLine.update({
+        where: { id: existing.id },
+        data: { quantity: existing.quantity + quantity },
+      });
+    } else {
+      await tx.checkoutLine.create({
+        data: {
+          checkoutSessionId: session.id,
+          variantGid: pricedLine.variantGid,
+          productGid: pricedLine.productGid,
+          sku: pricedLine.sku,
+          title: pricedLine.title,
+          quantity: pricedLine.quantity,
+          unitPrice: pricedLine.unitPrice,
+          compareAtPrice: pricedLine.compareAtPrice,
+          metadata: pricedLine.metadata,
+        },
+      });
+    }
+  });
+
+  return repriceCheckoutSession(publicToken);
 }
 
 export async function getCheckoutSessionByToken(publicToken: string) {
@@ -226,7 +373,18 @@ export function serializePublicSession(
     shippingPayload: session.shippingPayload,
     paymentProvider: session.paymentProvider,
     customAttributes: session.customAttributes,
-    lines: session.lines,
+    lines: session.lines.map((line) => {
+      const metadata = (line.metadata ?? {}) as Record<string, unknown>;
+      return {
+        ...line,
+        imageUrl: typeof metadata.imageUrl === "string" ? metadata.imageUrl : null,
+        imageAlt: typeof metadata.imageAlt === "string" ? metadata.imageAlt : line.title,
+        productHandle: typeof metadata.productHandle === "string" ? metadata.productHandle : null,
+      };
+    }),
+    recommendations: Array.isArray(attrs.checkoutRecommendations)
+      ? attrs.checkoutRecommendations
+      : [],
     theme,
     ab,
     orderLink: session.orderLink
