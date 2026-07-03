@@ -88,7 +88,7 @@ export async function searchCities(query: string, apiKey?: string) {
     key,
     "Address",
     "searchSettlements",
-    { CityName: query, Limit: 20 }
+    { CityName: query, Limit: "20" }
   );
 
   return cities.flatMap((c) =>
@@ -139,7 +139,7 @@ export async function searchBranches(input: BranchSearchInput, apiKey?: string) 
   >(key, "Address", "getWarehouses", {
     CityRef: input.cityRef,
     FindByString: input.query ?? "",
-    Limit: 30,
+    Limit: "30",
   });
 
   return warehouses.map((w) => ({
@@ -161,7 +161,7 @@ export async function syncNovaPoshtaDictionary(apiKey?: string) {
 
   const cities = await novaPoshtaRequest<
     Array<{ Ref: string; Description: string; DescriptionRu: string; AreaDescription: string }>
-  >(key, "Address", "getCities", { Limit: 500, Page: 1 });
+  >(key, "Address", "getCities", { Limit: "500", Page: "1" });
 
   for (const city of cities) {
     await prisma.novaPoshtaCity.upsert({
@@ -179,37 +179,8 @@ export async function syncNovaPoshtaDictionary(apiKey?: string) {
       },
     });
 
-    const warehouses = await novaPoshtaRequest<
-      Array<{
-        Ref: string;
-        Number: string;
-        ShortAddress: string;
-        CityRef: string;
-        CityDescription: string;
-        TotalMaxWeightAllowed?: string;
-      }>
-    >(key, "Address", "getWarehouses", { CityRef: city.Ref, Limit: 200 });
-
-    for (const w of warehouses) {
-      await prisma.novaPoshtaBranch.upsert({
-        where: { ref: w.Ref },
-        create: {
-          ref: w.Ref,
-          cityRef: w.CityRef,
-          number: w.Number,
-          shortAddress: w.ShortAddress,
-          cityName: w.CityDescription,
-          weightLimit: w.TotalMaxWeightAllowed
-            ? parseFloat(w.TotalMaxWeightAllowed)
-            : null,
-        },
-        update: {
-          number: w.Number,
-          shortAddress: w.ShortAddress,
-          cityName: w.CityDescription,
-        },
-      });
-    }
+    // Branches are fetched live by selected city in checkout. Syncing every
+    // branch for every city is too slow for a serverless admin action.
   }
 
   return { cities: cities.length, branches: 0, skipped: false };
