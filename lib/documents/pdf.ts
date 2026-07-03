@@ -1,5 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
+// pdfkit does not publish TypeScript declarations, but a static import is
+// important here so Vercel/Next includes it in the server deployment trace.
+// @ts-expect-error Missing pdfkit declarations.
+import PDFDocument from "pdfkit";
 
 function escapePdfText(value: string) {
   return value.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
@@ -49,17 +53,6 @@ function resolveUnicodeFontPath() {
 export async function createSimplePdfFromHtml(html: string) {
   const fontPath = resolveUnicodeFontPath();
   if (fontPath) {
-    const importModule = new Function("specifier", "return import(specifier)") as (
-      specifier: string
-    ) => Promise<{ default: new (options: Record<string, unknown>) => {
-      on: (event: string, callback: (chunk?: Buffer) => void) => void;
-      font: (path: string) => unknown;
-      fontSize: (size: number) => { text: (text: string, options?: Record<string, unknown>) => unknown };
-      moveDown: (lines?: number) => unknown;
-      end: () => void;
-    } }>;
-    const { default: PDFDocument } = await importModule("pdfkit");
-
     return new Promise<Buffer>((resolve, reject) => {
       const doc = new PDFDocument({
         size: "A4",
@@ -69,7 +62,7 @@ export async function createSimplePdfFromHtml(html: string) {
       });
       const chunks: Buffer[] = [];
 
-      doc.on("data", (chunk) => {
+      doc.on("data", (chunk: Buffer) => {
         if (chunk) chunks.push(Buffer.from(chunk));
       });
       doc.on("end", () => resolve(Buffer.concat(chunks)));
