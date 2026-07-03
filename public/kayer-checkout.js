@@ -312,10 +312,10 @@
     block.innerHTML =
       '<div style="font-weight:600;margin-bottom:8px;">Покупаєте як ФОП або компанія?</div>' +
       '<label style="display:block;margin:8px 0;"><input type="radio" name="buyer_type" value="individual" checked> Фізична особа</label>' +
-      '<label style="display:block;margin:8px 0;"><input type="radio" name="buyer_type" value="fop_company"> ФОП / компанія</label>' +
+      '<label style="display:block;margin:8px 0;"><input type="radio" name="buyer_type" value="fop_company"> ФОП / юридична особа</label>' +
       '<div data-kayer-fop-fields style="display:none;margin-top:12px;">' +
-      '<input name="fop_name" placeholder="Назва / ПІБ ФОП" style="box-sizing:border-box;width:100%;margin:6px 0;padding:10px;border:1px solid #ccc;border-radius:6px;">' +
-      '<input name="fop_tax_id" placeholder="ЄДРПОУ / РНОКПП" style="box-sizing:border-box;width:100%;margin:6px 0;padding:10px;border:1px solid #ccc;border-radius:6px;">' +
+      '<input name="fop_name" placeholder="Назва компанії / ПІБ ФОП" minlength="3" style="box-sizing:border-box;width:100%;margin:6px 0;padding:10px;border:1px solid #ccc;border-radius:6px;">' +
+      '<input name="fop_tax_id" inputmode="numeric" pattern="\\\\d{8}|\\\\d{10}" placeholder="ЄДРПОУ / ІПН" style="box-sizing:border-box;width:100%;margin:6px 0;padding:10px;border:1px solid #ccc;border-radius:6px;">' +
       '<input name="docs_email" type="email" placeholder="Email для документів" style="box-sizing:border-box;width:100%;margin:6px 0;padding:10px;border:1px solid #ccc;border-radius:6px;">' +
       '<input name="docs_phone" type="tel" placeholder="Телефон" style="box-sizing:border-box;width:100%;margin:6px 0;padding:10px;border:1px solid #ccc;border-radius:6px;">' +
       '<input name="fop_legal_address" placeholder="Юридична адреса" style="box-sizing:border-box;width:100%;margin:6px 0;padding:10px;border:1px solid #ccc;border-radius:6px;">' +
@@ -323,7 +323,7 @@
       '<label style="display:block;margin:8px 0;"><input type="radio" name="payment_preference" value="bank_invoice" checked> Оплата за рахунком</label>' +
       '<label style="display:block;margin:8px 0;"><input type="radio" name="payment_preference" value="card"> Оплата карткою</label>' +
       '<p style="font-size:12px;line-height:1.4;color:#555;margin:8px 0 0;">Для покупок від ФОП або компанії рекомендуємо оплату за рахунком з підприємницького/юридичного рахунку. Так ми зможемо автоматично підготувати документи для бухгалтерії.</p>' +
-      '<p data-kayer-card-warning style="display:none;font-size:12px;line-height:1.4;color:#8a5a00;margin:8px 0 0;">Оплата карткою підходить для швидкої покупки. Якщо вам потрібна оплата саме від ФОП/компанії — оберіть оплату за рахунком.</p>' +
+      '<p data-kayer-card-warning style="display:none;font-size:12px;line-height:1.4;color:#8a5a00;margin:8px 0 0;">Оплата карткою підходить для швидкої покупки фізичної особи. Якщо вам потрібна оплата саме від ФОП або юридичної особи — оберіть оплату за рахунком.</p>' +
       "</div>";
 
     target.insertBefore(block, target.firstChild);

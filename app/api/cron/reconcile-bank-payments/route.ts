@@ -4,11 +4,18 @@ import { reconcileBankPayments } from "@/lib/reconciliation/service";
 
 export const runtime = "nodejs";
 
-export async function GET(request: NextRequest) {
+function isAuthorized(request: NextRequest) {
   const env = getEnv();
   const expected = env.CRON_SECRET || env.INTERNAL_JOBS_SECRET;
-  const provided = request.headers.get("x-cron-secret");
-  if (expected && provided !== expected) {
+  if (!expected) return true;
+
+  const headerSecret = request.headers.get("x-cron-secret");
+  const authorization = request.headers.get("authorization");
+  return headerSecret === expected || authorization === `Bearer ${expected}`;
+}
+
+export async function GET(request: NextRequest) {
+  if (!isAuthorized(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

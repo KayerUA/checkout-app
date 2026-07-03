@@ -6,6 +6,10 @@
     {
       "path": "/api/cron/reconcile-payments",
       "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/cron/reconcile-bank-payments",
+      "schedule": "15 0 * * *"
     }
   ],
   "headers": [

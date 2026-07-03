@@ -32,13 +32,13 @@ export default async function B2BOrdersPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold">B2B/FOP Orders</h1>
-        <p className="text-sm text-zinc-500">Invoices, bank reconciliation and accounting documents.</p>
+        <h1 className="text-2xl font-bold">B2B/ФОП orders</h1>
+        <p className="text-sm text-zinc-500">Рахунки, банківська звірка та бухгалтерські документи.</p>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle>Latest B2B orders</CardTitle>
+          <CardTitle>Останні B2B orders</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">
@@ -46,7 +46,7 @@ export default async function B2BOrdersPage() {
               <thead className="border-b text-xs uppercase text-zinc-500">
                 <tr>
                   <th className="py-2">Order</th>
-                  <th>FOP / company</th>
+                  <th>ФОП / юридична особа</th>
                   <th>Tax ID</th>
                   <th>Phone</th>
                   <th>Amount</th>

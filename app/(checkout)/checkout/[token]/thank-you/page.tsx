@@ -89,7 +89,7 @@ export default async function ThankYouPage({
                 <CardTitle className="text-base">Деталі замовлення</CardTitle>
               </div>
               <CardDescription>
-                {isBankInvoice ? "Оплата за рахунком для ФОП / компанії" : "Підтвердження надіслано на email"}
+                {isBankInvoice ? "Оплата за рахунком для ФОП / юридичної особи" : "Підтвердження надіслано на email"}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3 text-sm">
@@ -141,7 +141,7 @@ export default async function ThankYouPage({
                   <div className="rounded-md bg-muted p-3 text-sm leading-relaxed">
                     <p className="font-medium">Що далі</p>
                     <p className="mt-1 text-muted-foreground">
-                      Оплатіть рахунок саме з рахунку ФОП або компанії. Після автоматичної звірки банк-платежу ми позначимо замовлення як готове до обробки та надішлемо документи для бухгалтерії.
+                      Оплатіть рахунок саме з рахунку ФОП або юридичної особи. Після автоматичної звірки банк-платежу ми позначимо замовлення як готове до обробки та надішлемо документи для бухгалтерії.
                     </p>
                   </div>
                 </>

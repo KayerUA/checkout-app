@@ -58,6 +58,26 @@ type CheckoutData = {
 type City = { ref: string; name: string };
 type Branch = { ref: string; number: string; shortAddress: string; cityName: string };
 
+function cleanDigits(value: FormDataEntryValue | null) {
+  return String(value ?? "").replace(/\D/g, "");
+}
+
+function validateCompanyBillingFields(form: FormData) {
+  const companyName = String(form.get("fop_name") ?? "").trim();
+  const taxId = cleanDigits(form.get("fop_tax_id"));
+  const docsEmail = String(form.get("docs_email") ?? "").trim();
+  const docsPhone = cleanDigits(form.get("docs_phone") || form.get("phone"));
+  const legalAddress = String(form.get("fop_legal_address") ?? "").trim();
+
+  if (companyName.length < 3) return "Вкажіть назву компанії або ПІБ ФОП.";
+  if (![8, 10].includes(taxId.length)) return "ЄДРПОУ має містити 8 цифр, ІПН/РНОКПП — 10 цифр.";
+  if (!docsEmail.includes("@")) return "Вкажіть коректний email для документів.";
+  if (docsPhone.length < 10) return "Вкажіть коректний телефон для документів.";
+  if (legalAddress.length < 8) return "Вкажіть юридичну адресу.";
+
+  return null;
+}
+
 function StepCard({
   step,
   title,
@@ -183,6 +203,15 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
     const selectedPaymentProvider = paymentPreference === "bank_invoice" ? "BANK_INVOICE" : "LIQPAY";
 
     try {
+      if (buyerType === "fop_company") {
+        const validationError = validateCompanyBillingFields(form);
+        if (validationError) {
+          setError(validationError);
+          setLoading(false);
+          return;
+        }
+      }
+
       await saveSession({
         buyerEmail: form.get("email"),
         buyerPhone: form.get("phone"),
@@ -316,19 +345,27 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
                         setPaymentPreference("bank_invoice");
                       }}
                     />
-                    ФОП / компанія
+                    ФОП / юридична особа
                   </label>
                 </div>
 
                 {buyerType === "fop_company" && (
                   <div className="grid gap-4 sm:grid-cols-2">
                     <div className="space-y-2 sm:col-span-2">
-                      <Label htmlFor="fop_name">Назва / ПІБ ФОП</Label>
-                      <Input id="fop_name" name="fop_name" defaultValue={initialAttrs.fop_name ?? ""} required={buyerType === "fop_company"} />
+                      <Label htmlFor="fop_name">Назва компанії / ПІБ ФОП</Label>
+                      <Input id="fop_name" name="fop_name" defaultValue={initialAttrs.fop_name ?? ""} minLength={3} required={buyerType === "fop_company"} />
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="fop_tax_id">ЄДРПОУ / РНОКПП</Label>
-                      <Input id="fop_tax_id" name="fop_tax_id" defaultValue={initialAttrs.fop_tax_id ?? ""} required={buyerType === "fop_company"} />
+                      <Label htmlFor="fop_tax_id">ЄДРПОУ / ІПН</Label>
+                      <Input
+                        id="fop_tax_id"
+                        name="fop_tax_id"
+                        defaultValue={initialAttrs.fop_tax_id ?? ""}
+                        inputMode="numeric"
+                        pattern="\\d{8}|\\d{10}"
+                        title="ЄДРПОУ має містити 8 цифр, ІПН/РНОКПП — 10 цифр"
+                        required={buyerType === "fop_company"}
+                      />
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="docs_email">Email для документів</Label>
@@ -340,7 +377,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
                     </div>
                     <div className="space-y-2 sm:col-span-2">
                       <Label htmlFor="fop_legal_address">Юридична адреса</Label>
-                      <Input id="fop_legal_address" name="fop_legal_address" defaultValue={initialAttrs.fop_legal_address ?? ""} required={buyerType === "fop_company"} />
+                      <Input id="fop_legal_address" name="fop_legal_address" defaultValue={initialAttrs.fop_legal_address ?? ""} minLength={8} required={buyerType === "fop_company"} />
                     </div>
                     <div className="space-y-2 sm:col-span-2">
                       <Label htmlFor="accounting_comment">Коментар для бухгалтерії</Label>
@@ -437,7 +474,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
             </div>
           </StepCard>
 
-          <StepCard step={3} title="Спосіб оплати" description="Картка або рахунок для ФОП/компанії" icon={CreditCard}>
+          <StepCard step={3} title="Спосіб оплати" description="Картка або рахунок для ФОП / юридичної особи" icon={CreditCard}>
             <div className="grid gap-3">
               <label className={cn("flex cursor-pointer items-center gap-4 rounded-lg border p-4", paymentPreference === "card" && "border-primary bg-muted/50")}>
                 <input
@@ -459,7 +496,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
                 <Alert>
                   <AlertCircle className="size-4" />
                   <AlertDescription>
-                    Оплата карткою підходить для швидкої покупки. Якщо вам потрібна оплата саме від ФОП/компанії — оберіть оплату за рахунком.
+                    Оплата карткою підходить для швидкої покупки фізичної особи. Якщо вам потрібна оплата саме від ФОП або юридичної особи — оберіть оплату за рахунком.
                   </AlertDescription>
                 </Alert>
               )}

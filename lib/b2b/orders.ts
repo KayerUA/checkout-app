@@ -153,7 +153,7 @@ async function sendInvoiceEmail(input: {
     subject: `Рахунок на оплату ${input.invoiceNumber} — KAYER UA`,
     html: `
       <p>Дякуємо за замовлення.</p>
-      <p>Ви обрали оплату як ФОП / компанія.</p>
+      <p>Ви обрали оплату як ФОП / юридична особа.</p>
       <p>У вкладенні / за посиланням — рахунок на оплату.</p>
       <p>Будь ласка, оплатіть його з підприємницького або юридичного рахунку.</p>
       <p><strong>Призначення платежу:</strong><br />${input.paymentPurpose}</p>
@@ -182,7 +182,7 @@ export async function handleB2BOrderPaid(order: ShopifyOrderPayload, shopDomain?
       eventType: "orders/paid",
       step: "card_paid_review",
       status: "WARN",
-      message: "FOP card payment needs accounting review",
+      message: "Company card payment needs accounting review",
     });
   } else {
     await writeAutomationLog({

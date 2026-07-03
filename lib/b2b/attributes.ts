@@ -42,15 +42,33 @@ export function getB2BAttributesFromOrder(order: ShopifyOrderPayload): FopOrderA
 
 export function validateFopFields(attrs: FopOrderAttributes) {
   if (attrs.buyer_type !== "fop_company") return;
+  const taxId = (attrs.fop_tax_id ?? "").replace(/\D/g, "");
+  const docsPhone = (attrs.docs_phone ?? "").replace(/\D/g, "");
   const missing = [
     ["fop_name", attrs.fop_name],
-    ["fop_tax_id", attrs.fop_tax_id],
+    ["fop_tax_id", taxId],
     ["docs_email", attrs.docs_email],
-    ["docs_phone", attrs.docs_phone],
+    ["docs_phone", docsPhone],
     ["fop_legal_address", attrs.fop_legal_address],
   ].filter(([, value]) => !value);
 
   if (missing.length > 0) {
-    throw new Error(`Missing FOP fields: ${missing.map(([key]) => key).join(", ")}`);
+    throw new Error(`Missing company billing fields: ${missing.map(([key]) => key).join(", ")}`);
+  }
+
+  if (![8, 10].includes(taxId.length)) {
+    throw new Error("ЄДРПОУ must contain 8 digits, ІПН/РНОКПП must contain 10 digits");
+  }
+
+  if ((attrs.fop_name ?? "").trim().length < 3) {
+    throw new Error("Company billing name is too short");
+  }
+
+  if (docsPhone.length < 10) {
+    throw new Error("Documents phone is invalid");
+  }
+
+  if ((attrs.fop_legal_address ?? "").trim().length < 8) {
+    throw new Error("Legal address is too short");
   }
 }

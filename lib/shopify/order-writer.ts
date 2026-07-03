@@ -8,6 +8,7 @@ import {
 import { enqueueJob, QUEUE_NAMES } from "@/lib/queue";
 import { logWithCorrelation } from "@/lib/logger";
 import { withIdempotency } from "@/lib/idempotency";
+import { normalizeB2BAttributes, validateFopFields } from "@/lib/b2b/attributes";
 import type {
   CheckoutLine,
   CheckoutSession,
@@ -317,10 +318,11 @@ export async function createBankInvoiceShopifyOrderIdempotent(publicToken: strin
       });
       if (session.orderLink?.shopifyOrderGid) return session.orderLink;
 
-      const attrs = (session.customAttributes ?? {}) as Record<string, unknown>;
+      const attrs = normalizeB2BAttributes((session.customAttributes ?? {}) as Record<string, unknown>);
       if (attrs.buyer_type !== "fop_company" || attrs.payment_preference !== "bank_invoice") {
-        throw new Error("Bank invoice order requires B2B/FOP attributes");
+        throw new Error("Bank invoice order requires B2B/ФОП attributes");
       }
+      validateFopFields(attrs);
 
       const shopifySession = await getMerchantShopifySession(session.merchantId);
       if (!shopifySession) throw new Error("Shopify session not found");

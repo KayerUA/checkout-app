@@ -74,7 +74,7 @@ export function mapCheckoutToOrderCreateInput(
     sourceName: options?.sourceName ?? "ua_external_checkout",
     note:
       sessionAttrs.buyer_type === "fop_company"
-        ? "UA external checkout B2B/FOP order"
+        ? "UA external checkout B2B/ФОП order"
         : "UA external checkout order",
     customAttributes,
     metafields: [
