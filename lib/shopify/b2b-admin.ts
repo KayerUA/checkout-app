@@ -29,12 +29,41 @@ async function shopifyRest<T>(shopDomain: string | null | undefined, path: strin
   return (await response.json()) as T;
 }
 
-function parseTags(tags: string | string[] | null | undefined) {
-  if (Array.isArray(tags)) return tags;
-  return (tags ?? "")
-    .split(",")
-    .map((tag) => tag.trim())
-    .filter(Boolean);
+async function shopifyGraphQL<T>(
+  shopDomain: string | null | undefined,
+  query: string,
+  variables: Record<string, unknown>
+) {
+  const env = getEnv();
+  const domain = getShopDomain(shopDomain);
+  const response = await fetch(`https://${domain}/admin/api/${env.SHOPIFY_API_VERSION}/graphql.json`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Shopify-Access-Token": getAccessToken(),
+    },
+    body: JSON.stringify({ query, variables }),
+  });
+  if (!response.ok) throw new Error(`Shopify Admin GraphQL failed: ${await response.text()}`);
+  return (await response.json()) as T;
+}
+
+function uniqueTags(tags?: string[]) {
+  return Array.from(new Set((tags ?? []).map((tag) => tag.trim()).filter(Boolean)));
+}
+
+function orderGid(orderId: string) {
+  return orderId.startsWith("gid://shopify/Order/") ? orderId : `gid://shopify/Order/${orderId}`;
+}
+
+function assertNoTagUserErrors(
+  operation: "tagsAdd" | "tagsRemove",
+  result: { data?: Record<string, { userErrors?: Array<{ message: string }> }> }
+) {
+  const errors = result.data?.[operation]?.userErrors ?? [];
+  if (errors.length) {
+    throw new Error(`Shopify ${operation} failed: ${errors.map((error) => error.message).join("; ")}`);
+  }
 }
 
 export async function updateOrderTags(input: {
@@ -43,23 +72,39 @@ export async function updateOrderTags(input: {
   add?: string[];
   remove?: string[];
 }) {
-  const existing = await shopifyRest<{ order: { tags: string } }>(
-    input.shopDomain,
-    `orders/${input.orderId}.json?fields=id,tags`
-  );
-  const remove = new Set(input.remove ?? []);
-  const next = new Set(parseTags(existing.order.tags).filter((tag) => !remove.has(tag)));
-  (input.add ?? []).forEach((tag) => next.add(tag));
+  const id = orderGid(input.orderId);
+  const add = uniqueTags(input.add);
+  const remove = uniqueTags(input.remove);
 
-  await shopifyRest(input.shopDomain, `orders/${input.orderId}.json`, {
-    method: "PUT",
-    body: JSON.stringify({
-      order: {
-        id: Number(input.orderId),
-        tags: Array.from(next).join(", "),
-      },
-    }),
-  });
+  if (add.length) {
+    const result = await shopifyGraphQL<{
+      data?: { tagsAdd?: { userErrors: Array<{ message: string }> } };
+    }>(
+      input.shopDomain,
+      `mutation TagsAdd($id: ID!, $tags: [String!]!) {
+        tagsAdd(id: $id, tags: $tags) {
+          userErrors { message }
+        }
+      }`,
+      { id, tags: add }
+    );
+    assertNoTagUserErrors("tagsAdd", result);
+  }
+
+  if (remove.length) {
+    const result = await shopifyGraphQL<{
+      data?: { tagsRemove?: { userErrors: Array<{ message: string }> } };
+    }>(
+      input.shopDomain,
+      `mutation TagsRemove($id: ID!, $tags: [String!]!) {
+        tagsRemove(id: $id, tags: $tags) {
+          userErrors { message }
+        }
+      }`,
+      { id, tags: remove }
+    );
+    assertNoTagUserErrors("tagsRemove", result);
+  }
 }
 
 export async function setOrderMetafields(input: {
