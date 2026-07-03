@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 
 function escapePdfText(value: string) {
   return value.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
@@ -33,6 +34,7 @@ function stripHtml(html: string) {
 function resolveUnicodeFontPath() {
   const candidates = [
     process.env.PDF_UNICODE_FONT_PATH,
+    path.join(process.cwd(), "assets/fonts/NotoSans-Regular.ttf"),
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
     "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
