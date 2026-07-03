@@ -40,20 +40,32 @@ function extractUnverifiedProviderReference(
   return null;
 }
 
-async function enqueueShopifyOrderCreation(checkoutSessionId: string) {
+async function ensureShopifyOrderCreation(checkoutSessionId: string) {
+  const { createShopifyOrderIdempotent } = await import("@/lib/shopify/order-writer");
+
+  try {
+    await createShopifyOrderIdempotent(checkoutSessionId);
+    return;
+  } catch (error) {
+    logWithCorrelation(
+      "warn",
+      "Inline Shopify order creation failed, enqueueing retry",
+      { checkoutSessionId },
+      { error: error instanceof Error ? error.message : String(error) }
+    );
+  }
+
   try {
     await enqueueJob(QUEUE_NAMES.ORDERS, "create-shopify-order", {
       checkoutSessionId,
     });
   } catch (error) {
     logWithCorrelation(
-      "warn",
-      "Order queue unavailable, creating Shopify order inline",
+      "error",
+      "Order queue retry unavailable",
       { checkoutSessionId },
       { error: error instanceof Error ? error.message : String(error) }
     );
-    const { createShopifyOrderIdempotent } = await import("@/lib/shopify/order-writer");
-    await createShopifyOrderIdempotent(checkoutSessionId);
   }
 }
 
@@ -233,7 +245,7 @@ export async function handlePaymentCallback(
       data: { status: "PAID" },
     });
 
-    await enqueueShopifyOrderCreation(paymentAttempt.checkoutSessionId);
+    await ensureShopifyOrderCreation(paymentAttempt.checkoutSessionId);
 
     const sessionAttrs = (paymentAttempt.checkoutSession.customAttributes ?? {}) as Record<
       string,
