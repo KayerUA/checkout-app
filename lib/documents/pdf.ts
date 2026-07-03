@@ -69,7 +69,7 @@ export async function createSimplePdfFromHtml(html: string) {
       doc.on("error", reject);
 
       const text = stripHtml(html);
-      doc.font(fontPath);
+      doc.font(fs.readFileSync(fontPath));
       doc.fontSize(10).text(text, {
         width: 510,
         align: "left",
