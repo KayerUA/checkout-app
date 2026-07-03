@@ -1,7 +1,12 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  outputFileTracingIncludes: {
+    "/*": [
+      "./assets/fonts/**/*",
+      "./node_modules/pdfkit/js/data/**/*",
+    ],
+  },
 };
 
 export default nextConfig;

@@ -362,7 +362,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
                         name="fop_tax_id"
                         defaultValue={initialAttrs.fop_tax_id ?? ""}
                         inputMode="numeric"
-                        pattern="\\d{8}|\\d{10}"
+                        pattern="(?:[0-9]{8}|[0-9]{10})"
                         title="ЄДРПОУ має містити 8 цифр, ІПН/РНОКПП — 10 цифр"
                         required={buyerType === "fop_company"}
                       />
