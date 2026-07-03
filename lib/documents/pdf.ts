@@ -1,9 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
-// pdfkit does not publish TypeScript declarations, but a static import is
-// important here so Vercel/Next includes it in the server deployment trace.
+// pdfkit does not publish TypeScript declarations. Use the standalone build so
+// Vercel does not need pdfkit's AFM files at runtime.
 // @ts-expect-error Missing pdfkit declarations.
-import PDFDocument from "pdfkit";
+import PDFDocument from "pdfkit/js/pdfkit.standalone.js";
 
 function escapePdfText(value: string) {
   return value.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
