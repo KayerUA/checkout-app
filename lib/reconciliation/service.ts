@@ -6,7 +6,12 @@ import { getOrderAttributes, normalizeB2BAttributes } from "@/lib/b2b/attributes
 import { writeAutomationLog } from "@/lib/b2b/log";
 import { createPostPaymentDocuments } from "@/lib/b2b/orders";
 import { notifyDiloshopOrderReady } from "@/lib/accounting/diloshop";
-import { getShopifyOrder, setOrderMetafields, updateOrderTags } from "@/lib/shopify/b2b-admin";
+import {
+  getShopifyOrder,
+  markOrderPaidByBankTransfer,
+  setOrderMetafields,
+  updateOrderTags,
+} from "@/lib/shopify/b2b-admin";
 import type { BankTransaction } from "@/lib/bank/types";
 import type { ShopifyOrderPayload } from "@/lib/b2b/types";
 import type { Prisma } from "@prisma/client";
@@ -100,14 +105,29 @@ export async function reconcileBankTransactions(
           add: [B2B_TAGS.paymentMatched, B2B_TAGS.bankTransferPaid],
           remove: [B2B_TAGS.waitingIbanPayment],
         });
+
+        const shopifyPayment = await markOrderPaidByBankTransfer({
+          shopDomain: order.shopDomain,
+          orderId: order.shopifyOrderId,
+          amount: tx.amount,
+          currency: tx.currency,
+          bankTransactionId: tx.transaction_id,
+        });
+
         await setOrderMetafields({
           shopDomain: order.shopDomain,
           orderId: order.shopifyOrderId,
           metafields: {
-            bank_payment_status: "MATCHED",
+            bank_payment_status: "BANK_TRANSFER_PAID",
             bank_transaction_id: tx.transaction_id,
-            automation_status: "PAYMENT_MATCHED",
+            shopify_bank_transaction_id: shopifyPayment.transaction.id,
+            automation_status: "PAYMENT_CONFIRMED",
           },
+        });
+        await updateOrderTags({
+          shopDomain: order.shopDomain,
+          orderId: order.shopifyOrderId,
+          add: [B2B_TAGS.paymentConfirmed],
         });
 
         const shopifyOrder = (await getShopifyOrder({
@@ -137,7 +157,12 @@ export async function reconcileBankTransactions(
           shopDomain: order.shopDomain,
           transactionId: tx.transaction_id,
         });
-        results.push({ transactionId: tx.transaction_id, status: "MATCHED" });
+        results.push({
+          transactionId: tx.transaction_id,
+          status: "MATCHED",
+          shopifyPaymentTransactionId: shopifyPayment.transaction.id,
+          shopifyPaymentCreated: shopifyPayment.created,
+        });
       } else if (match.status === "NEEDS_REVIEW") {
         await prisma.bankPayment.update({
           where: { transactionId: tx.transaction_id },

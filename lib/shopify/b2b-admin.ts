@@ -107,3 +107,68 @@ export async function getShopifyOrder(input: { shopDomain?: string | null; order
   );
   return result.order;
 }
+
+type ShopifyOrderTransaction = {
+  id: number;
+  kind?: string | null;
+  status?: string | null;
+  amount?: string | null;
+  currency?: string | null;
+  gateway?: string | null;
+  authorization?: string | null;
+  receipt?: Record<string, unknown> | null;
+};
+
+function formatShopifyAmount(amount: number) {
+  return amount.toFixed(2);
+}
+
+function isBankTransferTransaction(
+  transaction: ShopifyOrderTransaction,
+  bankTransactionId: string
+) {
+  return (
+    transaction.authorization === bankTransactionId ||
+    transaction.receipt?.bank_transaction_id === bankTransactionId
+  );
+}
+
+export async function markOrderPaidByBankTransfer(input: {
+  shopDomain?: string | null;
+  orderId: string;
+  amount: number;
+  currency: string;
+  bankTransactionId: string;
+}) {
+  const transactions = await shopifyRest<{ transactions: ShopifyOrderTransaction[] }>(
+    input.shopDomain,
+    `orders/${input.orderId}/transactions.json`
+  );
+  const existing = transactions.transactions.find((transaction) =>
+    isBankTransferTransaction(transaction, input.bankTransactionId)
+  );
+  if (existing) {
+    return { transaction: existing, created: false };
+  }
+
+  const created = await shopifyRest<{ transaction: ShopifyOrderTransaction }>(
+    input.shopDomain,
+    `orders/${input.orderId}/transactions.json`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        transaction: {
+          kind: "sale",
+          status: "success",
+          amount: formatShopifyAmount(input.amount),
+          currency: input.currency,
+          gateway: "PrivatBank bank transfer",
+          source_name: "external",
+          authorization: input.bankTransactionId,
+        },
+      }),
+    }
+  );
+
+  return { transaction: created.transaction, created: true };
+}

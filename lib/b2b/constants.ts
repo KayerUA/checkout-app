@@ -28,6 +28,7 @@ export const B2B_METAFIELD_KEYS = [
   "delivery_note_pdf_url",
   "bank_payment_status",
   "bank_transaction_id",
+  "shopify_bank_transaction_id",
   "automation_status",
 ] as const;
 
