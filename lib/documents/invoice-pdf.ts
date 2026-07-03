@@ -200,14 +200,8 @@ export async function createInvoicePdf(input: B2BDocumentInput) {
   doc.lineWidth(1.8).moveTo(left, y).lineTo(right, y).stroke();
   y += 20;
 
-  doc.save();
-  doc.strokeColor("#1d4ed8").fillColor("#1d4ed8").lineWidth(1.5);
-  doc.circle(left + 92, y + 42, 38).stroke();
-  doc.fontSize(8).text(`М.П.\n${sellerName}`, left + 54, y + 26, { width: 76, align: "center" });
-  doc.restore();
   doc.fillColor("#111111").fontSize(9);
-  doc.fontSize(8.5).text("Печатка / факсиміле:", left + 260, y + 38, { width: 120 });
-  doc.moveTo(left + 382, y + 50).lineTo(right, y + 50).stroke();
+  doc.moveTo(left + 330, y + 50).lineTo(right, y + 50).stroke();
 
   return collectPdf(doc);
 }
