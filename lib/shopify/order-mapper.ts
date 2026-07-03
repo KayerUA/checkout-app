@@ -33,6 +33,7 @@ export function mapCheckoutToOrderCreateInput(
     { key: "checkout_session_id", value: session.id },
     { key: "payment_provider", value: paidAttempt?.provider ?? "BANK_INVOICE" },
     { key: "checkout_public_token", value: session.publicToken },
+    { key: "source_identifier", value: session.sourceIdentifier ?? session.id },
   ];
 
   [
@@ -112,6 +113,14 @@ export function mapCheckoutToOrderCreateInput(
     lineItems: session.lines.map((line) => ({
       variantId: line.variantGid,
       quantity: line.quantity,
+      priceSet: {
+        shopMoney: {
+          amount: line.unitPrice / 100,
+          currencyCode: session.currency,
+        },
+      },
+      sku: line.sku ?? undefined,
+      title: line.title,
     })),
     shippingAddress: {
       firstName: session.buyerFirstName ?? "",

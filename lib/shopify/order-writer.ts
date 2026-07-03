@@ -8,185 +8,273 @@ import {
 import { enqueueJob, QUEUE_NAMES } from "@/lib/queue";
 import { logWithCorrelation } from "@/lib/logger";
 import { withIdempotency } from "@/lib/idempotency";
+import type {
+  CheckoutLine,
+  CheckoutSession,
+  Merchant,
+  OrderLink,
+  PaymentAttempt,
+} from "@prisma/client";
 
 async function findExistingOrderBySourceIdentifier(
   shopifySession: NonNullable<Awaited<ReturnType<typeof getMerchantShopifySession>>>,
-  sourceIdentifier: string
+  input: { sourceIdentifier: string; checkoutSessionId: string; publicToken: string }
 ) {
   try {
     const response = await shopifyAdminGraphQL<{
       data: {
         orders: {
-          nodes: Array<{ id: string; name: string }>;
+          nodes: Array<{
+            id: string;
+            name: string;
+            customAttributes: Array<{ key: string; value: string }>;
+          }>;
         };
       };
     }>(
       shopifySession,
-      `query FindOrderBySourceIdentifier($query: String!) {
-        orders(first: 1, query: $query) {
-          nodes { id name }
+      `query FindExistingExternalCheckoutOrder($query: String!) {
+        orders(first: 50, reverse: true, query: $query) {
+          nodes {
+            id
+            name
+            customAttributes { key value }
+          }
         }
       }`,
-      { query: `source_identifier:${sourceIdentifier}` }
+      { query: "tag:external_checkout" }
     );
 
-    return response.data?.orders?.nodes?.[0] ?? null;
+    return (
+      response.data?.orders?.nodes?.find((order) => {
+        const attrs = Object.fromEntries(
+          order.customAttributes.map((attr) => [attr.key, attr.value])
+        );
+        return (
+          attrs.checkout_session_id === input.checkoutSessionId ||
+          attrs.checkout_public_token === input.publicToken ||
+          attrs.source_identifier === input.sourceIdentifier
+        );
+      }) ?? null
+    );
   } catch {
     return null;
   }
 }
 
+type SessionForOrder = CheckoutSession & {
+  lines: CheckoutLine[];
+  paymentAttempts: PaymentAttempt[];
+  merchant: Merchant;
+};
+
+async function acquireOrderLinkPlaceholder(session: SessionForOrder): Promise<OrderLink> {
+  try {
+    return await prisma.orderLink.create({
+      data: {
+        checkoutSessionId: session.id,
+        sourceIdentifier: session.sourceIdentifier,
+        orderStatus: "CREATING",
+      },
+    });
+  } catch (error) {
+    const existing = await prisma.orderLink.findUnique({
+      where: { checkoutSessionId: session.id },
+    });
+
+    if (!existing) throw error;
+    if (existing.shopifyOrderGid) return existing;
+
+    const ageMs = Date.now() - existing.createdAt.getTime();
+    if (existing.orderStatus === "CREATING" && ageMs < 2 * 60 * 1000) {
+      throw new Error("Shopify order creation already in progress");
+    }
+
+    return existing;
+  }
+}
+
+async function finalizeOrderLink(params: {
+  orderLinkId: string;
+  checkoutSessionId: string;
+  shopifyOrderGid: string;
+  shopifyOrderName: string;
+  orderStatus: string;
+}) {
+  const orderLink = await prisma.orderLink.update({
+    where: { id: params.orderLinkId },
+    data: {
+      shopifyOrderGid: params.shopifyOrderGid,
+      shopifyOrderName: params.shopifyOrderName,
+      orderStatus: params.orderStatus,
+    },
+  });
+
+  await prisma.checkoutSession.update({
+    where: { id: params.checkoutSessionId },
+    data: { status: "COMPLETED" },
+  });
+
+  return orderLink;
+}
+
 export async function createShopifyOrderIdempotent(checkoutSessionId: string) {
   return withIdempotency("shopify-order", checkoutSessionId, async () => {
-    return prisma.$transaction(async (tx) => {
-      const existing = await tx.orderLink.findUnique({
-        where: { checkoutSessionId },
-      });
-      if (existing?.shopifyOrderGid) return existing;
-
-      const session = await tx.checkoutSession.findUniqueOrThrow({
-        where: { id: checkoutSessionId },
-        include: {
-          lines: true,
-          paymentAttempts: true,
-          merchant: true,
-        },
-      });
-
-      const paidAttempt = session.paymentAttempts.find((a) => a.status === "PAID");
-      if (!paidAttempt) throw new Error("No successful payment attempt");
-
-      const shopifySession = await getMerchantShopifySession(session.merchantId);
-      if (!shopifySession) throw new Error("Shopify session not found");
-
-      const orderInput = mapCheckoutToOrderCreateInput(session, paidAttempt);
-      const sourceIdentifier = session.sourceIdentifier ?? session.id;
-      const existingShopifyOrder = await findExistingOrderBySourceIdentifier(
-        shopifySession,
-        sourceIdentifier
-      );
-
-      if (existingShopifyOrder) {
-        const orderLink = await tx.orderLink.create({
-          data: {
-            checkoutSessionId: session.id,
-            shopifyOrderGid: existingShopifyOrder.id,
-            shopifyOrderName: existingShopifyOrder.name,
-            sourceIdentifier: session.sourceIdentifier,
-            orderStatus: "CREATED",
-          },
-        });
-
-        await tx.checkoutSession.update({
-          where: { id: session.id },
-          data: { status: "COMPLETED" },
-        });
-
-        return orderLink;
+    const existing = await prisma.orderLink.findUnique({
+      where: { checkoutSessionId },
+    });
+    if (existing?.shopifyOrderGid) return existing;
+    if (existing?.orderStatus === "CREATING") {
+      const ageMs = Date.now() - existing.createdAt.getTime();
+      if (ageMs < 2 * 60 * 1000) {
+        throw new Error("Shopify order creation already in progress");
       }
+    }
 
-      const response = await shopifyAdminGraphQL<{
-        data: {
-          orderCreate: {
-            userErrors: Array<{ field: string; message: string }>;
-            order: { id: string; name: string };
-          };
+    const session = await prisma.checkoutSession.findUniqueOrThrow({
+      where: { id: checkoutSessionId },
+      include: {
+        lines: true,
+        paymentAttempts: true,
+        merchant: true,
+      },
+    });
+
+    const paidAttempt = session.paymentAttempts.find((a) => a.status === "PAID");
+    if (!paidAttempt) throw new Error("No successful payment attempt");
+
+    const shopifySession = await getMerchantShopifySession(session.merchantId);
+    if (!shopifySession) throw new Error("Shopify session not found");
+
+    const placeholder = existing ?? (await acquireOrderLinkPlaceholder(session));
+    if (placeholder.shopifyOrderGid) return placeholder;
+
+    const sourceIdentifier = session.sourceIdentifier ?? session.id;
+    const existingShopifyOrder = await findExistingOrderBySourceIdentifier(
+      shopifySession,
+      {
+        sourceIdentifier,
+        checkoutSessionId: session.id,
+        publicToken: session.publicToken,
+      }
+    );
+
+    if (existingShopifyOrder) {
+      return finalizeOrderLink({
+        orderLinkId: placeholder.id,
+        checkoutSessionId: session.id,
+        shopifyOrderGid: existingShopifyOrder.id,
+        shopifyOrderName: existingShopifyOrder.name,
+        orderStatus: "CREATED",
+      });
+    }
+
+    const orderInput = mapCheckoutToOrderCreateInput(session, paidAttempt);
+    const response = await shopifyAdminGraphQL<{
+      data: {
+        orderCreate: {
+          userErrors: Array<{ field: string; message: string }>;
+          order: { id: string; name: string };
         };
-      }>(shopifySession, ORDER_CREATE_MUTATION, {
-        order: orderInput,
-        options: {
-          inventoryBehaviour: "BYPASS",
-          sendReceipt: false,
-          sendFulfillmentReceipt: false,
-        },
-      });
+      };
+    }>(shopifySession, ORDER_CREATE_MUTATION, {
+      order: orderInput,
+      options: {
+        inventoryBehaviour: "BYPASS",
+        sendReceipt: false,
+        sendFulfillmentReceipt: false,
+      },
+    });
 
-      const errors = response.data?.orderCreate?.userErrors;
-      if (errors?.length) throw new Error(JSON.stringify(errors));
+    const errors = response.data?.orderCreate?.userErrors;
+    if (errors?.length) throw new Error(JSON.stringify(errors));
 
-      const created = response.data.orderCreate.order;
-      const orderId = created.id.replace("gid://shopify/Order/", "");
+    const created = response.data.orderCreate.order;
+    const orderId = created.id.replace("gid://shopify/Order/", "");
 
-      // REST bridge for note_attributes
-      try {
-        await shopifyAdminREST(shopifySession, `orders/${orderId}.json`, {
-          method: "PUT",
-          body: {
-            order: {
-              id: Number(orderId),
-              note_attributes: [
-                { name: "checkout_session_id", value: session.id },
-                { name: "payment_provider", value: paidAttempt.provider },
-                { name: "cod_enabled", value: "false" },
-                ...(() => {
-                  const attrs = (session.customAttributes ?? {}) as Record<string, unknown>;
-                  const ab = (attrs.ab ?? {}) as Record<string, string>;
-                  if (!ab.experimentId) return [];
-                  return [
-                    { name: "ab_test", value: ab.experimentId },
-                    { name: "ab_variant", value: ab.variant ?? "" },
-                    { name: "ab_visitor_id", value: ab.visitorId ?? "" },
-                  ];
-                })(),
-              ],
-            },
+    // REST bridge for note_attributes
+    try {
+      await shopifyAdminREST(shopifySession, `orders/${orderId}.json`, {
+        method: "PUT",
+        body: {
+          order: {
+            id: Number(orderId),
+            note_attributes: [
+              { name: "checkout_session_id", value: session.id },
+              { name: "payment_provider", value: paidAttempt.provider },
+              { name: "cod_enabled", value: "false" },
+              ...(() => {
+                const attrs = (session.customAttributes ?? {}) as Record<string, unknown>;
+                const ab = (attrs.ab ?? {}) as Record<string, string>;
+                if (!ab.experimentId) return [];
+                return [
+                  { name: "ab_test", value: ab.experimentId },
+                  { name: "ab_variant", value: ab.variant ?? "" },
+                  { name: "ab_visitor_id", value: ab.visitorId ?? "" },
+                ];
+              })(),
+            ],
           },
-        });
-      } catch {
-        logWithCorrelation("warn", "note_attributes REST update failed", {
-          checkoutSessionId,
-          shopifyOrderGid: created.id,
-        });
-      }
-
-      const orderLink = await tx.orderLink.create({
-        data: {
-          checkoutSessionId: session.id,
-          shopifyOrderGid: created.id,
-          shopifyOrderName: created.name,
-          sourceIdentifier: session.sourceIdentifier,
-          orderStatus: "CREATED",
         },
       });
-
-      await tx.checkoutSession.update({
-        where: { id: session.id },
-        data: { status: "COMPLETED" },
-      });
-
-      await tx.merchant.update({
-        where: { id: session.merchantId },
-        data: { paidOrdersCount: { increment: 1 } },
-      });
-
-      try {
-        await enqueueJob(QUEUE_NAMES.FISCAL, "fiscalize-order", {
-          orderLinkId: orderLink.id,
-        });
-      } catch (error) {
-        logWithCorrelation(
-          "warn",
-          "Fiscal queue unavailable, skipping async fiscalization",
-          { checkoutSessionId },
-          {
-            orderLinkId: orderLink.id,
-            error: error instanceof Error ? error.message : String(error),
-          }
-        );
-      }
-
-      const { sendPurchaseAnalytics } = await import("@/lib/analytics/server");
-      await sendPurchaseAnalytics(session.merchantId, session, orderLink);
-
-      logWithCorrelation("info", "Shopify order created", {
+    } catch {
+      logWithCorrelation("warn", "note_attributes REST update failed", {
         checkoutSessionId,
         shopifyOrderGid: created.id,
-        merchantId: session.merchantId,
       });
+    }
 
-      const sessionAttrs = (session.customAttributes ?? {}) as Record<string, unknown>;
-      const ab = (sessionAttrs.ab ?? {}) as Record<string, string>;
-      if (ab.experimentId && ab.visitorId && ab.variant) {
+    const orderLink = await finalizeOrderLink({
+      orderLinkId: placeholder.id,
+      checkoutSessionId: session.id,
+      shopifyOrderGid: created.id,
+      shopifyOrderName: created.name,
+      orderStatus: "CREATED",
+    });
+
+    await prisma.merchant.update({
+      where: { id: session.merchantId },
+      data: { paidOrdersCount: { increment: 1 } },
+    });
+
+    try {
+      await enqueueJob(QUEUE_NAMES.FISCAL, "fiscalize-order", {
+        orderLinkId: orderLink.id,
+      });
+    } catch (error) {
+      logWithCorrelation(
+        "warn",
+        "Fiscal queue unavailable, skipping async fiscalization",
+        { checkoutSessionId },
+        {
+          orderLinkId: orderLink.id,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+    }
+
+    try {
+      const { sendPurchaseAnalytics } = await import("@/lib/analytics/server");
+      await sendPurchaseAnalytics(session.merchantId, session, orderLink);
+    } catch (error) {
+      logWithCorrelation(
+        "warn",
+        "Purchase analytics failed",
+        { checkoutSessionId },
+        { error: error instanceof Error ? error.message : String(error) }
+      );
+    }
+
+    logWithCorrelation("info", "Shopify order created", {
+      checkoutSessionId,
+      shopifyOrderGid: created.id,
+      merchantId: session.merchantId,
+    });
+
+    const sessionAttrs = (session.customAttributes ?? {}) as Record<string, unknown>;
+    const ab = (sessionAttrs.ab ?? {}) as Record<string, string>;
+    if (ab.experimentId && ab.visitorId && ab.variant) {
+      try {
         const { logCheckoutAbEvent } = await import("@/lib/checkout-ab/events");
         await logCheckoutAbEvent({
           experimentId: ab.experimentId,
@@ -201,10 +289,17 @@ export async function createShopifyOrderIdempotent(checkoutSessionId: string) {
           phone: session.buyerPhone,
           payload: { shopifyOrderName: created.name },
         });
+      } catch (error) {
+        logWithCorrelation(
+          "warn",
+          "Checkout AB event failed",
+          { checkoutSessionId },
+          { error: error instanceof Error ? error.message : String(error) }
+        );
       }
+    }
 
-      return orderLink;
-    });
+    return orderLink;
   });
 }
 
