@@ -14,6 +14,10 @@ export const WORKER_HEARTBEAT_KEY = "kayer:checkout:worker:heartbeat";
 const queues = new Map<string, Queue>();
 
 function getConnection(): ConnectionOptions {
+  if (!process.env.REDIS_URL) {
+    throw new Error("REDIS_URL is not configured");
+  }
+
   return { url: getEnv().REDIS_URL, maxRetriesPerRequest: null };
 }
 

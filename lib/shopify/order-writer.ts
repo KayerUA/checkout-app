@@ -9,6 +9,33 @@ import { enqueueJob, QUEUE_NAMES } from "@/lib/queue";
 import { logWithCorrelation } from "@/lib/logger";
 import { withIdempotency } from "@/lib/idempotency";
 
+async function findExistingOrderBySourceIdentifier(
+  shopifySession: NonNullable<Awaited<ReturnType<typeof getMerchantShopifySession>>>,
+  sourceIdentifier: string
+) {
+  try {
+    const response = await shopifyAdminGraphQL<{
+      data: {
+        orders: {
+          nodes: Array<{ id: string; name: string }>;
+        };
+      };
+    }>(
+      shopifySession,
+      `query FindOrderBySourceIdentifier($query: String!) {
+        orders(first: 1, query: $query) {
+          nodes { id name }
+        }
+      }`,
+      { query: `source_identifier:${sourceIdentifier}` }
+    );
+
+    return response.data?.orders?.nodes?.[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function createShopifyOrderIdempotent(checkoutSessionId: string) {
   return withIdempotency("shopify-order", checkoutSessionId, async () => {
     return prisma.$transaction(async (tx) => {
@@ -33,6 +60,30 @@ export async function createShopifyOrderIdempotent(checkoutSessionId: string) {
       if (!shopifySession) throw new Error("Shopify session not found");
 
       const orderInput = mapCheckoutToOrderCreateInput(session, paidAttempt);
+      const sourceIdentifier = session.sourceIdentifier ?? session.id;
+      const existingShopifyOrder = await findExistingOrderBySourceIdentifier(
+        shopifySession,
+        sourceIdentifier
+      );
+
+      if (existingShopifyOrder) {
+        const orderLink = await tx.orderLink.create({
+          data: {
+            checkoutSessionId: session.id,
+            shopifyOrderGid: existingShopifyOrder.id,
+            shopifyOrderName: existingShopifyOrder.name,
+            sourceIdentifier: session.sourceIdentifier,
+            orderStatus: "CREATED",
+          },
+        });
+
+        await tx.checkoutSession.update({
+          where: { id: session.id },
+          data: { status: "COMPLETED" },
+        });
+
+        return orderLink;
+      }
 
       const response = await shopifyAdminGraphQL<{
         data: {
