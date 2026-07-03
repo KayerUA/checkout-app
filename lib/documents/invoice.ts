@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/db";
-import { createPdfFromHtml } from "@/lib/documents/pdf";
+import { createInvoicePdf } from "@/lib/documents/invoice-pdf";
 import { invoicePaymentPurpose, renderInvoiceHtml } from "@/lib/documents/templates";
 import { uploadPrivateDocument } from "@/lib/supabase/storage";
 import type { B2BDocumentInput, FopOrderAttributes, ShopifyOrderPayload } from "@/lib/b2b/types";
@@ -50,7 +50,7 @@ export async function getOrCreateInvoiceDocument(order: ShopifyOrderPayload, buy
     paymentPurpose,
   };
   const html = renderInvoiceHtml(input);
-  const pdf = await createPdfFromHtml(html);
+  const pdf = await createInvoicePdf(input);
   const pdfUrl = await uploadPrivateDocument({
     path: `${shopifyOrderId}/invoice-${invoiceNumber}.pdf`,
     contentType: "application/pdf",
@@ -64,7 +64,7 @@ export async function getOrCreateInvoiceDocument(order: ShopifyOrderPayload, buy
           number: invoiceNumber,
           status: "CREATED",
           pdfUrl,
-          metadata: { paymentPurpose, html },
+          metadata: { paymentPurpose, html, input },
         },
       })
     : await prisma.b2BDocument.create({
@@ -74,7 +74,7 @@ export async function getOrCreateInvoiceDocument(order: ShopifyOrderPayload, buy
           number: invoiceNumber,
           status: "CREATED",
           pdfUrl,
-          metadata: { paymentPurpose, html },
+          metadata: { paymentPurpose, html, input },
         },
       });
 

@@ -6,7 +6,9 @@ import { B2B_TAGS } from "@/lib/b2b/constants";
 import { updateOrderTags } from "@/lib/shopify/b2b-admin";
 import { sendDocumentEmail } from "@/lib/email/resend";
 import { createPdfFromHtml } from "@/lib/documents/pdf";
+import { createInvoicePdf } from "@/lib/documents/invoice-pdf";
 import { uploadPrivateDocument } from "@/lib/supabase/storage";
+import type { B2BDocumentInput } from "@/lib/b2b/types";
 
 export const runtime = "nodejs";
 
@@ -65,13 +67,14 @@ export async function POST(
       where: { shopifyOrderId, type: "invoice" },
       orderBy: { createdAt: "desc" },
     });
-    const metadata = invoice?.metadata as { html?: unknown } | null;
+    const metadata = invoice?.metadata as { html?: unknown; input?: unknown } | null;
     const html = typeof metadata?.html === "string" ? metadata.html : null;
-    if (!invoice?.number || !html) {
+    const input = metadata?.input as B2BDocumentInput | undefined;
+    if (!invoice?.number || (!html && !input)) {
       return NextResponse.json({ error: "Invoice HTML missing" }, { status: 400 });
     }
 
-    const pdf = await createPdfFromHtml(html);
+    const pdf = input ? await createInvoicePdf(input) : await createPdfFromHtml(html ?? "");
     const pdfUrl = await uploadPrivateDocument({
       path: `${shopifyOrderId}/invoice-${invoice.number}.pdf`,
       contentType: "application/pdf",
