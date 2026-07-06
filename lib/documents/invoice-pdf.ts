@@ -20,10 +20,6 @@ function resolveUnicodeFontPath() {
   return candidates.find((fontPath) => fs.existsSync(fontPath));
 }
 
-function formatDate(date: Date) {
-  return new Intl.DateTimeFormat("uk-UA").format(date);
-}
-
 function formatLongDate(date: Date) {
   return new Intl.DateTimeFormat("uk-UA", {
     day: "2-digit",
@@ -53,7 +49,14 @@ function smallAmountInWords(amount: number) {
   return `${moneyNumber(rounded)} гривень ${String(kopiyky).padStart(2, "0")} копійок`;
 }
 
-function collectPdf(doc: any) {
+type PdfStream = {
+  on(event: "data", listener: (chunk: Buffer) => void): PdfStream;
+  on(event: "end", listener: () => void): PdfStream;
+  on(event: "error", listener: (error: Error) => void): PdfStream;
+  end(): void;
+};
+
+function collectPdf(doc: PdfStream) {
   return new Promise<Buffer>((resolve, reject) => {
     const chunks: Buffer[] = [];
     doc.on("data", (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
@@ -81,7 +84,7 @@ export async function createInvoicePdf(input: B2BDocumentInput) {
     margin: 36,
     compress: false,
     info: { Title: `Рахунок ${input.invoiceNumber}` },
-  }) as any;
+  });
 
   const fontPath = resolveUnicodeFontPath();
   if (fontPath) doc.font(fs.readFileSync(fontPath));

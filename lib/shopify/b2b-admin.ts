@@ -154,7 +154,7 @@ export async function getShopifyOrder(input: { shopDomain?: string | null; order
 }
 
 type ShopifyOrderTransaction = {
-  id: number;
+  id: number | string;
   kind?: string | null;
   status?: string | null;
   amount?: string | null;
@@ -164,10 +164,6 @@ type ShopifyOrderTransaction = {
   receipt?: Record<string, unknown> | null;
 };
 
-function formatShopifyAmount(amount: number) {
-  return amount.toFixed(2);
-}
-
 function isBankTransferTransaction(
   transaction: ShopifyOrderTransaction,
   bankTransactionId: string
@@ -176,6 +172,100 @@ function isBankTransferTransaction(
     transaction.authorization === bankTransactionId ||
     transaction.receipt?.bank_transaction_id === bankTransactionId
   );
+}
+
+function isSuccessfulPaymentTransaction(transaction: ShopifyOrderTransaction) {
+  const kind = transaction.kind?.toLowerCase();
+  const status = transaction.status?.toLowerCase();
+  return (kind === "sale" || kind === "capture") && status === "success";
+}
+
+function latestSuccessfulPaymentTransaction(transactions: ShopifyOrderTransaction[]) {
+  return transactions.find(isSuccessfulPaymentTransaction);
+}
+
+type OrderMarkAsPaidResponse = {
+  data?: {
+    order?: {
+      id: string;
+      name: string;
+      canMarkAsPaid: boolean;
+      displayFinancialStatus: string;
+      totalOutstandingSet?: {
+        shopMoney?: {
+          amount: string;
+          currencyCode: string;
+        };
+      };
+    } | null;
+    orderMarkAsPaid?: {
+      userErrors: Array<{ field?: string[] | null; message: string }>;
+      order: {
+        id: string;
+        name: string;
+        canMarkAsPaid: boolean;
+        displayFinancialStatus: string;
+      } | null;
+    };
+  };
+  errors?: Array<{ message: string }>;
+};
+
+async function getOrderPaymentState(shopDomain: string | null | undefined, orderId: string) {
+  const result = await shopifyGraphQL<OrderMarkAsPaidResponse>(
+    shopDomain,
+    `query OrderPaymentState($id: ID!) {
+      order(id: $id) {
+        id
+        name
+        canMarkAsPaid
+        displayFinancialStatus
+        totalOutstandingSet {
+          shopMoney {
+            amount
+            currencyCode
+          }
+        }
+      }
+    }`,
+    { id: orderGid(orderId) }
+  );
+  if (result.errors?.length) {
+    throw new Error(`Shopify order payment state failed: ${result.errors.map((error) => error.message).join("; ")}`);
+  }
+  const order = result.data?.order;
+  if (!order) throw new Error(`Shopify order ${orderId} not found`);
+  return order;
+}
+
+async function orderMarkAsPaid(shopDomain: string | null | undefined, orderId: string) {
+  const result = await shopifyGraphQL<OrderMarkAsPaidResponse>(
+    shopDomain,
+    `mutation MarkOrderAsPaid($input: OrderMarkAsPaidInput!) {
+      orderMarkAsPaid(input: $input) {
+        userErrors {
+          field
+          message
+        }
+        order {
+          id
+          name
+          canMarkAsPaid
+          displayFinancialStatus
+        }
+      }
+    }`,
+    { input: { id: orderGid(orderId) } }
+  );
+  if (result.errors?.length) {
+    throw new Error(`Shopify orderMarkAsPaid failed: ${result.errors.map((error) => error.message).join("; ")}`);
+  }
+  const payload = result.data?.orderMarkAsPaid;
+  if (!payload) throw new Error("Shopify orderMarkAsPaid returned an empty response");
+  if (payload.userErrors.length) {
+    throw new Error(`Shopify orderMarkAsPaid failed: ${payload.userErrors.map((error) => error.message).join("; ")}`);
+  }
+  return payload.order;
 }
 
 export async function markOrderPaidByBankTransfer(input: {
@@ -196,24 +286,21 @@ export async function markOrderPaidByBankTransfer(input: {
     return { transaction: existing, created: false };
   }
 
-  const created = await shopifyRest<{ transaction: ShopifyOrderTransaction }>(
-    input.shopDomain,
-    `orders/${input.orderId}/transactions.json`,
-    {
-      method: "POST",
-      body: JSON.stringify({
-        transaction: {
-          kind: "sale",
-          status: "success",
-          amount: formatShopifyAmount(input.amount),
-          currency: input.currency,
-          gateway: "PrivatBank bank transfer",
-          source_name: "external",
-          authorization: input.bankTransactionId,
-        },
-      }),
-    }
-  );
+  const state = await getOrderPaymentState(input.shopDomain, input.orderId);
+  if (!state.canMarkAsPaid) {
+    const paidTransaction = latestSuccessfulPaymentTransaction(transactions.transactions);
+    if (paidTransaction) return { transaction: paidTransaction, created: false };
+    throw new Error(`Shopify order ${state.name} cannot be marked as paid (${state.displayFinancialStatus})`);
+  }
 
-  return { transaction: created.transaction, created: true };
+  await orderMarkAsPaid(input.shopDomain, input.orderId);
+
+  const updated = await shopifyRest<{ transactions: ShopifyOrderTransaction[] }>(
+    input.shopDomain,
+    `orders/${input.orderId}/transactions.json`
+  );
+  const paidTransaction = latestSuccessfulPaymentTransaction(updated.transactions);
+  if (!paidTransaction) throw new Error("Shopify marked order as paid but no successful payment transaction was returned");
+
+  return { transaction: paidTransaction, created: true };
 }
