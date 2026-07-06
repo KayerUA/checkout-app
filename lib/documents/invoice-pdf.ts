@@ -145,13 +145,14 @@ export async function createInvoicePdf(input: B2BDocumentInput) {
   y += 52;
 
   doc.text("Покупець:", left, y, { width: 86, underline: true });
-  doc.text(
-    `${input.buyer.fop_name ?? "-"}\nКод ЄДРПОУ/ІПН: ${input.buyer.fop_tax_id ?? "-"}${input.buyer.docs_phone ? `\nТел.: ${input.buyer.docs_phone}` : ""}${input.buyer.docs_email ? `\nE-mail: ${input.buyer.docs_email}` : ""}`,
-    left + 92,
-    y,
-    { width: width - 92, lineGap: 1 }
-  );
-  y += input.buyer.docs_phone || input.buyer.docs_email ? 52 : 34;
+  const buyerLines = [
+    input.buyer.fop_name?.trim(),
+    `Код ЄДРПОУ/ІПН: ${input.buyer.fop_tax_id ?? "-"}`,
+    input.buyer.docs_phone ? `Тел.: ${input.buyer.docs_phone}` : "",
+    input.buyer.docs_email ? `E-mail: ${input.buyer.docs_email}` : "",
+  ].filter(Boolean);
+  doc.text(buyerLines.join("\n"), left + 92, y, { width: width - 92, lineGap: 1 });
+  y += buyerLines.length > 2 ? 52 : 34;
 
   doc.text("Договір:", left, y, { width: 86 });
   doc.text("Основний договір", left + 92, y);

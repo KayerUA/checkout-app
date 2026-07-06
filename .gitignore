@@ -19,6 +19,7 @@
 
 # production
 /build
+/generated-invoices/
 
 # misc
 .DS_Store
