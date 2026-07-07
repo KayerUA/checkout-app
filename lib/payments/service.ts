@@ -69,6 +69,14 @@ async function ensureShopifyOrderCreation(checkoutSessionId: string) {
   }
 }
 
+export function buildPaymentDescription(input: {
+  sourceIdentifier: string | null;
+  publicToken: string;
+}) {
+  const orderNumber = input.sourceIdentifier ?? input.publicToken;
+  return `Оплата замовлення № ${orderNumber} — KAYER`;
+}
+
 export async function initPaymentForSession(publicToken: string, provider: PaymentProvider) {
   const session = await prisma.checkoutSession.findUnique({
     where: { publicToken },
@@ -91,7 +99,10 @@ export async function initPaymentForSession(publicToken: string, provider: Payme
     amount: session.totalAmount,
     currency: session.currency,
     orderReference,
-    description: `Order ${session.sourceIdentifier}`,
+    description: buildPaymentDescription({
+      sourceIdentifier: session.sourceIdentifier,
+      publicToken: session.publicToken,
+    }),
     returnUrl,
     callbackUrl,
     config: config.config as Record<string, string>,

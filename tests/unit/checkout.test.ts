@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 import { calcTotals, formatMoney } from "@/lib/checkout/pricing";
 import { invoiceGoodsAmount } from "@/lib/documents/invoice";
 import { mapCheckoutToOrderCreateInput } from "@/lib/shopify/order-mapper";
+import { buildPaymentDescription } from "@/lib/payments/service";
 
 describe("LiqPay verification", () => {
   it("verifies valid signature", () => {
@@ -37,6 +38,17 @@ describe("Pricing", () => {
     expect(formatMoney(45000)).toBe("450,00 грн");
     expect(formatMoney(189000)).toBe("1 890,00 грн");
     expect(formatMoney(0)).toBe("0,00 грн");
+  });
+});
+
+describe("Payment description", () => {
+  it("includes checkout order number for LiqPay comments", () => {
+    expect(
+      buildPaymentDescription({
+        sourceIdentifier: "chk_test_123",
+        publicToken: "public-token",
+      })
+    ).toBe("Оплата замовлення № chk_test_123 — KAYER");
   });
 });
 

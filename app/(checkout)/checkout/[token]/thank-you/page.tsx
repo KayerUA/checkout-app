@@ -5,6 +5,7 @@ import { formatMoney } from "@/lib/checkout/pricing";
 import { prisma } from "@/lib/db";
 import { BRAND, CheckoutHeader } from "@/components/checkout/checkout-header";
 import { CheckoutFooter } from "@/components/checkout/checkout-footer";
+import { PaymentStatusPoller } from "@/components/checkout/payment-status-poller";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,7 +17,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { CheckCircle2, ExternalLink, FileText, Package } from "lucide-react";
+import { CheckCircle2, ExternalLink, FileText, Loader2, Package } from "lucide-react";
 
 export const metadata = {
   title: "Дякуємо за замовлення — KAYER",
@@ -31,16 +32,24 @@ export default async function ThankYouPage({
   const session = await getCheckoutSessionByToken(token);
   if (!session) notFound();
 
-  if (!["PAID", "COMPLETED"].includes(session.status) && session.orderLink === null) {
+  const attrs = (session.customAttributes ?? {}) as Record<string, string>;
+  const isBankInvoice =
+    session.paymentProvider === "BANK_INVOICE" ||
+    attrs.payment_preference === "bank_invoice";
+  const isLiqPayPending =
+    session.status === "PAYMENT_PENDING" && session.paymentProvider === "LIQPAY";
+
+  if (
+    !["PAID", "COMPLETED"].includes(session.status) &&
+    session.orderLink === null &&
+    !isBankInvoice &&
+    !isLiqPayPending
+  ) {
     redirect(`/checkout/${token}`);
   }
 
   const fiscal = session.orderLink?.fiscalReceipt;
   const shippingPayload = session.shippingPayload as Record<string, string> | null;
-  const attrs = (session.customAttributes ?? {}) as Record<string, string>;
-  const isBankInvoice =
-    session.paymentProvider === "BANK_INVOICE" ||
-    attrs.payment_preference === "bank_invoice";
   const b2bOrder = session.orderLink?.shopifyOrderGid
     ? await prisma.b2BOrder.findUnique({
         where: {
@@ -64,6 +73,8 @@ export default async function ThankYouPage({
           <div className="mx-auto flex size-16 items-center justify-center rounded-full bg-primary/10">
             {isBankInvoice ? (
               <FileText className="size-8 text-primary" />
+            ) : isLiqPayPending ? (
+              <Loader2 className="size-8 animate-spin text-primary" />
             ) : (
               <CheckCircle2 className="size-8 text-primary" />
             )}
@@ -71,18 +82,26 @@ export default async function ThankYouPage({
 
           <div className="space-y-2">
             <Badge variant="secondary" className="uppercase tracking-wider">
-              {isBankInvoice ? "Очікуємо оплату за рахунком" : "Замовлення прийнято"}
+              {isBankInvoice
+                ? "Очікуємо оплату за рахунком"
+                : isLiqPayPending
+                  ? "Перевіряємо оплату"
+                  : "Замовлення прийнято"}
             </Badge>
             <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
               {isBankInvoice
                 ? invoiceReady
                   ? "Рахунок готовий до оплати"
                   : "Рахунок для оплати готується"
+                : isLiqPayPending
+                  ? "Оплату обробляємо"
                 : "Дякуємо за покупку!"}
             </h1>
             <p className="text-sm text-muted-foreground">
               {isBankInvoice
                 ? "Дочекайтесь генерації рахунку на цій сторінці. Ми також надішлемо invoice email через Shopify на email для документів. Замовлення піде в обробку після надходження коштів з підприємницького або юридичного рахунку."
+                : isLiqPayPending
+                  ? "LiqPay повернув вас у checkout. Зачекайте кілька секунд, поки ми підтвердимо оплату та створимо замовлення в Shopify."
                 : "Ми вже отримали ваше замовлення і незабаром почнемо обробку."}
             </p>
           </div>
@@ -110,6 +129,15 @@ export default async function ThankYouPage({
                   {formatMoney(session.totalAmount, session.currency)}
                 </span>
               </div>
+              {isLiqPayPending && (
+                <>
+                  <div className="flex justify-between gap-4">
+                    <span className="text-muted-foreground">Статус</span>
+                    <span className="text-right">Очікуємо підтвердження LiqPay</span>
+                  </div>
+                  <PaymentStatusPoller publicToken={session.publicToken} />
+                </>
+              )}
               {isBankInvoice && (
                 <>
                   <div className="flex justify-between gap-4">
