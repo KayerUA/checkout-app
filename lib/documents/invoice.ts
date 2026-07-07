@@ -4,8 +4,12 @@ import { invoicePaymentPurpose, renderInvoiceHtml } from "@/lib/documents/templa
 import { uploadPrivateDocument } from "@/lib/supabase/storage";
 import type { B2BDocumentInput, FopOrderAttributes, ShopifyOrderPayload } from "@/lib/b2b/types";
 
-function orderAmount(order: ShopifyOrderPayload) {
-  return Number(order.total_price ?? 0);
+export function invoiceGoodsAmount(order: ShopifyOrderPayload) {
+  return (order.line_items ?? []).reduce((sum, line) => {
+    const unit = Number(line.price_set?.shop_money?.amount ?? line.price ?? 0);
+    const quantity = Number(line.quantity);
+    return sum + unit * quantity;
+  }, 0);
 }
 
 export function generateInvoiceNumber(sequence: number, date = new Date()) {
@@ -44,7 +48,7 @@ export async function getOrCreateInvoiceDocument(order: ShopifyOrderPayload, buy
     invoiceNumber,
     invoiceDate,
     buyer,
-    amount: orderAmount(order),
+    amount: invoiceGoodsAmount(order),
     currency: order.currency ?? "UAH",
     lines: order.line_items ?? [],
     paymentPurpose,

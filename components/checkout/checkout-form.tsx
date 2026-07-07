@@ -72,6 +72,8 @@ type CheckoutData = {
 
 type City = { ref: string; name: string };
 type Branch = { ref: string; number: string; shortAddress: string; cityName: string };
+type BuyerType = "individual" | "fop_company";
+type PaymentPreference = "card" | "bank_invoice";
 
 function cleanDigits(value: FormDataEntryValue | null) {
   return String(value ?? "").replace(/\D/g, "");
@@ -136,14 +138,20 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
   const [branches, setBranches] = useState<Branch[]>([]);
   const [selectedCityRef, setSelectedCityRef] = useState("");
   const initialAttrs = (initial.customAttributes ?? {}) as Record<string, string>;
-  const [buyerType, setBuyerType] = useState(initialAttrs.buyer_type ?? "individual");
-  const [paymentPreference, setPaymentPreference] = useState(
-    initialAttrs.payment_preference ?? "card"
+  const [buyerType, setBuyerType] = useState<BuyerType>(
+    initialAttrs.buyer_type === "fop_company" ? "fop_company" : "individual"
+  );
+  const [paymentPreference, setPaymentPreference] = useState<PaymentPreference>(
+    initialAttrs.buyer_type === "fop_company" ? "bank_invoice" : "card"
   );
   const [searchingCities, setSearchingCities] = useState(false);
   const [addingVariantGid, setAddingVariantGid] = useState<string | null>(null);
 
   const buttonText = data.theme?.buttonText ?? "Оформити замовлення";
+  const loadingText =
+    buyerType === "fop_company"
+      ? "Створюємо замовлення та генеруємо рахунок..."
+      : "Переходимо до оплати...";
 
   useEffect(() => {
     const ab = data.ab;
@@ -216,7 +224,10 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
     setError(null);
     const form = new FormData(e.currentTarget);
     const docsEmail = String(form.get("docs_email") || form.get("email") || "");
-    const selectedPaymentProvider = paymentPreference === "bank_invoice" ? "BANK_INVOICE" : "LIQPAY";
+    const effectivePaymentPreference =
+      buyerType === "fop_company" ? "bank_invoice" : paymentPreference;
+    const selectedPaymentProvider =
+      effectivePaymentPreference === "bank_invoice" ? "BANK_INVOICE" : "LIQPAY";
 
     try {
       if (buyerType === "fop_company") {
@@ -238,7 +249,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
         paymentProvider: selectedPaymentProvider,
         customAttributes: {
           buyer_type: buyerType,
-          payment_preference: paymentPreference,
+          payment_preference: effectivePaymentPreference,
           fop_name: form.get("fop_name"),
           fop_tax_id: form.get("fop_tax_id"),
           fop_legal_address: form.get("fop_legal_address"),
@@ -509,33 +520,26 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
             </div>
           </StepCard>
 
-          <StepCard step={3} title="Спосіб оплати" description="Картка або рахунок для ФОП / юридичної особи" icon={CreditCard}>
+          <StepCard step={3} title="Спосіб оплати" description="Картка для фізичних осіб або рахунок для ФОП / юридичної особи" icon={CreditCard}>
             <div className="grid gap-3">
-              <label className={cn("flex cursor-pointer items-center gap-4 rounded-lg border p-4", paymentPreference === "card" && "border-primary bg-muted/50")}>
-                <input
-                  type="radio"
-                  name="payment_preference_ui"
-                  value="card"
-                  checked={paymentPreference === "card"}
-                  onChange={() => setPaymentPreference("card")}
-                />
-                <span className="flex size-10 items-center justify-center rounded-md bg-background">
-                  <CreditCard className="size-4" />
-                </span>
-                <span className="flex-1">
-                  <span className="block text-sm font-medium">LiqPay</span>
-                  <span className="block text-xs text-muted-foreground">Visa, Mastercard, Apple Pay</span>
-                </span>
-              </label>
-              {buyerType === "fop_company" && paymentPreference === "card" && (
-                <Alert>
-                  <AlertCircle className="size-4" />
-                  <AlertDescription>
-                    Оплата карткою підходить для швидкої покупки фізичної особи. Якщо вам потрібна оплата саме від ФОП або юридичної особи — оберіть оплату за рахунком.
-                  </AlertDescription>
-                </Alert>
-              )}
-              {buyerType === "fop_company" && (
+              {buyerType === "individual" ? (
+                <label className={cn("flex cursor-pointer items-center gap-4 rounded-lg border p-4", paymentPreference === "card" && "border-primary bg-muted/50")}>
+                  <input
+                    type="radio"
+                    name="payment_preference_ui"
+                    value="card"
+                    checked={paymentPreference === "card"}
+                    onChange={() => setPaymentPreference("card")}
+                  />
+                  <span className="flex size-10 items-center justify-center rounded-md bg-background">
+                    <CreditCard className="size-4" />
+                  </span>
+                  <span className="flex-1">
+                    <span className="block text-sm font-medium">LiqPay</span>
+                    <span className="block text-xs text-muted-foreground">Visa, Mastercard, Apple Pay</span>
+                  </span>
+                </label>
+              ) : (
                 <label className={cn("flex cursor-pointer items-center gap-4 rounded-lg border p-4", paymentPreference === "bank_invoice" && "border-primary bg-muted/50")}>
                   <input
                     type="radio"
@@ -543,6 +547,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
                     value="bank_invoice"
                     checked={paymentPreference === "bank_invoice"}
                     onChange={() => setPaymentPreference("bank_invoice")}
+                    readOnly
                   />
                   <span className="flex size-10 items-center justify-center rounded-md bg-background">
                     <FileText className="size-4" />
@@ -552,6 +557,15 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
                     <span className="block text-xs text-muted-foreground">Рахунок буде надіслано на email для документів</span>
                   </span>
                 </label>
+              )}
+              {buyerType === "fop_company" && (
+                <Alert>
+                  <FileText className="size-4" />
+                  <AlertDescription>
+                    Після натискання кнопки зачекайте: ми створимо замовлення в Shopify,
+                    згенеруємо рахунок і відкриємо сторінку, де його можна буде скачати.
+                  </AlertDescription>
+                </Alert>
               )}
             </div>
           </StepCard>
@@ -572,7 +586,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
             {loading ? (
               <>
                 <Loader2 className="size-4 animate-spin" />
-                Обробка…
+                {loadingText}
               </>
             ) : (
               buttonText

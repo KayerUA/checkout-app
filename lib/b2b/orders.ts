@@ -5,7 +5,7 @@ import { writeAutomationLog } from "@/lib/b2b/log";
 import { getOrCreateInvoiceDocument } from "@/lib/documents/invoice";
 import { getOrCreateDeliveryNoteDocument } from "@/lib/documents/delivery-note";
 import { sendDocumentEmail } from "@/lib/email/resend";
-import { setOrderMetafields, updateOrderTags } from "@/lib/shopify/b2b-admin";
+import { sendOrderInvoiceEmail, setOrderMetafields, updateOrderTags } from "@/lib/shopify/b2b-admin";
 import type { FopOrderAttributes, ShopifyOrderPayload } from "@/lib/b2b/types";
 
 function shopDomainFromOrder(order: ShopifyOrderPayload, fallback?: string | null) {
@@ -122,11 +122,12 @@ export async function handleB2BOrderCreated(order: ShopifyOrderPayload, shopDoma
 
   if (invoice.created && buyer.docs_email) {
     await sendInvoiceEmail({
+      shopDomain: orderShop,
+      orderId: String(order.id),
       to: buyer.docs_email,
       invoiceNumber: invoice.document.number ?? "",
       paymentPurpose: invoice.paymentPurpose,
       pdfUrl: invoice.document.pdfUrl,
-      pdf: invoice.pdf,
     });
   }
 
@@ -142,27 +143,28 @@ export async function handleB2BOrderCreated(order: ShopifyOrderPayload, shopDoma
 }
 
 async function sendInvoiceEmail(input: {
+  shopDomain?: string | null;
+  orderId: string;
   to: string;
   invoiceNumber: string;
   paymentPurpose: string;
   pdfUrl?: string | null;
-  pdf: Buffer | null;
 }) {
-  await sendDocumentEmail({
+  await sendOrderInvoiceEmail({
+    shopDomain: input.shopDomain,
+    orderId: input.orderId,
     to: input.to,
     subject: `Рахунок на оплату ${input.invoiceNumber} — KAYER UA`,
-    html: `
-      <p>Дякуємо за замовлення.</p>
-      <p>Ви обрали оплату як ФОП / юридична особа.</p>
-      <p>У вкладенні / за посиланням — рахунок на оплату.</p>
-      <p>Будь ласка, оплатіть його з підприємницького або юридичного рахунку.</p>
-      <p><strong>Призначення платежу:</strong><br />${input.paymentPurpose}</p>
-      ${input.pdfUrl ? `<p>Посилання на рахунок: <a href="${input.pdfUrl}">${input.pdfUrl}</a></p>` : ""}
-      <p>Після надходження коштів замовлення буде автоматично передано в обробку, а документи для бухгалтерії будуть надіслані на цей email.</p>
-    `,
-    attachments: input.pdf
-      ? [{ filename: `${input.invoiceNumber}.pdf`, content: input.pdf, contentType: "application/pdf" }]
-      : undefined,
+    customMessage: [
+      "Дякуємо за замовлення.",
+      "Ви обрали оплату як ФОП / юридична особа.",
+      "Будь ласка, дочекайтесь генерації рахунку і оплатіть його з підприємницького або юридичного рахунку.",
+      `Призначення платежу: ${input.paymentPurpose}`,
+      input.pdfUrl ? `Рахунок PDF можна скачати за посиланням: ${input.pdfUrl}` : "",
+      "Після надходження коштів замовлення буде автоматично передано в обробку.",
+    ]
+      .filter(Boolean)
+      .join("\n\n"),
   });
 }
 

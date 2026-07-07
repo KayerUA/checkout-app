@@ -10,21 +10,24 @@ export async function POST(
   try {
     const body = await request.json().catch(() => ({}));
     let shippingAmount = body.shippingAmount as number | undefined;
+    const { prisma } = await import("@/lib/db");
+    const session = await prisma.checkoutSession.findUnique({ where: { publicToken: token } });
+    const attrs = (session?.customAttributes ?? {}) as Record<string, unknown>;
+    const isBankInvoiceBuyer =
+      attrs.buyer_type === "fop_company" && attrs.payment_preference === "bank_invoice";
 
-    if (shippingAmount === undefined) {
-      const { prisma } = await import("@/lib/db");
-      const session = await prisma.checkoutSession.findUnique({ where: { publicToken: token } });
-      if (session) {
-        shippingAmount = await getShippingQuote(session.merchantId);
-      }
+    if (isBankInvoiceBuyer) {
+      shippingAmount = 0;
+    } else if (shippingAmount === undefined && session) {
+      shippingAmount = await getShippingQuote(session.merchantId);
     }
 
-    const session = await repriceCheckoutSession(token, shippingAmount);
+    const updatedSession = await repriceCheckoutSession(token, shippingAmount);
     return NextResponse.json({
-      subtotal: session.subtotal,
-      shippingAmount: session.shippingAmount,
-      totalAmount: session.totalAmount,
-      status: session.status,
+      subtotal: updatedSession.subtotal,
+      shippingAmount: updatedSession.shippingAmount,
+      totalAmount: updatedSession.totalAmount,
+      status: updatedSession.status,
     });
   } catch (error) {
     return NextResponse.json(

@@ -330,6 +330,7 @@ export async function createBankInvoiceShopifyOrderIdempotent(publicToken: strin
       const orderInput = mapCheckoutToOrderCreateInput(session, null, {
         financialStatus: "PENDING",
         sourceName: "ua_b2b_bank_invoice",
+        includeShippingLines: false,
       });
 
       const response = await shopifyAdminGraphQL<{

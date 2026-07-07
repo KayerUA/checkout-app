@@ -23,7 +23,11 @@ type SessionWithRelations = CheckoutSession & {
 export function mapCheckoutToOrderCreateInput(
   session: SessionWithRelations,
   paidAttempt: PaymentAttempt | null,
-  options?: { financialStatus?: "PAID" | "PENDING"; sourceName?: string }
+  options?: {
+    financialStatus?: "PAID" | "PENDING";
+    sourceName?: string;
+    includeShippingLines?: boolean;
+  }
 ) {
   const shippingPayload = (session.shippingPayload ?? {}) as Record<string, string>;
   const sessionAttrs = (session.customAttributes ?? {}) as Record<string, unknown>;
@@ -130,7 +134,7 @@ export function mapCheckoutToOrderCreateInput(
       countryCode: "UA",
       zip: shippingPayload.postalCode ?? "01001",
     },
-    shippingLines: session.shippingAmount
+    shippingLines: options?.includeShippingLines !== false && session.shippingAmount
       ? [
           {
             title: session.shippingMethodCode ?? "Nova Poshta",

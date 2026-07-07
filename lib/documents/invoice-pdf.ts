@@ -154,10 +154,6 @@ export async function createInvoicePdf(input: B2BDocumentInput) {
   doc.text(buyerLines.join("\n"), left + 92, y, { width: width - 92, lineGap: 1 });
   y += buyerLines.length > 2 ? 52 : 34;
 
-  doc.text("Договір:", left, y, { width: 86 });
-  doc.text("Основний договір", left + 92, y);
-  y += 20;
-
   const tableTop = y;
   const cols = [left, left + 30, left + 322, left + 414, left + 470, right];
   const headerHeight = 22;

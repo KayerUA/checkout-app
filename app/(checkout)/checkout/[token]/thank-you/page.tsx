@@ -54,6 +54,7 @@ export default async function ThankYouPage({
         orderBy: { createdAt: "desc" },
       })
     : null;
+  const invoiceReady = Boolean(invoice?.number && invoice.pdfUrl);
 
   return (
     <>
@@ -73,11 +74,15 @@ export default async function ThankYouPage({
               {isBankInvoice ? "Очікуємо оплату за рахунком" : "Замовлення прийнято"}
             </Badge>
             <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-              {isBankInvoice ? "Рахунок для оплати готується" : "Дякуємо за покупку!"}
+              {isBankInvoice
+                ? invoiceReady
+                  ? "Рахунок готовий до оплати"
+                  : "Рахунок для оплати готується"
+                : "Дякуємо за покупку!"}
             </h1>
             <p className="text-sm text-muted-foreground">
               {isBankInvoice
-                ? "Ми надішлемо рахунок на email для документів. Замовлення піде в обробку після надходження коштів з підприємницького або юридичного рахунку."
+                ? "Дочекайтесь генерації рахунку на цій сторінці. Ми також надішлемо invoice email через Shopify на email для документів. Замовлення піде в обробку після надходження коштів з підприємницького або юридичного рахунку."
                 : "Ми вже отримали ваше замовлення і незабаром почнемо обробку."}
             </p>
           </div>
@@ -114,36 +119,61 @@ export default async function ThankYouPage({
                   <div className="flex justify-between gap-4">
                     <span className="text-muted-foreground">Статус</span>
                     <span className="text-right">
-                      {b2bOrder?.status === "WAITING_BANK_PAYMENT"
-                        ? "Рахунок надіслано, очікуємо платіж"
+                      {invoiceReady
+                        ? "Рахунок готовий, очікуємо платіж"
+                        : b2bOrder?.status === "WAITING_BANK_PAYMENT"
+                          ? "Рахунок створюється, зачекайте кілька секунд"
                         : b2bOrder?.status ?? "Рахунок створюється"}
                     </span>
                   </div>
-                  {invoice?.number && (
+                  {invoiceReady ? (
                     <div className="flex justify-between gap-4">
                       <span className="text-muted-foreground">Рахунок</span>
-                      {invoice.pdfUrl ? (
-                        <a
-                          href={invoice.pdfUrl}
-                          className="inline-flex items-center gap-1 text-right font-medium hover:underline"
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          {invoice.number}
-                          <ExternalLink className="size-3" />
-                        </a>
-                      ) : (
-                        <span className="font-medium">{invoice.number}</span>
-                      )}
+                      <a
+                        href={invoice!.pdfUrl!}
+                        className="inline-flex items-center gap-1 text-right font-medium hover:underline"
+                        target="_blank"
+                        rel="noreferrer"
+                        download
+                      >
+                        {invoice!.number}
+                        <ExternalLink className="size-3" />
+                      </a>
+                    </div>
+                  ) : (
+                    <div className="rounded-md border border-dashed p-3 text-sm">
+                      <p className="font-medium">Генеруємо рахунок</p>
+                      <p className="mt-1 text-muted-foreground">
+                        Зачекайте кілька секунд. Коли рахунок буде готовий, тут з&apos;явиться
+                        посилання для скачування PDF.
+                      </p>
                     </div>
                   )}
                   <Separator />
                   <div className="rounded-md bg-muted p-3 text-sm leading-relaxed">
                     <p className="font-medium">Що далі</p>
                     <p className="mt-1 text-muted-foreground">
-                      Оплатіть рахунок саме з рахунку ФОП або юридичної особи. Після автоматичної звірки банк-платежу ми позначимо замовлення як готове до обробки та надішлемо документи для бухгалтерії.
+                      Скачайте PDF-рахунок і оплатіть його саме з рахунку ФОП або юридичної особи. Після автоматичної звірки банк-платежу ми позначимо замовлення як готове до обробки.
                     </p>
                   </div>
+                  {invoiceReady && (
+                    <Button
+                      className="w-full"
+                      variant="outline"
+                      nativeButton={false}
+                      render={
+                        <a
+                          href={invoice!.pdfUrl!}
+                          target="_blank"
+                          rel="noreferrer"
+                          download
+                        />
+                      }
+                    >
+                      Скачати рахунок PDF
+                      <ExternalLink className="size-4" />
+                    </Button>
+                  )}
                 </>
               )}
               {shippingPayload?.branchName && (

@@ -145,6 +145,46 @@ export async function setOrderMetafields(input: {
   }
 }
 
+export async function sendOrderInvoiceEmail(input: {
+  shopDomain?: string | null;
+  orderId: string;
+  to: string;
+  subject: string;
+  customMessage: string;
+}) {
+  const result = await shopifyGraphQL<{
+    data?: {
+      orderInvoiceSend?: {
+        order?: { id: string } | null;
+        userErrors: Array<{ message: string }>;
+      };
+    };
+  }>(
+    input.shopDomain,
+    `mutation OrderInvoiceSend($orderId: ID!, $email: EmailInput) {
+      orderInvoiceSend(id: $orderId, email: $email) {
+        order { id }
+        userErrors { message }
+      }
+    }`,
+    {
+      orderId: orderGid(input.orderId),
+      email: {
+        to: input.to,
+        subject: input.subject,
+        customMessage: input.customMessage,
+      },
+    }
+  );
+
+  const errors = result.data?.orderInvoiceSend?.userErrors ?? [];
+  if (errors.length) {
+    throw new Error(`Shopify order invoice email failed: ${errors.map((error) => error.message).join("; ")}`);
+  }
+
+  return result.data?.orderInvoiceSend?.order ?? null;
+}
+
 export async function getShopifyOrder(input: { shopDomain?: string | null; orderId: string }) {
   const result = await shopifyRest<{ order: unknown }>(
     input.shopDomain,

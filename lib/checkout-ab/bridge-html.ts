@@ -117,7 +117,10 @@ export function renderCheckoutAbBridgePage(config: BridgePageConfig): string {
           sourceUrl: window.location.href,
           customAttributes: {
             buyer_type: (cart.attributes && cart.attributes.buyer_type) || 'individual',
-            payment_preference: (cart.attributes && cart.attributes.payment_preference) || 'card',
+            payment_preference:
+              cart.attributes && cart.attributes.buyer_type === 'fop_company'
+                ? 'bank_invoice'
+                : (cart.attributes && cart.attributes.payment_preference) || 'card',
             fop_name: (cart.attributes && cart.attributes.fop_name) || '',
             fop_tax_id: (cart.attributes && cart.attributes.fop_tax_id) || '',
             fop_legal_address: (cart.attributes && cart.attributes.fop_legal_address) || '',

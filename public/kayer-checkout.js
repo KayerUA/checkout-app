@@ -260,7 +260,7 @@
     var buyerType = cartAttributes.buyer_type || getFieldValue("buyer_type") || "individual";
     var paymentPreference =
       buyerType === "fop_company"
-        ? cartAttributes.payment_preference || getFieldValue("payment_preference") || "bank_invoice"
+        ? "bank_invoice"
         : "card";
     return {
       buyer_type: buyerType,
@@ -320,23 +320,15 @@
       '<input name="docs_phone" type="tel" placeholder="Телефон" style="box-sizing:border-box;width:100%;margin:6px 0;padding:10px;border:1px solid #ccc;border-radius:6px;">' +
       '<input name="fop_legal_address" placeholder="Юридична адреса" style="box-sizing:border-box;width:100%;margin:6px 0;padding:10px;border:1px solid #ccc;border-radius:6px;">' +
       '<input name="accounting_comment" placeholder="Коментар для бухгалтерії" style="box-sizing:border-box;width:100%;margin:6px 0;padding:10px;border:1px solid #ccc;border-radius:6px;">' +
-      '<label style="display:block;margin:8px 0;"><input type="radio" name="payment_preference" value="bank_invoice" checked> Оплата за рахунком</label>' +
-      '<label style="display:block;margin:8px 0;"><input type="radio" name="payment_preference" value="card"> Оплата карткою</label>' +
-      '<p style="font-size:12px;line-height:1.4;color:#555;margin:8px 0 0;">Для покупок від ФОП або компанії рекомендуємо оплату за рахунком з підприємницького/юридичного рахунку. Так ми зможемо автоматично підготувати документи для бухгалтерії.</p>' +
-      '<p data-kayer-card-warning style="display:none;font-size:12px;line-height:1.4;color:#8a5a00;margin:8px 0 0;">Оплата карткою підходить для швидкої покупки фізичної особи. Якщо вам потрібна оплата саме від ФОП або юридичної особи — оберіть оплату за рахунком.</p>' +
+      '<input type="hidden" name="payment_preference" value="bank_invoice">' +
+      '<p style="font-size:12px;line-height:1.4;color:#555;margin:8px 0 0;">Для покупок від ФОП або компанії доступна оплата тільки за рахунком з підприємницького/юридичного рахунку. Так ми зможемо автоматично підготувати документи для бухгалтерії.</p>' +
       "</div>";
 
     target.insertBefore(block, target.firstChild);
     block.addEventListener("change", function () {
       var isFop = getFieldValue("buyer_type") === "fop_company";
       var fields = block.querySelector("[data-kayer-fop-fields]");
-      var warning = block.querySelector("[data-kayer-card-warning]");
       fields.style.display = isFop ? "block" : "none";
-      if (!isFop) {
-        var card = block.querySelector('[name="payment_preference"][value="card"]');
-        if (card) card.checked = true;
-      }
-      warning.style.display = isFop && getFieldValue("payment_preference") === "card" ? "block" : "none";
       persistB2BAttributes();
     });
   }

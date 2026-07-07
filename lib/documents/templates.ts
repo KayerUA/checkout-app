@@ -210,10 +210,6 @@ export function renderInvoiceHtml(input: B2BDocumentInput) {
                 ${input.buyer.docs_email ? `E-mail: ${escapeHtml(input.buyer.docs_email)}` : ""}
               </td>
             </tr>
-            <tr>
-              <td class="caption">Договір:</td>
-              <td><strong>Основний договір</strong></td>
-            </tr>
           </tbody>
         </table>
 

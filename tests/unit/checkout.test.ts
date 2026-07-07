@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import { verifyLiqPayCallback, parseLiqPayData } from "@/lib/payments/types";
 import crypto from "node:crypto";
 import { calcTotals, formatMoney } from "@/lib/checkout/pricing";
+import { invoiceGoodsAmount } from "@/lib/documents/invoice";
+import { mapCheckoutToOrderCreateInput } from "@/lib/shopify/order-mapper";
 
 describe("LiqPay verification", () => {
   it("verifies valid signature", () => {
@@ -43,5 +45,73 @@ describe("Idempotency transitions", () => {
     const { canTransition } = await import("@/lib/checkout/state-machine");
     expect(canTransition("DRAFT", "READY")).toBe(true);
     expect(canTransition("PAID", "DRAFT")).toBe(false);
+  });
+});
+
+describe("B2B invoice checkout", () => {
+  it("calculates invoice amount from goods only", () => {
+    expect(
+      invoiceGoodsAmount({
+        id: "1",
+        total_price: "1290.00",
+        line_items: [
+          { title: "A", quantity: 2, price: "450.00" },
+          { title: "B", quantity: 1, price_set: { shop_money: { amount: "300.00" } } },
+        ],
+      })
+    ).toBe(1200);
+  });
+
+  it("can omit shipping lines for bank invoice Shopify orders", () => {
+    const order = mapCheckoutToOrderCreateInput(
+      {
+        id: "session-1",
+        merchantId: "merchant-1",
+        publicToken: "token-1",
+        status: "READY",
+        sourceIdentifier: "chk_1",
+        currency: "UAH",
+        subtotal: 10000,
+        shippingAmount: 9000,
+        discountAmount: 0,
+        totalAmount: 10000,
+        buyerEmail: "docs@example.com",
+        buyerPhone: "+380501111111",
+        buyerFirstName: "Test",
+        buyerLastName: "Buyer",
+        shippingMethodCode: "nova_poshta_branch",
+        shippingProvider: "nova_poshta",
+        shippingPayload: { branchRef: "np-1", branchName: "Відділення 1", cityName: "Київ" },
+        billingPayload: null,
+        paymentProvider: null,
+        customAttributes: {
+          buyer_type: "fop_company",
+          payment_preference: "bank_invoice",
+        },
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        abandonedAt: null,
+        lines: [
+          {
+            id: "line-1",
+            checkoutSessionId: "session-1",
+            variantGid: "gid://shopify/ProductVariant/1",
+            productGid: null,
+            sku: null,
+            title: "Product",
+            quantity: 1,
+            unitPrice: 10000,
+            compareAtPrice: null,
+            lineDiscountAmount: 0,
+            metadata: null,
+          },
+        ],
+        paymentAttempts: [],
+      },
+      null,
+      { financialStatus: "PENDING", includeShippingLines: false }
+    );
+
+    expect(order.shippingLines).toEqual([]);
   });
 });
