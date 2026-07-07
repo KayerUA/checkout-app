@@ -2,7 +2,10 @@ import { prisma } from "@/lib/db";
 import { requireMerchantSession } from "@/lib/session";
 import { ThemeConfigForm } from "@/components/admin/theme-config-form";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
+import { PageHeader } from "@/components/ui/page-header";
 import { redirect } from "next/navigation";
+import { Settings } from "lucide-react";
 
 export default async function SettingsPage() {
   let session;
@@ -24,8 +27,11 @@ export default async function SettingsPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Settings</h1>
-      <Card>
+      <PageHeader
+        title="Settings"
+        description="Store identity, checkout theme and recent admin activity."
+      />
+      <Card className="bg-card/95 shadow-sm shadow-black/5">
         <CardHeader>
           <CardTitle>Store</CardTitle>
         </CardHeader>
@@ -42,7 +48,7 @@ export default async function SettingsPage() {
           </p>
         </CardContent>
       </Card>
-      <Card>
+      <Card className="bg-card/95 shadow-sm shadow-black/5">
         <CardHeader>
           <CardTitle>Тема checkout (KAYER)</CardTitle>
           <CardDescription>Логотип і текст кнопки на сторінці оформлення</CardDescription>
@@ -51,7 +57,7 @@ export default async function SettingsPage() {
           <ThemeConfigForm />
         </CardContent>
       </Card>
-      <Card>
+      <Card className="bg-card/95 shadow-sm shadow-black/5">
         <CardHeader>
           <CardTitle>Audit Log</CardTitle>
         </CardHeader>
@@ -64,7 +70,7 @@ export default async function SettingsPage() {
               </div>
             ))}
             {auditLogs.length === 0 && (
-              <p className="text-zinc-500">No audit events yet.</p>
+              <EmptyState title="No audit events yet" description="Admin changes will be listed here after settings are updated." icon={<Settings className="size-4" />} />
             )}
           </div>
         </CardContent>

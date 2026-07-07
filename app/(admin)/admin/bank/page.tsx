@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { BankConfigForm } from "@/components/admin/bank-config-form";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { PageHeader } from "@/components/ui/page-header";
 import { getPrivatBankConfigForMerchant } from "@/lib/bank/config";
 import { requireMerchantSession } from "@/lib/session";
 
@@ -16,13 +17,11 @@ export default async function BankSettingsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">Банківська звірка</h1>
-        <p className="text-sm text-muted-foreground">
-          Privat24 Business Autoclient для автоматичного match оплат за рахунком.
-        </p>
-      </div>
-      <Card>
+      <PageHeader
+        title="Bank"
+        description="Privat24 Business Autoclient для автоматичного match оплат за рахунком."
+      />
+      <Card className="bg-card/95 shadow-sm shadow-black/5">
         <CardHeader>
           <CardTitle>Privat24 Business</CardTitle>
           <CardDescription>

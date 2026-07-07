@@ -3,6 +3,12 @@ import { requireMerchantSession } from "@/lib/session";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { redirect } from "next/navigation";
+import { EmptyState } from "@/components/ui/empty-state";
+import { PageHeader } from "@/components/ui/page-header";
+import { StatusBadge } from "@/components/ui/status-badge";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { formatMoney } from "@/lib/checkout/pricing";
+import { Package } from "lucide-react";
 
 export default async function OrdersPage() {
   let session;
@@ -24,39 +30,54 @@ export default async function OrdersPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold">Orders</h1>
-          <p className="text-sm text-zinc-500">
-            Відновлення створює Shopify orders для оплачених checkout sessions без order link.
-          </p>
-        </div>
+      <PageHeader
+        title="Orders"
+        description="Shopify order links, payment state and fiscalization status for the latest checkout sessions."
+        action={
         <form action="/api/admin/reconcile-orders" method="post">
           <Button type="submit" variant="outline">Create missing Shopify orders</Button>
         </form>
-      </div>
-      <Card>
+        }
+      />
+      <Card className="bg-card/95 shadow-sm shadow-black/5">
         <CardHeader>
           <CardTitle>Shopify order links</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="space-y-3">
-            {orders.map((o) => (
-              <div
-                key={o.id}
-                className="rounded-lg border border-zinc-200 p-3 text-sm"
-              >
-                <p className="font-medium">{o.shopifyOrderName ?? "Pending"}</p>
-                <p className="text-zinc-500">
-                  Session {o.checkoutSession.publicToken.slice(0, 8)}… · Fiscal:{" "}
-                  {o.fiscalReceipt?.status ?? "n/a"}
-                </p>
-              </div>
-            ))}
-            {orders.length === 0 && (
-              <p className="text-zinc-500">No orders yet.</p>
-            )}
-          </div>
+          {orders.length > 0 ? (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Order</TableHead>
+                  <TableHead>Session</TableHead>
+                  <TableHead>Customer</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Fiscal</TableHead>
+                  <TableHead className="text-right">Total</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {orders.map((order) => (
+                  <TableRow key={order.id}>
+                    <TableCell className="font-medium">{order.shopifyOrderName ?? "Pending"}</TableCell>
+                    <TableCell className="font-mono text-xs text-muted-foreground">
+                      {order.checkoutSession.publicToken.slice(0, 10)}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {order.checkoutSession.buyerEmail ?? order.checkoutSession.buyerPhone ?? "Anonymous"}
+                    </TableCell>
+                    <TableCell><StatusBadge status={order.checkoutSession.status} /></TableCell>
+                    <TableCell><StatusBadge status={order.fiscalReceipt?.status} /></TableCell>
+                    <TableCell className="text-right font-medium">
+                      {formatMoney(order.checkoutSession.totalAmount, order.checkoutSession.currency)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          ) : (
+            <EmptyState title="No orders yet" description="When paid checkouts create Shopify orders, they will appear here." icon={<Package className="size-4" />} />
+          )}
         </CardContent>
       </Card>
     </div>

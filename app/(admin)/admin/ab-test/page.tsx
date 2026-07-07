@@ -7,6 +7,11 @@ import {
 } from "@/lib/checkout-ab/metrics";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { redirect } from "next/navigation";
+import { EmptyState } from "@/components/ui/empty-state";
+import { PageHeader } from "@/components/ui/page-header";
+import { StatusBadge } from "@/components/ui/status-badge";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { FlaskConical } from "lucide-react";
 
 export default async function CheckoutAbPage() {
   try {
@@ -27,15 +32,13 @@ export default async function CheckoutAbPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">A/B Checkout Router</h1>
-        <p className="text-sm text-muted-foreground">
-          Chekly vs custom checkout — experiment {config.CHECKOUT_AB_EXPERIMENT_ID}
-        </p>
-      </div>
+      <PageHeader
+        title="A/B Checkout"
+        description={`Chekly vs custom checkout. Experiment ${config.CHECKOUT_AB_EXPERIMENT_ID}.`}
+      />
 
       <div className="grid gap-4 md:grid-cols-3">
-        <Card>
+        <Card className="bg-card/95 shadow-sm shadow-black/5">
           <CardHeader>
             <CardTitle className="text-base">Traffic split</CardTitle>
             <CardDescription>Env weights (sticky assignment)</CardDescription>
@@ -50,7 +53,7 @@ export default async function CheckoutAbPage() {
         </Card>
 
         {conversion.map((row) => (
-          <Card key={row.variant}>
+          <Card key={row.variant} className="bg-card/95 shadow-sm shadow-black/5">
             <CardHeader>
               <CardTitle className="text-base">{row.variant}</CardTitle>
               <CardDescription>Primary: paid / clicks</CardDescription>
@@ -70,27 +73,37 @@ export default async function CheckoutAbPage() {
         ))}
       </div>
 
-      <Card>
+      <Card className="bg-card/95 shadow-sm shadow-black/5">
         <CardHeader>
           <CardTitle>Recent events</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="space-y-2 text-sm">
-            {recentEvents.map((event) => (
-              <div key={event.id} className="flex justify-between border-b py-2">
-                <span>
-                  <span className="font-medium">{event.eventName}</span>
-                  <span className="text-muted-foreground"> · {event.variant}</span>
-                </span>
-                <span className="text-muted-foreground">
-                  {event.createdAt.toISOString().slice(0, 19)}
-                </span>
-              </div>
-            ))}
-            {recentEvents.length === 0 && (
-              <p className="text-muted-foreground">No events yet.</p>
-            )}
-          </div>
+          {recentEvents.length > 0 ? (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Event</TableHead>
+                  <TableHead>Variant</TableHead>
+                  <TableHead>Visitor</TableHead>
+                  <TableHead className="text-right">Time</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {recentEvents.map((event) => (
+                  <TableRow key={event.id}>
+                    <TableCell className="font-medium">{event.eventName}</TableCell>
+                    <TableCell><StatusBadge status={event.variant} /></TableCell>
+                    <TableCell className="font-mono text-xs text-muted-foreground">{event.visitorId.slice(0, 12)}</TableCell>
+                    <TableCell className="text-right text-muted-foreground">
+                      {event.createdAt.toISOString().slice(0, 19)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          ) : (
+            <EmptyState title="No events yet" description="Checkout router events will appear here after traffic reaches the experiment." icon={<FlaskConical className="size-4" />} />
+          )}
         </CardContent>
       </Card>
     </div>

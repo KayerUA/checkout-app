@@ -13,8 +13,8 @@ type Step = 1 | 2 | 3;
 
 export function CheckoutProgress({ currentStep }: { currentStep: Step }) {
   return (
-    <nav aria-label="Прогрес оформлення" className="mb-8">
-      <ol className="flex items-center justify-center">
+    <nav aria-label="Прогрес оформлення" className="mb-6 sm:mb-8">
+      <ol className="flex items-center justify-center rounded-2xl border bg-card/80 px-4 py-3 shadow-sm shadow-black/5">
         {STEPS.map((step, index) => {
           const done = step.id < currentStep;
           const active = step.id === currentStep;
@@ -43,7 +43,7 @@ export function CheckoutProgress({ currentStep }: { currentStep: Step }) {
               {index < STEPS.length - 1 && (
                 <div
                   className={cn(
-                    "mx-4 mb-5 h-px w-10 sm:w-16",
+                    "mx-3 mb-5 h-px w-8 sm:mx-5 sm:w-20",
                     step.id < currentStep ? "bg-primary" : "bg-border"
                   )}
                 />

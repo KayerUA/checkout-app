@@ -17,14 +17,18 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import {
   AlertCircle,
   CreditCard,
   FileText,
+  Headphones,
   Loader2,
   MapPin,
   Search,
+  ShieldCheck,
+  Store,
   Truck,
   User,
 } from "lucide-react";
@@ -71,7 +75,14 @@ type CheckoutData = {
 };
 
 type City = { ref: string; name: string };
-type Branch = { ref: string; number: string; shortAddress: string; cityName: string };
+type Branch = {
+  ref: string;
+  number: string;
+  shortAddress: string;
+  cityName: string;
+  cityRef?: string;
+  type?: "branch" | "locker" | "courier";
+};
 type BuyerType = "individual" | "fop_company";
 type PaymentPreference = "card" | "bank_invoice";
 
@@ -100,20 +111,22 @@ function StepCard({
   title,
   description,
   icon: Icon,
+  active,
   children,
 }: {
   step: number;
   title: string;
   description?: string;
   icon: React.ElementType;
+  active?: boolean;
   children: React.ReactNode;
 }) {
   return (
-    <Card>
+    <Card className={cn("bg-card/95 shadow-sm shadow-black/5 transition-colors", active && "ring-2 ring-primary/15")}>
       <CardHeader>
         <div className="flex items-start gap-3">
-          <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted">
-            <Icon className="size-4 text-muted-foreground" />
+          <div className={cn("flex size-10 shrink-0 items-center justify-center rounded-xl bg-secondary", active && "bg-primary text-primary-foreground")}>
+            <Icon className={cn("size-4 text-muted-foreground", active && "text-primary-foreground")} />
           </div>
           <div className="space-y-1">
             <Badge variant="outline" className="text-[10px] uppercase tracking-wider">
@@ -136,7 +149,9 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
   const [cityQuery, setCityQuery] = useState("");
   const [cities, setCities] = useState<City[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
-  const [selectedCityRef, setSelectedCityRef] = useState("");
+  const [selectedCityRef, setSelectedCityRef] = useState(
+    (initial.shippingPayload?.cityRef as string | undefined) ?? ""
+  );
   const initialAttrs = (initial.customAttributes ?? {}) as Record<string, string>;
   const [buyerType, setBuyerType] = useState<BuyerType>(
     initialAttrs.buyer_type === "fop_company" ? "fop_company" : "individual"
@@ -151,7 +166,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
   const loadingText =
     buyerType === "fop_company"
       ? "Створюємо замовлення та генеруємо рахунок..."
-      : "Переходимо до оплати...";
+      : "Готуємо безпечний перехід до LiqPay...";
 
   useEffect(() => {
     const ab = data.ab;
@@ -290,9 +305,12 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
   async function selectBranch(branch: Branch) {
     const updated = await saveSession({
       shippingPayload: {
+        cityRef: branch.cityRef ?? selectedCityRef,
+        cityName: branch.cityName,
         branchRef: branch.ref,
         branchName: branch.shortAddress,
-        cityName: branch.cityName,
+        branchNumber: branch.number,
+        branchType: branch.type ?? "branch",
       },
     });
     setData(updated);
@@ -339,8 +357,8 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
       <CheckoutProgress currentStep={currentStep} />
 
       <div className="grid gap-6 lg:grid-cols-[1fr_380px] lg:gap-8">
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <StepCard step={1} title="Контактні дані" description="Для зв'язку щодо замовлення" icon={User}>
+        <form onSubmit={handleSubmit} className="order-2 space-y-6 lg:order-1" aria-busy={loading}>
+          <StepCard step={1} title="Контактні дані" description="Для зв'язку щодо замовлення та підтвердження доставки" icon={User} active={currentStep === 1}>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="firstName">Ім&apos;я</Label>
@@ -359,7 +377,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
                 <Input id="email" name="email" type="email" defaultValue={data.buyerEmail ?? ""} placeholder="email@example.com" />
               </div>
 
-              <div className="space-y-3 rounded-lg border p-4 sm:col-span-2">
+              <div className="space-y-3 rounded-2xl border bg-secondary/35 p-4 sm:col-span-2">
                 <div>
                   <p className="text-sm font-medium">Покупаєте як ФОП або компанія?</p>
                   <p className="mt-1 text-xs text-muted-foreground">
@@ -367,7 +385,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
                   </p>
                 </div>
                 <div className="grid gap-2 sm:grid-cols-2">
-                  <label className={cn("flex cursor-pointer items-center gap-2 rounded-md border p-3 text-sm", buyerType === "individual" && "border-primary bg-muted")}>
+                  <label className={cn("flex cursor-pointer items-center gap-2 rounded-xl border bg-background p-3 text-sm transition-colors", buyerType === "individual" && "border-primary bg-secondary")}>
                     <input
                       type="radio"
                       name="buyer_type_ui"
@@ -380,7 +398,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
                     />
                     Фізична особа
                   </label>
-                  <label className={cn("flex cursor-pointer items-center gap-2 rounded-md border p-3 text-sm", buyerType === "fop_company" && "border-primary bg-muted")}>
+                  <label className={cn("flex cursor-pointer items-center gap-2 rounded-xl border bg-background p-3 text-sm transition-colors", buyerType === "fop_company" && "border-primary bg-secondary")}>
                     <input
                       type="radio"
                       name="buyer_type_ui"
@@ -427,7 +445,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
                     </div>
                     <div className="space-y-2 sm:col-span-2">
                       <Label htmlFor="accounting_comment">Коментар для бухгалтерії</Label>
-                      <Input id="accounting_comment" name="accounting_comment" defaultValue={initialAttrs.accounting_comment ?? ""} />
+                      <Textarea id="accounting_comment" name="accounting_comment" defaultValue={initialAttrs.accounting_comment ?? ""} placeholder="Наприклад: потрібен рахунок для оплати сьогодні" />
                     </div>
                   </div>
                 )}
@@ -435,7 +453,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
             </div>
           </StepCard>
 
-          <StepCard step={2} title="Доставка" description="Нова Пошта — відділення або поштомат" icon={Truck}>
+          <StepCard step={2} title="Доставка" description="Нова Пошта — відділення або поштомат. Доставка оплачується за умовами магазину або при отриманні." icon={Truck} active={currentStep === 2}>
             <div className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="city">Місто</Label>
@@ -453,22 +471,28 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
                     }}
                     placeholder="Почніть вводити назву міста"
                     autoComplete="off"
-                    className="pr-9"
+                    className="h-10 pr-9"
                   />
                 </div>
                 {searchingCities && <Skeleton className="h-10 w-full" />}
                 {cities.length > 0 && (
-                  <ScrollArea className="h-40 rounded-md border">
+                  <ScrollArea className="h-40 rounded-xl border bg-background">
                     <div className="p-1">
                       {cities.map((c) => (
                         <button
                           key={c.ref}
                           type="button"
-                          className="w-full rounded-sm px-3 py-2 text-left text-sm hover:bg-muted"
+                          className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-secondary"
                           onClick={() => {
                             setSelectedCityRef(c.ref);
                             setCityQuery(c.name);
                             setCities([]);
+                            void saveSession({
+                              shippingPayload: {
+                                cityRef: c.ref,
+                                cityName: c.name,
+                              },
+                            }).then(setData);
                           }}
                         >
                           {c.name}
@@ -482,7 +506,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
               {branches.length > 0 && (
                 <div className="space-y-2">
                   <Label>Відділення</Label>
-                  <ScrollArea className="h-48 rounded-md border">
+                  <ScrollArea className="h-48 rounded-xl border bg-background">
                     <div className="p-1">
                       {branches.map((b) => {
                         const selected = data.shippingPayload?.branchRef === b.ref;
@@ -491,8 +515,8 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
                             key={b.ref}
                             type="button"
                             className={cn(
-                              "flex w-full items-start gap-2 rounded-sm px-3 py-2 text-left text-sm hover:bg-muted",
-                              selected && "bg-muted font-medium"
+                              "flex w-full items-start gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-secondary",
+                              selected && "bg-secondary font-medium"
                             )}
                             onClick={() => selectBranch(b)}
                           >
@@ -520,10 +544,10 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
             </div>
           </StepCard>
 
-          <StepCard step={3} title="Спосіб оплати" description="Картка для фізичних осіб або рахунок для ФОП / юридичної особи" icon={CreditCard}>
+          <StepCard step={3} title="Спосіб оплати" description="Картка для фізичних осіб або рахунок для ФОП / юридичної особи" icon={CreditCard} active={currentStep === 3}>
             <div className="grid gap-3">
               {buyerType === "individual" ? (
-                <label className={cn("flex cursor-pointer items-center gap-4 rounded-lg border p-4", paymentPreference === "card" && "border-primary bg-muted/50")}>
+                <label className={cn("flex cursor-pointer items-center gap-4 rounded-2xl border bg-background p-4 transition-colors", paymentPreference === "card" && "border-primary bg-secondary/70")}>
                   <input
                     type="radio"
                     name="payment_preference_ui"
@@ -531,16 +555,19 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
                     checked={paymentPreference === "card"}
                     onChange={() => setPaymentPreference("card")}
                   />
-                  <span className="flex size-10 items-center justify-center rounded-md bg-background">
+                  <span className="flex size-11 items-center justify-center rounded-xl bg-primary text-primary-foreground">
                     <CreditCard className="size-4" />
                   </span>
                   <span className="flex-1">
-                    <span className="block text-sm font-medium">LiqPay</span>
-                    <span className="block text-xs text-muted-foreground">Visa, Mastercard, Apple Pay</span>
+                    <span className="block text-sm font-medium">LiqPay secure checkout</span>
+                    <span className="block text-xs leading-5 text-muted-foreground">
+                      Visa, Mastercard, Apple Pay. Після натискання ми відкриємо захищену сторінку LiqPay.
+                    </span>
                   </span>
+                  <ShieldCheck className="hidden size-4 text-emerald-600 sm:block" />
                 </label>
               ) : (
-                <label className={cn("flex cursor-pointer items-center gap-4 rounded-lg border p-4", paymentPreference === "bank_invoice" && "border-primary bg-muted/50")}>
+                <label className={cn("flex cursor-pointer items-center gap-4 rounded-2xl border bg-background p-4 transition-colors", paymentPreference === "bank_invoice" && "border-primary bg-secondary/70")}>
                   <input
                     type="radio"
                     name="payment_preference_ui"
@@ -549,12 +576,12 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
                     onChange={() => setPaymentPreference("bank_invoice")}
                     readOnly
                   />
-                  <span className="flex size-10 items-center justify-center rounded-md bg-background">
+                  <span className="flex size-11 items-center justify-center rounded-xl bg-primary text-primary-foreground">
                     <FileText className="size-4" />
                   </span>
                   <span className="flex-1">
                     <span className="block text-sm font-medium">Оплата за рахунком</span>
-                    <span className="block text-xs text-muted-foreground">Рахунок буде надіслано на email для документів</span>
+                    <span className="block text-xs leading-5 text-muted-foreground">Рахунок буде створено після підтвердження і його можна буде скачати на наступній сторінці.</span>
                   </span>
                 </label>
               )}
@@ -577,10 +604,16 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
             </Alert>
           )}
 
+          <div className="rounded-2xl border bg-card/80 p-4">
+            <div className="mb-4 grid gap-2 text-xs text-muted-foreground sm:grid-cols-3">
+              <span className="inline-flex items-center gap-2"><Store className="size-3.5" /> Офіційний KAYER</span>
+              <span className="inline-flex items-center gap-2"><ShieldCheck className="size-3.5" /> Захищена оплата</span>
+              <span className="inline-flex items-center gap-2"><Headphones className="size-3.5" /> Підтримка після замовлення</span>
+            </div>
           <Button
             type="submit"
             size="lg"
-            className="w-full"
+            className="h-11 w-full"
             disabled={loading || !data.shippingPayload?.branchRef}
           >
             {loading ? (
@@ -593,25 +626,33 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
             )}
           </Button>
 
-          <p className="text-center text-xs text-muted-foreground">
+          <p className="mt-3 text-center text-xs text-muted-foreground">
             Натискаючи кнопку, ви погоджуєтесь з{" "}
             <a href="https://kayer.ua" className="underline underline-offset-2 hover:text-foreground" target="_blank" rel="noreferrer">
               умовами доставки та оплати
             </a>
           </p>
+          {!data.shippingPayload?.branchRef && (
+            <p className="mt-2 text-center text-xs text-amber-700">
+              Щоб продовжити, оберіть відділення або поштомат Нової Пошти.
+            </p>
+          )}
+          </div>
         </form>
 
-        <OrderSummary
-          lines={data.lines}
-          currency={data.currency}
-          subtotal={data.subtotal}
-          shippingAmount={data.shippingAmount}
-          totalAmount={data.totalAmount}
-          shippingLabel={data.shippingPayload?.branchName ? "Нова Пошта" : undefined}
-          recommendations={data.recommendations}
-          addingVariantGid={addingVariantGid}
-          onAddRecommendation={addRecommendation}
-        />
+        <div className="order-1 lg:order-2">
+          <OrderSummary
+            lines={data.lines}
+            currency={data.currency}
+            subtotal={data.subtotal}
+            shippingAmount={data.shippingAmount}
+            totalAmount={data.totalAmount}
+            shippingLabel={data.shippingPayload?.branchName ? "Нова Пошта" : undefined}
+            recommendations={data.recommendations}
+            addingVariantGid={addingVariantGid}
+            onAddRecommendation={addRecommendation}
+          />
+        </div>
       </div>
     </div>
   );

@@ -4,6 +4,9 @@ import { PaymentConfigForm } from "@/components/admin/payment-config-form";
 import { prisma } from "@/lib/db";
 import { requireMerchantSession } from "@/lib/session";
 import { redirect } from "next/navigation";
+import { PageHeader } from "@/components/ui/page-header";
+import { StatCard } from "@/components/ui/stat-card";
+import { CreditCard, ShieldCheck, XCircle } from "lucide-react";
 
 export default async function PaymentsPage() {
   let session;
@@ -22,19 +25,32 @@ export default async function PaymentsPage() {
     },
   });
   const liqpayConfig = (liqpay?.config ?? {}) as Record<string, string>;
+  const [pendingCount, failedCount] = await Promise.all([
+    prisma.paymentAttempt.count({
+      where: { status: "PENDING", checkoutSession: { merchantId: session.merchantId } },
+    }),
+    prisma.paymentAttempt.count({
+      where: { status: "FAILED", checkoutSession: { merchantId: session.merchantId } },
+    }),
+  ]);
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold">Оплата</h1>
-          <p className="text-sm text-muted-foreground">LiqPay — єдиний спосіб оплати для kayer.ua</p>
-        </div>
+      <PageHeader
+        title="Payments"
+        description="LiqPay card checkout status, keys and reconciliation for pending payments."
+        action={
         <form action="/api/admin/reconcile-payments" method="post">
           <Button type="submit" variant="outline">Check LiqPay pending payments</Button>
         </form>
+        }
+      />
+      <div className="grid gap-4 md:grid-cols-3">
+        <StatCard label="LiqPay status" value={liqpay?.isEnabled ? "Enabled" : "Disabled"} icon={<ShieldCheck className="size-4" />} tone={liqpay?.isEnabled ? "success" : "warning"} />
+        <StatCard label="Pending attempts" value={pendingCount} icon={<CreditCard className="size-4" />} tone="warning" />
+        <StatCard label="Failed attempts" value={failedCount} icon={<XCircle className="size-4" />} tone={failedCount ? "danger" : "default"} />
       </div>
-      <Card>
+      <Card className="bg-card/95 shadow-sm shadow-black/5">
         <CardHeader>
           <CardTitle>LiqPay</CardTitle>
           <CardDescription>

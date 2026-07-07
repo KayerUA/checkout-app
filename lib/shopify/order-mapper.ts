@@ -1,4 +1,8 @@
 import type { CheckoutSession, CheckoutLine, PaymentAttempt } from "@prisma/client";
+import {
+  buildShopifyNovaPoshtaNoteAttributes,
+  type NovaPoshtaShippingPayload,
+} from "@/lib/shipping/shopify-np-note-attributes";
 
 const ORDER_CREATE_MUTATION = `
   mutation OrderCreateExternal($order: OrderCreateOrderInput!, $options: OrderCreateOptionsInput) {
@@ -29,7 +33,7 @@ export function mapCheckoutToOrderCreateInput(
     includeShippingLines?: boolean;
   }
 ) {
-  const shippingPayload = (session.shippingPayload ?? {}) as Record<string, string>;
+  const shippingPayload = (session.shippingPayload ?? {}) as NovaPoshtaShippingPayload;
   const sessionAttrs = (session.customAttributes ?? {}) as Record<string, unknown>;
   const ab = (sessionAttrs.ab ?? {}) as Record<string, string>;
 
@@ -62,11 +66,8 @@ export function mapCheckoutToOrderCreateInput(
     );
   }
 
-  if (shippingPayload.branchRef) {
-    customAttributes.push(
-      { key: "np_branch_ref", value: shippingPayload.branchRef },
-      { key: "np_branch_name", value: shippingPayload.branchName ?? "" }
-    );
+  for (const row of buildShopifyNovaPoshtaNoteAttributes(shippingPayload)) {
+    customAttributes.push({ key: row.name, value: row.value });
   }
 
   return {

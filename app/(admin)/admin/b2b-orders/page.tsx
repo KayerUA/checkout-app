@@ -1,9 +1,13 @@
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { requireMerchantSession } from "@/lib/session";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
+import { PageHeader } from "@/components/ui/page-header";
+import { StatusBadge } from "@/components/ui/status-badge";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Building2 } from "lucide-react";
 
 export default async function B2BOrdersPage() {
   try {
@@ -31,70 +35,71 @@ export default async function B2BOrdersPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">B2B/ФОП orders</h1>
-        <p className="text-sm text-zinc-500">Рахунки, банківська звірка та бухгалтерські документи.</p>
-      </div>
+      <PageHeader
+        title="B2B / ФОП Orders"
+        description="Рахунки, банківська звірка, invoice email через Shopify та бухгалтерські документи."
+      />
 
-      <Card>
+      <Card className="bg-card/95 shadow-sm shadow-black/5">
         <CardHeader>
           <CardTitle>Останні B2B orders</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[920px] text-left text-sm">
-              <thead className="border-b text-xs uppercase text-zinc-500">
-                <tr>
-                  <th className="py-2">Order</th>
-                  <th>ФОП / юридична особа</th>
-                  <th>Tax ID</th>
-                  <th>Phone</th>
-                  <th>Amount</th>
-                  <th>Status</th>
-                  <th>Invoice</th>
-                  <th>Payment</th>
-                  <th>Docs</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
+          {orders.length > 0 ? (
+            <Table className="min-w-[980px]">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Order</TableHead>
+                  <TableHead>ФОП / юридична особа</TableHead>
+                  <TableHead>Tax ID</TableHead>
+                  <TableHead>Phone</TableHead>
+                  <TableHead>Amount</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Invoice</TableHead>
+                  <TableHead>Payment</TableHead>
+                  <TableHead>Docs</TableHead>
+                  <TableHead>Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {orders.map((order) => {
                   const docs = docsByOrder.get(order.shopifyOrderId) ?? [];
                   const invoice = docs.find((doc) => doc.type === "invoice");
                   const delivery = docs.find((doc) => doc.type === "delivery_note");
                   const payment = paymentByOrder.get(order.shopifyOrderId);
                   return (
-                    <tr key={order.id} className="border-b align-top">
-                      <td className="py-3 font-medium">{order.shopifyOrderName ?? order.shopifyOrderId}</td>
-                      <td>{order.fopName}</td>
-                      <td>{order.fopTaxId}</td>
-                      <td>{order.docsPhone ?? "—"}</td>
-                      <td>{String(order.orderTotalAmount ?? "")} {order.orderCurrency}</td>
-                      <td><Badge variant="outline">{order.status}</Badge></td>
-                      <td>
+                    <TableRow key={order.id}>
+                      <TableCell className="font-medium">{order.shopifyOrderName ?? order.shopifyOrderId}</TableCell>
+                      <TableCell>{order.fopName}</TableCell>
+                      <TableCell>{order.fopTaxId}</TableCell>
+                      <TableCell>{order.docsPhone ?? "—"}</TableCell>
+                      <TableCell>{String(order.orderTotalAmount ?? "")} {order.orderCurrency}</TableCell>
+                      <TableCell><StatusBadge status={order.status} /></TableCell>
+                      <TableCell>
                         {invoice?.pdfUrl ? (
                           <a className="underline" href={invoice.pdfUrl} target="_blank" rel="noreferrer">
                             {invoice.number}
                           </a>
                         ) : "—"}
-                      </td>
-                      <td>{payment?.status ?? "—"}</td>
-                      <td>{delivery?.pdfUrl ? <a className="underline" href={delivery.pdfUrl} target="_blank" rel="noreferrer">download</a> : "—"}</td>
-                      <td>
+                      </TableCell>
+                      <TableCell><StatusBadge status={payment?.status} /></TableCell>
+                      <TableCell>{delivery?.pdfUrl ? <a className="underline" href={delivery.pdfUrl} target="_blank" rel="noreferrer">download</a> : "—"}</TableCell>
+                      <TableCell>
                         <form action={`/api/admin/b2b-orders/${order.shopifyOrderId}`} method="post" className="flex flex-wrap gap-2">
                           <Button name="action" value="confirm_payment" size="sm" variant="outline">Confirm</Button>
                           <Button name="action" value="needs_review" size="sm" variant="outline">Review</Button>
                           <Button name="action" value="regenerate_invoice" size="sm" variant="outline">Regenerate</Button>
                           <Button name="action" value="resend_invoice" size="sm" variant="outline">Resend</Button>
                         </form>
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   );
                 })}
-              </tbody>
-            </table>
-            {orders.length === 0 && <p className="py-6 text-zinc-500">No B2B orders yet.</p>}
-          </div>
+              </TableBody>
+            </Table>
+          ) : (
+            <EmptyState title="No B2B orders yet" description="ФОП / юридична особа orders will appear here after invoice checkout." icon={<Building2 className="size-4" />} />
+          )}
         </CardContent>
       </Card>
     </div>

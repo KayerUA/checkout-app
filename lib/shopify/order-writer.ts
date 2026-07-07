@@ -9,6 +9,10 @@ import { enqueueJob, QUEUE_NAMES } from "@/lib/queue";
 import { logWithCorrelation } from "@/lib/logger";
 import { withIdempotency } from "@/lib/idempotency";
 import { normalizeB2BAttributes, validateFopFields } from "@/lib/b2b/attributes";
+import {
+  mergeCheckoutNoteAttributes,
+  type NovaPoshtaShippingPayload,
+} from "@/lib/shipping/shopify-np-note-attributes";
 import type {
   CheckoutLine,
   CheckoutSession,
@@ -119,6 +123,61 @@ async function finalizeOrderLink(params: {
   return orderLink;
 }
 
+function buildBaseCheckoutNoteAttributes(
+  session: SessionForOrder,
+  paidAttempt: PaymentAttempt,
+  extra: Array<{ name: string; value: string }> = []
+) {
+  const attrs = (session.customAttributes ?? {}) as Record<string, unknown>;
+  const ab = (attrs.ab ?? {}) as Record<string, string>;
+  const base = [
+    { name: "checkout_session_id", value: session.id },
+    { name: "payment_provider", value: paidAttempt.provider },
+    { name: "cod_enabled", value: "false" },
+    ...extra,
+  ];
+
+  if (ab.experimentId) {
+    base.push(
+      { name: "ab_test", value: ab.experimentId },
+      { name: "ab_variant", value: ab.variant ?? "" },
+      { name: "ab_visitor_id", value: ab.visitorId ?? "" }
+    );
+  }
+
+  return mergeCheckoutNoteAttributes(
+    base,
+    (session.shippingPayload ?? {}) as NovaPoshtaShippingPayload
+  );
+}
+
+async function forwardPaidOrderToDiloshop(
+  shopifySession: NonNullable<Awaited<ReturnType<typeof getMerchantShopifySession>>>,
+  orderId: string,
+  checkoutSessionId: string
+) {
+  try {
+    const response = (await shopifyAdminREST(shopifySession, `orders/${orderId}.json`)) as {
+      order: import("@/lib/b2b/types").ShopifyOrderPayload;
+    };
+    const { forwardExternalCheckoutOrderToDiloshop } = await import(
+      "@/lib/accounting/diloshop-forward"
+    );
+    await forwardExternalCheckoutOrderToDiloshop({
+      order: response.order,
+      shopDomain: shopifySession.shop,
+      checkoutSessionId,
+    });
+  } catch (error) {
+    logWithCorrelation(
+      "warn",
+      "Diloshop forward failed after Shopify order create",
+      { checkoutSessionId },
+      { orderId, error: error instanceof Error ? error.message : String(error) }
+    );
+  }
+}
+
 export async function createShopifyOrderIdempotent(checkoutSessionId: string) {
   return withIdempotency("shopify-order", checkoutSessionId, async () => {
     const existing = await prisma.orderLink.findUnique({
@@ -193,31 +252,18 @@ export async function createShopifyOrderIdempotent(checkoutSessionId: string) {
     const created = response.data.orderCreate.order;
     const orderId = created.id.replace("gid://shopify/Order/", "");
 
-    // REST bridge for note_attributes
+    // REST bridge for note_attributes. Diloshop/NP reads Chekly-compatible refs here.
     try {
       await shopifyAdminREST(shopifySession, `orders/${orderId}.json`, {
         method: "PUT",
         body: {
           order: {
             id: Number(orderId),
-            note_attributes: [
-              { name: "checkout_session_id", value: session.id },
-              { name: "payment_provider", value: paidAttempt.provider },
-              { name: "cod_enabled", value: "false" },
-              ...(() => {
-                const attrs = (session.customAttributes ?? {}) as Record<string, unknown>;
-                const ab = (attrs.ab ?? {}) as Record<string, string>;
-                if (!ab.experimentId) return [];
-                return [
-                  { name: "ab_test", value: ab.experimentId },
-                  { name: "ab_variant", value: ab.variant ?? "" },
-                  { name: "ab_visitor_id", value: ab.visitorId ?? "" },
-                ];
-              })(),
-            ],
+            note_attributes: buildBaseCheckoutNoteAttributes(session, paidAttempt),
           },
         },
       });
+      await forwardPaidOrderToDiloshop(shopifySession, orderId, session.id);
     } catch {
       logWithCorrelation("warn", "note_attributes REST update failed", {
         checkoutSessionId,
@@ -360,18 +406,21 @@ export async function createBankInvoiceShopifyOrderIdempotent(publicToken: strin
           body: {
             order: {
               id: Number(orderId),
-              note_attributes: [
-                { name: "checkout_session_id", value: session.id },
-                { name: "payment_provider", value: "BANK_INVOICE" },
-                { name: "buyer_type", value: "fop_company" },
-                { name: "payment_preference", value: "bank_invoice" },
-                { name: "fop_name", value: String(attrs.fop_name ?? "") },
-                { name: "fop_tax_id", value: String(attrs.fop_tax_id ?? "") },
-                { name: "fop_legal_address", value: String(attrs.fop_legal_address ?? "") },
-                { name: "docs_email", value: String(attrs.docs_email ?? session.buyerEmail ?? "") },
-                { name: "docs_phone", value: String(attrs.docs_phone ?? session.buyerPhone ?? "") },
-                { name: "accounting_comment", value: String(attrs.accounting_comment ?? "") },
-              ],
+              note_attributes: mergeCheckoutNoteAttributes(
+                [
+                  { name: "checkout_session_id", value: session.id },
+                  { name: "payment_provider", value: "BANK_INVOICE" },
+                  { name: "buyer_type", value: "fop_company" },
+                  { name: "payment_preference", value: "bank_invoice" },
+                  { name: "fop_name", value: String(attrs.fop_name ?? "") },
+                  { name: "fop_tax_id", value: String(attrs.fop_tax_id ?? "") },
+                  { name: "fop_legal_address", value: String(attrs.fop_legal_address ?? "") },
+                  { name: "docs_email", value: String(attrs.docs_email ?? session.buyerEmail ?? "") },
+                  { name: "docs_phone", value: String(attrs.docs_phone ?? session.buyerPhone ?? "") },
+                  { name: "accounting_comment", value: String(attrs.accounting_comment ?? "") },
+                ],
+                (session.shippingPayload ?? {}) as NovaPoshtaShippingPayload
+              ),
             },
           },
         });

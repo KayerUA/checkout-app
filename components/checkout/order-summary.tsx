@@ -61,9 +61,131 @@ export function OrderSummary({
     .filter((item) => !lineVariantTitles.has(`${item.title} — ${item.variantTitle}`))
     .slice(0, 3);
 
+  const itemsBlock = (
+    <>
+      <ul className="max-h-64 space-y-3 overflow-y-auto pr-1">
+        {lines.map((line) => (
+          <li key={line.id} className="flex gap-3">
+            <div className="relative flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-xl border bg-secondary">
+              {line.imageUrl ? (
+                // Use a plain image here to avoid remote image domain config churn for Shopify CDN.
+                <img
+                  src={line.imageUrl}
+                  alt={line.imageAlt ?? line.title}
+                  className="size-full object-contain"
+                  loading="lazy"
+                />
+              ) : (
+                <Package className="size-5 text-muted-foreground" />
+              )}
+              <span className="absolute right-1 bottom-1 rounded-full bg-background/95 px-1.5 py-0.5 text-[10px] font-medium shadow-sm">
+                {line.quantity}×
+              </span>
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="line-clamp-2 text-sm leading-snug">{line.title}</p>
+              <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                <span>{formatMoney(line.unitPrice, currency)} / шт.</span>
+                {line.compareAtPrice && line.compareAtPrice > line.unitPrice ? (
+                  <span className="line-through">{formatMoney(line.compareAtPrice, currency)}</span>
+                ) : null}
+              </div>
+            </div>
+            <p className="shrink-0 text-sm font-medium">
+              {formatMoney(line.unitPrice * line.quantity, currency)}
+            </p>
+          </li>
+        ))}
+      </ul>
+
+      {visibleRecommendations.length > 0 && onAddRecommendation ? (
+        <div className="space-y-3 rounded-2xl border bg-secondary/40 p-3">
+          <div>
+            <p className="text-sm font-medium">Додати до замовлення</p>
+            <p className="text-xs text-muted-foreground">Корисні позиції до поточної покупки</p>
+          </div>
+          <div className="space-y-2">
+            {visibleRecommendations.map((item) => {
+              const loading = addingVariantGid === item.variantGid;
+              return (
+                <div key={item.variantGid} className="flex gap-2 rounded-xl bg-background p-2 ring-1 ring-border">
+                  <div className="flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-lg border bg-secondary">
+                    {item.imageUrl ? (
+                      <img
+                        src={item.imageUrl}
+                        alt={item.imageAlt ?? item.title}
+                        className="size-full object-contain"
+                        loading="lazy"
+                      />
+                    ) : (
+                      <Package className="size-4 text-muted-foreground" />
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="line-clamp-2 text-xs font-medium leading-snug">{item.title}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {formatMoney(item.unitPrice, currency)}
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-8 shrink-0 px-2"
+                    onClick={() => onAddRecommendation(item)}
+                    disabled={loading}
+                    aria-label={`Додати ${item.title}`}
+                  >
+                    {loading ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+    </>
+  );
+
+  const totalsBlock = (
+    <>
+      <div className="flex justify-between text-sm text-muted-foreground">
+        <span>Підсумок</span>
+        <span>{formatMoney(subtotal, currency)}</span>
+      </div>
+      <div className="flex justify-between gap-4 text-sm text-muted-foreground">
+        <span>Доставка{shippingLabel ? ` · ${shippingLabel}` : ""}</span>
+        <span className="text-right">
+          {shippingAmount === 0 ? "Оплачується за умовами магазину / Нової Пошти" : formatMoney(shippingAmount, currency)}
+        </span>
+      </div>
+      <Separator />
+      <div className="flex justify-between text-base font-semibold">
+        <span>Разом</span>
+        <span>{formatMoney(totalAmount, currency)}</span>
+      </div>
+    </>
+  );
+
   return (
-    <Card className="lg:sticky lg:top-6">
-      <CardHeader>
+    <>
+      <details className="rounded-2xl border bg-card/95 p-4 shadow-sm shadow-black/5 lg:hidden">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
+          <span className="flex items-center gap-2 font-medium">
+            <Package className="size-4 text-muted-foreground" />
+            Ваше замовлення
+            <Badge variant="secondary">{lines.length} поз.</Badge>
+          </span>
+          <span className="font-semibold">{formatMoney(totalAmount, currency)}</span>
+        </summary>
+        <div className="mt-4 space-y-4">
+          {itemsBlock}
+          <div className="space-y-3 border-t pt-4">{totalsBlock}</div>
+        </div>
+      </details>
+
+      <Card className="hidden bg-card/95 shadow-sm shadow-black/5 lg:sticky lg:top-6 lg:flex">
+        <CardHeader>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Package className="size-4 text-muted-foreground" />
@@ -75,104 +197,13 @@ export function OrderSummary({
       </CardHeader>
 
       <CardContent className="space-y-4">
-        <ul className="max-h-64 space-y-3 overflow-y-auto pr-1">
-          {lines.map((line) => (
-            <li key={line.id} className="flex gap-3">
-              <div className="relative flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-md border bg-muted">
-                {line.imageUrl ? (
-                  // Use a plain image here to avoid remote image domain config churn for Shopify CDN.
-                  <img
-                    src={line.imageUrl}
-                    alt={line.imageAlt ?? line.title}
-                    className="size-full object-contain"
-                    loading="lazy"
-                  />
-                ) : (
-                  <Package className="size-5 text-muted-foreground" />
-                )}
-                <span className="absolute right-1 bottom-1 rounded bg-background/90 px-1.5 py-0.5 text-[10px] font-medium shadow-sm">
-                  {line.quantity}×
-                </span>
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="line-clamp-2 text-sm leading-snug">{line.title}</p>
-                <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-                  <span>{formatMoney(line.unitPrice, currency)} / шт.</span>
-                  {line.compareAtPrice && line.compareAtPrice > line.unitPrice ? (
-                    <span className="line-through">{formatMoney(line.compareAtPrice, currency)}</span>
-                  ) : null}
-                </div>
-              </div>
-              <p className="shrink-0 text-sm font-medium">
-                {formatMoney(line.unitPrice * line.quantity, currency)}
-              </p>
-            </li>
-          ))}
-        </ul>
-
-        {visibleRecommendations.length > 0 && onAddRecommendation ? (
-          <div className="space-y-3 rounded-lg border bg-muted/30 p-3">
-            <div>
-              <p className="text-sm font-medium">Додати до замовлення</p>
-              <p className="text-xs text-muted-foreground">Корисні позиції до поточної покупки</p>
-            </div>
-            <div className="space-y-2">
-              {visibleRecommendations.map((item) => {
-                const loading = addingVariantGid === item.variantGid;
-                return (
-                  <div key={item.variantGid} className="flex gap-2 rounded-md bg-background p-2">
-                    <div className="flex size-12 shrink-0 items-center justify-center overflow-hidden rounded border bg-muted">
-                      {item.imageUrl ? (
-                        <img
-                          src={item.imageUrl}
-                          alt={item.imageAlt ?? item.title}
-                          className="size-full object-contain"
-                          loading="lazy"
-                        />
-                      ) : (
-                        <Package className="size-4 text-muted-foreground" />
-                      )}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="line-clamp-2 text-xs font-medium leading-snug">{item.title}</p>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        {formatMoney(item.unitPrice, currency)}
-                      </p>
-                    </div>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="h-8 shrink-0 px-2"
-                      onClick={() => onAddRecommendation(item)}
-                      disabled={loading}
-                      aria-label={`Додати ${item.title}`}
-                    >
-                      {loading ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
-                    </Button>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        ) : null}
+        {itemsBlock}
       </CardContent>
 
       <CardFooter className="flex-col items-stretch gap-3 border-t">
-        <div className="flex justify-between text-sm text-muted-foreground">
-          <span>Підсумок</span>
-          <span>{formatMoney(subtotal, currency)}</span>
-        </div>
-        <div className="flex justify-between text-sm text-muted-foreground">
-          <span>Доставка{shippingLabel ? ` · ${shippingLabel}` : ""}</span>
-          <span>{shippingAmount === 0 ? "—" : formatMoney(shippingAmount, currency)}</span>
-        </div>
-        <Separator />
-        <div className="flex justify-between text-base font-semibold">
-          <span>Разом</span>
-          <span>{formatMoney(totalAmount, currency)}</span>
-        </div>
+        {totalsBlock}
       </CardFooter>
     </Card>
+    </>
   );
 }

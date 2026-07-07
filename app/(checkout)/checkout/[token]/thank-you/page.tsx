@@ -70,7 +70,7 @@ export default async function ThankYouPage({
       <CheckoutHeader />
       <main className="flex flex-1 items-center justify-center px-4 py-10 sm:py-16">
         <div className="w-full max-w-2xl space-y-6 text-center">
-          <div className="mx-auto flex size-16 items-center justify-center rounded-full bg-primary/10">
+          <div className="mx-auto flex size-16 items-center justify-center rounded-full bg-card shadow-sm ring-1 ring-border">
             {isBankInvoice ? (
               <FileText className="size-8 text-primary" />
             ) : isLiqPayPending ? (
@@ -106,7 +106,7 @@ export default async function ThankYouPage({
             </p>
           </div>
 
-          <Card className="text-left">
+          <Card className="bg-card/95 text-left shadow-sm shadow-black/5">
             <CardHeader>
               <div className="flex items-center gap-2">
                 <Package className="size-4 text-muted-foreground" />
@@ -169,7 +169,7 @@ export default async function ThankYouPage({
                       </a>
                     </div>
                   ) : (
-                    <div className="rounded-md border border-dashed p-3 text-sm">
+                    <div className="rounded-2xl border border-dashed bg-secondary/40 p-4 text-sm">
                       <p className="font-medium">Генеруємо рахунок</p>
                       <p className="mt-1 text-muted-foreground">
                         Зачекайте кілька секунд. Коли рахунок буде готовий, тут з&apos;явиться
@@ -178,7 +178,7 @@ export default async function ThankYouPage({
                     </div>
                   )}
                   <Separator />
-                  <div className="rounded-md bg-muted p-3 text-sm leading-relaxed">
+                  <div className="rounded-2xl bg-secondary/60 p-4 text-sm leading-relaxed">
                     <p className="font-medium">Що далі</p>
                     <p className="mt-1 text-muted-foreground">
                       Скачайте PDF-рахунок і оплатіть його саме з рахунку ФОП або юридичної особи. Після автоматичної звірки банк-платежу ми позначимо замовлення як готове до обробки.

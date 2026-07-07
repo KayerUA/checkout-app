@@ -1,4 +1,5 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { PageHeader } from "@/components/ui/page-header";
 import { ShippingConfigForm } from "@/components/admin/shipping-config-form";
 import { prisma } from "@/lib/db";
 import { requireMerchantSession } from "@/lib/session";
@@ -27,11 +28,11 @@ export default async function ShippingPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">Доставка</h1>
-        <p className="text-sm text-muted-foreground">Нова Пошта — відділення та поштомати</p>
-      </div>
-      <Card>
+      <PageHeader
+        title="Shipping"
+        description="Нова Пошта — відділення та поштомати. Checkout не додає доставку до B2B invoice."
+      />
+      <Card className="bg-card/95 shadow-sm shadow-black/5">
         <CardHeader>
           <CardTitle>Нова Пошта</CardTitle>
           <CardDescription>
