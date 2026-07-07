@@ -263,12 +263,24 @@ export async function createShopifyOrderIdempotent(checkoutSessionId: string) {
           },
         },
       });
+    } catch (error) {
+      logWithCorrelation(
+        "warn",
+        "note_attributes REST update failed",
+        { checkoutSessionId, shopifyOrderGid: created.id },
+        { error: error instanceof Error ? error.message : String(error) }
+      );
+    }
+
+    try {
       await forwardPaidOrderToDiloshop(shopifySession, orderId, session.id);
-    } catch {
-      logWithCorrelation("warn", "note_attributes REST update failed", {
-        checkoutSessionId,
-        shopifyOrderGid: created.id,
-      });
+    } catch (error) {
+      logWithCorrelation(
+        "error",
+        "Diloshop forward failed after Shopify order create",
+        { checkoutSessionId, shopifyOrderGid: created.id },
+        { orderId, error: error instanceof Error ? error.message : String(error) }
+      );
     }
 
     const orderLink = await finalizeOrderLink({

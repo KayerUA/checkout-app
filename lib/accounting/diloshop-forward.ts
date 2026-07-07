@@ -14,7 +14,11 @@ function getOrdersWebhookUrl() {
 
 function getNovaPoshtaWebhookUrl() {
   const env = getEnv();
-  return env.DILOSHOP_NP_WEBHOOK_URL ?? null;
+  if (env.DILOSHOP_NP_WEBHOOK_URL) return env.DILOSHOP_NP_WEBHOOK_URL;
+  if (env.DILOSHOP_API_URL) {
+    return `${env.DILOSHOP_API_URL.replace(/\/$/, "")}/webhook/nova-poshta`;
+  }
+  return null;
 }
 
 function hmacBase64(secret: string, body: string) {
@@ -109,7 +113,7 @@ export async function forwardExternalCheckoutOrderToDiloshop(input: {
     eventType: "diloshop/forward",
     step: "external_checkout_paid",
     status: "OK",
-    message: "External checkout order forwarded to Diloshop",
+    message: "External checkout order forwarded to Diloshop (Dilovod + Nova Poshta)",
     metadata: {
       ordersUrl: Boolean(ordersUrl),
       npUrl: Boolean(npUrl),
