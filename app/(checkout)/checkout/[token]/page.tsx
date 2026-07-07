@@ -32,32 +32,30 @@ export default async function CheckoutPage({
   return (
     <>
       <CheckoutHeader logoUrl={data.theme?.logoUrl} />
-      <main className="flex-1 py-6 sm:py-10">
-        <div className="mx-auto mb-6 max-w-6xl px-4 sm:mb-8 sm:px-6">
-          <div className="overflow-hidden rounded-3xl border bg-card/90 p-5 shadow-sm shadow-black/5 sm:p-8">
-            <div className="grid gap-6 lg:grid-cols-[1fr_auto] lg:items-end">
-              <div className="space-y-3">
+      <main className="relative flex-1 overflow-hidden py-5 sm:py-8">
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-72 bg-[radial-gradient(circle_at_50%_0%,rgba(232,205,190,0.65),transparent_62%)]" />
+        <div className="relative mx-auto mb-5 max-w-6xl px-4 sm:mb-7 sm:px-6">
+          <div className="rounded-[2rem] border bg-card/70 p-4 shadow-sm shadow-black/5 backdrop-blur sm:p-6">
+            <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-end">
+              <div className="space-y-2">
                 <Badge variant="secondary" className="w-fit uppercase tracking-[0.18em]">
                   {BRAND.tagline}
                 </Badge>
-                <div className="space-y-2">
-                  <h1 className="text-2xl font-semibold tracking-tight sm:text-4xl">
-                    Оформлення замовлення KAYER
-                  </h1>
-                  <p className="max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
-                    Ви у безпечному checkout офіційного магазину KAYER. Заповніть контакти,
-                    оберіть Нову Пошту та зручний спосіб оплати.
-                  </p>
-                </div>
+                <h1 className="text-xl font-semibold tracking-tight sm:text-3xl">
+                  Оформлення замовлення KAYER
+                </h1>
+                <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
+                  Спокійний checkout офіційного магазину: контакти, Нова Пошта, оплата.
+                </p>
               </div>
-              <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground sm:grid-cols-4 lg:w-[520px]">
+              <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground sm:grid-cols-4 lg:w-[500px]">
                 {trustItems.map((item) => {
                   const Icon = item.icon;
                   return (
-                  <div key={item.label} className="rounded-2xl border bg-secondary/50 p-3">
-                    <Icon className="mb-2 size-4 text-foreground" />
-                    <span>{item.label}</span>
-                  </div>
+                    <div key={item.label} className="rounded-2xl border bg-white/70 p-3">
+                      <Icon className="mb-2 size-4 text-foreground" />
+                      <span>{item.label}</span>
+                    </div>
                   );
                 })}
               </div>
