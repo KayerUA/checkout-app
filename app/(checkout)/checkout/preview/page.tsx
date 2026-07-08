@@ -49,8 +49,8 @@ export default function CheckoutPreviewPage() {
   return (
     <>
       <CheckoutHeader />
-      <main className="flex-1 py-8 sm:py-12">
-        <div className="mx-auto mb-8 max-w-6xl px-4 text-center sm:px-6">
+      <main className="flex-1 py-3 sm:py-12">
+        <div className="mx-auto mb-8 hidden max-w-6xl px-4 text-center sm:block sm:px-6">
           <p className="text-xs font-medium uppercase tracking-widest text-accent">
             {BRAND.tagline}
           </p>

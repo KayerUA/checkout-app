@@ -16,13 +16,13 @@ type Props = {
 export function CheckoutHeader({ logoUrl }: Props) {
   return (
     <header className="border-b bg-card/90 backdrop-blur">
-      <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
+      <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:gap-4 sm:px-6 sm:py-4">
         <Link href={BRAND.siteUrl} className="flex items-center gap-3" target="_blank" rel="noreferrer">
           {logoUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={logoUrl} alt={BRAND.name} className="h-7 object-contain" />
           ) : (
-            <span className="text-lg font-semibold tracking-[0.3em] text-foreground">
+            <span className="text-base font-semibold tracking-[0.3em] text-foreground sm:text-lg">
               {BRAND.name}
             </span>
           )}

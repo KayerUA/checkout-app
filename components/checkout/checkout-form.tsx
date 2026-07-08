@@ -119,14 +119,14 @@ function StepCard({
   return (
     <section
       className={cn(
-        "rounded-[1.65rem] bg-white/88 p-4 shadow-[0_8px_30px_rgba(18,18,18,0.06)] ring-1 ring-black/[0.045] backdrop-blur transition-colors sm:p-5",
+        "rounded-[1.3rem] bg-white/82 p-3 shadow-[0_6px_22px_rgba(18,18,18,0.05)] ring-1 ring-black/[0.04] backdrop-blur transition-colors sm:rounded-[1.65rem] sm:p-5",
         active && "ring-primary/25"
       )}
     >
-      <div className="mb-4 flex items-start gap-3">
+      <div className="mb-3 flex items-start gap-3 sm:mb-4">
         <div
           className={cn(
-            "flex size-10 shrink-0 items-center justify-center rounded-2xl bg-zinc-50 text-muted-foreground ring-1 ring-black/5",
+            "flex size-9 shrink-0 items-center justify-center rounded-[1.05rem] bg-zinc-50 text-muted-foreground ring-1 ring-black/5 sm:size-10 sm:rounded-2xl",
             active && "bg-primary text-primary-foreground"
           )}
         >
@@ -139,7 +139,7 @@ function StepCard({
             </span>
             {active ? <span className="size-1.5 rounded-full bg-primary" /> : null}
           </div>
-          <h2 className="text-base font-semibold tracking-tight">{title}</h2>
+          <h2 className="text-[15px] font-semibold tracking-tight sm:text-base">{title}</h2>
           {description ? (
             <p className="text-xs leading-5 text-muted-foreground">{description}</p>
           ) : null}
@@ -162,13 +162,13 @@ function CheckoutSheetRow({
   helper?: string;
 }) {
   return (
-    <div className="flex items-center gap-3 rounded-[1.35rem] bg-white p-3 shadow-sm ring-1 ring-black/[0.045]">
-      <span className="flex size-10 shrink-0 items-center justify-center rounded-2xl bg-zinc-50 text-foreground ring-1 ring-black/5">
+    <div className="flex items-center gap-3 rounded-[1.15rem] bg-white/92 p-3 shadow-[0_1px_0_rgba(255,255,255,0.9)_inset,0_8px_18px_rgba(17,17,17,0.045)] ring-1 ring-black/[0.04] sm:rounded-[1.35rem]">
+      <span className="flex size-10 shrink-0 items-center justify-center rounded-[1.05rem] bg-zinc-50 text-foreground ring-1 ring-black/5 sm:rounded-2xl">
         <Icon className="size-4" />
       </span>
       <div className="min-w-0 flex-1">
-        <p className="text-xs text-muted-foreground">{label}</p>
-        <p className="truncate text-sm font-semibold leading-5">{value}</p>
+        <p className="text-[11px] font-medium text-muted-foreground">{label}</p>
+        <p className="truncate text-[15px] font-semibold leading-5">{value}</p>
         {helper ? <p className="truncate text-xs text-muted-foreground">{helper}</p> : null}
       </div>
       <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
@@ -398,22 +398,23 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
   }
 
   return (
-    <div className="mx-auto max-w-6xl px-3 pb-12 sm:px-6">
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,620px)_380px] lg:justify-center lg:gap-8">
+    <div className="relative mx-auto max-w-[430px] px-2 pb-8 [font-family:var(--font-geist-sans),ui-sans-serif,system-ui,sans-serif] sm:max-w-6xl sm:px-6 sm:pb-12">
+      <div className="pointer-events-none absolute inset-x-2 top-0 h-[420px] rounded-[2.75rem] bg-[radial-gradient(circle_at_50%_0%,rgba(255,255,255,0.98),rgba(236,224,216,0.86)_52%,rgba(245,245,244,0.2)_100%)] blur-0 lg:hidden" />
+      <div className="relative grid gap-6 lg:grid-cols-[minmax(0,620px)_380px] lg:justify-center lg:gap-8">
         <form
           onSubmit={handleSubmit}
-          className="order-1 rounded-[2rem] bg-zinc-100/88 p-3 shadow-[0_24px_80px_rgba(18,18,18,0.16)] ring-1 ring-black/5 backdrop-blur-xl sm:rounded-[2.5rem] sm:p-5 lg:order-1"
+          className="order-1 overflow-hidden rounded-[2.15rem] bg-zinc-100/82 p-2 pt-3 shadow-[0_24px_80px_rgba(18,18,18,0.18)] ring-1 ring-white/70 backdrop-blur-2xl sm:rounded-[2.5rem] sm:p-5 lg:order-1"
           aria-busy={loading}
         >
-          <div className="mx-auto mb-4 h-1.5 w-10 rounded-full bg-zinc-300" />
-          <div className="mb-5 text-center">
-            <p className="text-lg font-semibold tracking-tight">Підтвердіть замовлення</p>
-            <p className="mt-1 text-xs text-muted-foreground">Офіційний checkout KAYER</p>
+          <div className="mx-auto mb-3 h-1 w-9 rounded-full bg-zinc-300 sm:mb-4 sm:h-1.5 sm:w-10" />
+          <div className="mb-4 text-center sm:mb-5">
+            <p className="text-[17px] font-semibold tracking-tight sm:text-lg">Підтвердіть замовлення</p>
+            <p className="mt-0.5 text-[11px] font-medium text-muted-foreground sm:mt-1 sm:text-xs">Офіційний checkout KAYER</p>
           </div>
 
           {firstLine ? (
-            <div className="mb-5 flex items-center gap-4 px-1">
-              <div className="flex size-20 shrink-0 items-center justify-center overflow-hidden rounded-[1.5rem] bg-white shadow-sm ring-1 ring-black/[0.045]">
+            <div className="mb-4 flex items-center gap-3 px-1 sm:mb-5 sm:gap-4">
+              <div className="flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-[1.35rem] bg-white shadow-sm ring-1 ring-black/[0.045] sm:size-20 sm:rounded-[1.5rem]">
                 {firstLine.imageUrl ? (
                   // Use a plain image here to avoid remote image domain config churn for Shopify CDN.
                   // eslint-disable-next-line @next/next/no-img-element
@@ -427,28 +428,28 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
                 )}
               </div>
               <div className="min-w-0 flex-1 text-left">
-                <p className="line-clamp-2 text-base font-semibold leading-6">{firstLine.title}</p>
-                <p className="mt-1 text-sm text-muted-foreground">
+                <p className="line-clamp-2 text-[15px] font-semibold leading-5 sm:text-base sm:leading-6">{firstLine.title}</p>
+                <p className="mt-0.5 text-xs text-muted-foreground sm:mt-1 sm:text-sm">
                   {firstLine.quantity} шт.
                   {extraLinesCount ? ` + ще ${extraLinesCount}` : ""}
                 </p>
               </div>
-              <p className="shrink-0 text-base font-semibold">
+              <p className="shrink-0 text-[15px] font-semibold sm:text-base">
                 {formatMoney(firstLine.unitPrice * firstLine.quantity, data.currency)}
               </p>
             </div>
           ) : null}
 
-          <div className="mb-5 grid gap-3">
+          <div className="mb-4 grid gap-2.5 sm:mb-5 sm:gap-3">
             <CheckoutSheetRow icon={User} label="Контакти" value={contactValue} helper={contactHelper} />
             <CheckoutSheetRow icon={MapPin} label="Доставка" value={shippingValue} helper={shippingHelper} />
             <CheckoutSheetRow icon={buyerType === "fop_company" ? FileText : CreditCard} label="Оплата" value={paymentValue} helper={paymentHelper} />
           </div>
 
-          <details className="mb-5 rounded-[1.5rem] bg-white px-4 py-3 text-left shadow-sm ring-1 ring-black/[0.045] lg:hidden">
+          <details className="mb-4 rounded-[1.25rem] bg-white/92 px-4 py-3 text-left shadow-sm ring-1 ring-black/[0.045] sm:mb-5 sm:rounded-[1.5rem] lg:hidden">
             <summary className="flex cursor-pointer list-none items-center justify-between gap-4">
               <span>
-                <span className="block text-base font-semibold">До сплати</span>
+                <span className="block text-[15px] font-semibold sm:text-base">До сплати</span>
                 <span className="text-xs text-muted-foreground">Натисніть, щоб побачити деталі</span>
               </span>
               <span className="text-lg font-semibold">{formatMoney(data.totalAmount, data.currency)}</span>
@@ -471,9 +472,34 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
             </div>
           </details>
 
-          <CheckoutProgress currentStep={currentStep} />
+          <div className="mb-4 rounded-[1.35rem] bg-white/90 p-3 shadow-[0_14px_30px_rgba(18,18,18,0.1)] ring-1 ring-black/[0.05] backdrop-blur-xl sm:hidden">
+            <Button
+              type="submit"
+              size="lg"
+              className="h-13 w-full rounded-full bg-black text-[15px] font-semibold text-white shadow-[0_14px_24px_rgba(0,0,0,0.2)] hover:bg-black/90"
+              disabled={loading || !data.shippingPayload?.branchRef}
+            >
+              {loading ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  {loadingText}
+                </>
+              ) : (
+                buttonText
+              )}
+            </Button>
+            <p className="mt-2 text-center text-[11px] leading-4 text-muted-foreground">
+              {data.shippingPayload?.branchRef
+                ? "Після підтвердження відкриємо захищену оплату."
+                : "Оберіть відділення або поштомат, щоб продовжити."}
+            </p>
+          </div>
 
-          <div className="space-y-4">
+          <div className="hidden sm:block">
+            <CheckoutProgress currentStep={currentStep} />
+          </div>
+
+          <div className="space-y-3 pb-2 sm:space-y-4">
           <StepCard step={1} title="Контактні дані" description="Для зв'язку щодо замовлення та підтвердження доставки" icon={User} active={currentStep === 1}>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
@@ -493,7 +519,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
                 <Input id="email" name="email" type="email" defaultValue={data.buyerEmail ?? ""} placeholder="email@example.com" />
               </div>
 
-              <div className="space-y-3 rounded-2xl border bg-secondary/35 p-4 sm:col-span-2">
+              <div className="space-y-3 rounded-[1.2rem] border bg-secondary/35 p-3 sm:col-span-2 sm:rounded-2xl sm:p-4">
                 <div>
                   <p className="text-sm font-medium">Покупаєте як ФОП або компанія?</p>
                   <p className="mt-1 text-xs text-muted-foreground">
@@ -720,16 +746,23 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
             </Alert>
           )}
 
-          <div className="rounded-[1.65rem] bg-white/88 p-4 shadow-sm ring-1 ring-black/[0.045]">
-            <div className="mb-4 grid gap-2 text-xs text-muted-foreground sm:grid-cols-3">
+          <div className="sticky bottom-2 z-20 hidden rounded-[1.45rem] bg-white/90 p-3 shadow-[0_-10px_35px_rgba(18,18,18,0.12)] ring-1 ring-black/[0.05] backdrop-blur-xl sm:bottom-4 sm:block sm:rounded-[1.65rem] sm:p-4 lg:static lg:shadow-sm">
+            <div className="mb-3 hidden gap-2 text-xs text-muted-foreground sm:grid sm:grid-cols-3">
               <span className="inline-flex items-center gap-2"><Store className="size-3.5" /> Офіційний KAYER</span>
               <span className="inline-flex items-center gap-2"><ShieldCheck className="size-3.5" /> Захищена оплата</span>
               <span className="inline-flex items-center gap-2"><Headphones className="size-3.5" /> Підтримка після замовлення</span>
             </div>
+            <div className="mb-3 flex items-center justify-between text-xs sm:hidden">
+              <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+                <ShieldCheck className="size-3.5" />
+                Безпечна оплата
+              </span>
+              <span className="font-semibold">{formatMoney(data.totalAmount, data.currency)}</span>
+            </div>
           <Button
             type="submit"
             size="lg"
-            className="h-14 w-full rounded-full text-base shadow-[0_16px_28px_rgba(0,0,0,0.18)]"
+            className="h-14 w-full rounded-full bg-black text-base text-white shadow-[0_16px_28px_rgba(0,0,0,0.2)] hover:bg-black/90"
             disabled={loading || !data.shippingPayload?.branchRef}
           >
             {loading ? (

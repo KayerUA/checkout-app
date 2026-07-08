@@ -32,9 +32,9 @@ export default async function CheckoutPage({
   return (
     <>
       <CheckoutHeader logoUrl={data.theme?.logoUrl} />
-      <main className="relative flex-1 overflow-hidden py-5 sm:py-8">
+      <main className="relative flex-1 overflow-hidden py-3 sm:py-8">
         <div className="pointer-events-none absolute inset-x-0 top-0 h-72 bg-[radial-gradient(circle_at_50%_0%,rgba(232,205,190,0.65),transparent_62%)]" />
-        <div className="relative mx-auto mb-5 max-w-6xl px-4 sm:mb-7 sm:px-6">
+        <div className="relative mx-auto mb-5 hidden max-w-6xl px-4 sm:mb-7 sm:block sm:px-6">
           <div className="rounded-[2rem] border bg-card/70 p-4 shadow-sm shadow-black/5 backdrop-blur sm:p-6">
             <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-end">
               <div className="space-y-2">
