@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import { createInvoicePdf } from "@/lib/documents/invoice-pdf";
 import { invoicePaymentPurpose, renderInvoiceHtml } from "@/lib/documents/templates";
 import { uploadPrivateDocument } from "@/lib/supabase/storage";
+import { fetchDilovodInvoiceNamesBySku, resolveLineInvoiceTitle } from "@/lib/shopify/variant-invoice-names";
 import type { B2BDocumentInput, FopOrderAttributes, ShopifyOrderLine, ShopifyOrderPayload } from "@/lib/b2b/types";
 
 async function invoiceDocumentLines(
