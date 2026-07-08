@@ -64,6 +64,14 @@ export default async function ThankYouPage({
       })
     : null;
   const invoiceReady = Boolean(invoice?.number && invoice.pdfUrl);
+  const shouldClearStorefrontCart =
+    !isLiqPayPending &&
+    (isBankInvoice || ["PAID", "COMPLETED"].includes(session.status) || Boolean(session.orderLink));
+  const returnToStoreUrl = new URL(BRAND.siteUrl);
+  if (shouldClearStorefrontCart) {
+    returnToStoreUrl.searchParams.set("kayer_clear_cart", "1");
+    returnToStoreUrl.searchParams.set("kayer_checkout", session.publicToken);
+  }
 
   return (
     <>
@@ -233,7 +241,7 @@ export default async function ThankYouPage({
                 className="w-full"
                 size="lg"
                 nativeButton={false}
-                render={<Link href={BRAND.siteUrl} />}
+                render={<Link href={returnToStoreUrl.toString()} />}
               >
                 Повернутися в магазин
               </Button>

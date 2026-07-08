@@ -127,3 +127,54 @@ describe("B2B invoice checkout", () => {
     expect(order.shippingLines).toEqual([]);
   });
 });
+
+describe("Shopify order mapping", () => {
+  it("does not charge Nova Poshta delivery as a Shopify shipping line by default", () => {
+    const order = mapCheckoutToOrderCreateInput(
+      {
+        id: "session-ship-1",
+        merchantId: "merchant-1",
+        publicToken: "token-ship-1",
+        status: "READY",
+        sourceIdentifier: "chk_ship_1",
+        currency: "UAH",
+        subtotal: 10000,
+        shippingAmount: 9000,
+        discountAmount: 0,
+        totalAmount: 19000,
+        buyerEmail: "buyer@example.com",
+        buyerPhone: "+380501111111",
+        buyerFirstName: "Test",
+        buyerLastName: "Buyer",
+        shippingMethodCode: "nova_poshta_branch",
+        shippingProvider: "nova_poshta",
+        shippingPayload: { branchRef: "np-1", branchName: "Відділення 1", cityName: "Київ" },
+        billingPayload: null,
+        paymentProvider: null,
+        customAttributes: {},
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        abandonedAt: null,
+        lines: [
+          {
+            id: "line-ship-1",
+            checkoutSessionId: "session-ship-1",
+            variantGid: "gid://shopify/ProductVariant/1",
+            productGid: null,
+            sku: null,
+            title: "Product",
+            quantity: 1,
+            unitPrice: 10000,
+            compareAtPrice: null,
+            lineDiscountAmount: 0,
+            metadata: null,
+          },
+        ],
+        paymentAttempts: [],
+      },
+      null
+    );
+
+    expect(order.shippingLines).toEqual([]);
+  });
+});

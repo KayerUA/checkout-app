@@ -135,7 +135,7 @@ export function mapCheckoutToOrderCreateInput(
       countryCode: "UA",
       zip: shippingPayload.postalCode ?? "01001",
     },
-    shippingLines: options?.includeShippingLines !== false && session.shippingAmount
+    shippingLines: options?.includeShippingLines === true && session.shippingAmount
       ? [
           {
             title: session.shippingMethodCode ?? "Nova Poshta",

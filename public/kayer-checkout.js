@@ -173,6 +173,60 @@
     return root.endsWith("/") ? root : root + "/";
   }
 
+  function removeCartClearParams() {
+    try {
+      var url = new URL(window.location.href);
+      url.searchParams.delete("kayer_clear_cart");
+      url.searchParams.delete("kayer_checkout");
+      window.history.replaceState({}, document.title, url.pathname + url.search + url.hash);
+    } catch {}
+  }
+
+  async function clearCartIfRequested() {
+    var params = new URLSearchParams(window.location.search);
+    if (params.get("kayer_clear_cart") !== "1") return;
+    if (window.__kayerCartClearHandled) return;
+    window.__kayerCartClearHandled = true;
+
+    var root = shopifyRoot();
+    try {
+      var clearRes = await fetch(root + "cart/clear.js", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+      });
+      var cart = await clearRes.json().catch(function () {
+        return null;
+      });
+
+      await fetch(root + "cart/update.js", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          attributes: {
+            buyer_type: "",
+            payment_preference: "",
+            fop_name: "",
+            fop_tax_id: "",
+            fop_legal_address: "",
+            docs_email: "",
+            docs_phone: "",
+            accounting_comment: "",
+          },
+        }),
+      }).catch(function () {});
+
+      window.dispatchEvent(new CustomEvent("cart:refresh", { detail: { cart: cart } }));
+      window.dispatchEvent(new CustomEvent("cart:updated", { detail: { cart: cart } }));
+      document.dispatchEvent(new CustomEvent("cart:refresh", { detail: { cart: cart } }));
+      document.dispatchEvent(new CustomEvent("cart:updated", { detail: { cart: cart } }));
+      removeCartClearParams();
+    } catch (err) {
+      console.warn("[KayerCheckout] cart clear failed", err);
+    }
+  }
+
   function eventPath(event) {
     if (event && typeof event.composedPath === "function") return event.composedPath();
     var path = [];
@@ -510,6 +564,7 @@
   document.addEventListener("click", interceptCheckoutEvent, true);
   window.addEventListener("submit", interceptCheckoutSubmit, true);
   document.addEventListener("submit", interceptCheckoutSubmit, true);
+  clearCartIfRequested();
   installForcedCheckoutGuards();
   scheduleForcedAutoOpen();
 
