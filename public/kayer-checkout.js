@@ -20,6 +20,7 @@
     window.KAYER_CHECKOUT_CONFIG || {}
   );
   var FORCE_STORAGE_KEY = "kayer_force_checkout";
+  var LEGACY_FORCE_STORAGE_KEY = "kayer_force_custom_checkout";
 
   function asList(value) {
     if (Array.isArray(value)) return value;
@@ -171,7 +172,7 @@
     var params = new URLSearchParams(window.location.search);
     var force = params.get("force_checkout");
     if (force === "custom") return "custom";
-    if (force === "shopify" || force === "native") return "shopify";
+    if (force === "shopify" || force === "native" || force === "chekly") return "shopify";
     if (params.get(config.queryParam) === "1") return "custom";
     return null;
   }
@@ -179,10 +180,14 @@
   function getStoredForceCheckout() {
     try {
       var raw = window.sessionStorage.getItem(FORCE_STORAGE_KEY);
+      if (!raw && window.sessionStorage.getItem(LEGACY_FORCE_STORAGE_KEY) === "1") {
+        return "custom";
+      }
       if (!raw) return null;
       var parsed = JSON.parse(raw);
       if (!parsed || Date.now() - Number(parsed.ts || 0) > 2 * 60 * 60 * 1000) {
         window.sessionStorage.removeItem(FORCE_STORAGE_KEY);
+        window.sessionStorage.removeItem(LEGACY_FORCE_STORAGE_KEY);
         return null;
       }
       return parsed.value === "custom" ? parsed.value : null;
@@ -196,6 +201,7 @@
     try {
       if (force === "shopify") {
         window.sessionStorage.removeItem(FORCE_STORAGE_KEY);
+        window.sessionStorage.removeItem(LEGACY_FORCE_STORAGE_KEY);
         return;
       }
       if (force === "custom") {
@@ -203,6 +209,7 @@
           FORCE_STORAGE_KEY,
           JSON.stringify({ value: force, ts: Date.now() })
         );
+        window.sessionStorage.setItem(LEGACY_FORCE_STORAGE_KEY, "1");
       }
     } catch {}
   }
@@ -210,6 +217,7 @@
   function getForceCheckout() {
     var force = readUrlForceCheckout();
     if (force === "custom") return force;
+    if (force === "shopify") return null;
     return getStoredForceCheckout();
   }
 

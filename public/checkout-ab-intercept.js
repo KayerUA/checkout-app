@@ -21,6 +21,7 @@
     window.KAYER_CHECKOUT_AB_CONFIG || {}
   );
   var FORCE_STORAGE_KEY = "kayer_force_checkout";
+  var LEGACY_FORCE_STORAGE_KEY = "kayer_force_custom_checkout";
 
   function asList(value) {
     if (Array.isArray(value)) return value;
@@ -55,10 +56,14 @@
   function getStoredForceCheckout() {
     try {
       var raw = window.sessionStorage.getItem(FORCE_STORAGE_KEY);
+      if (!raw && window.sessionStorage.getItem(LEGACY_FORCE_STORAGE_KEY) === "1") {
+        return "custom";
+      }
       if (!raw) return null;
       var parsed = JSON.parse(raw);
       if (!parsed || Date.now() - Number(parsed.ts || 0) > 2 * 60 * 60 * 1000) {
         window.sessionStorage.removeItem(FORCE_STORAGE_KEY);
+        window.sessionStorage.removeItem(LEGACY_FORCE_STORAGE_KEY);
         return null;
       }
       return parsed.value === "custom" || parsed.value === "chekly" ? parsed.value : null;
@@ -72,6 +77,7 @@
     try {
       if (force === "shopify") {
         window.sessionStorage.removeItem(FORCE_STORAGE_KEY);
+        window.sessionStorage.removeItem(LEGACY_FORCE_STORAGE_KEY);
         return;
       }
       if (force === "custom" || force === "chekly") {
@@ -79,6 +85,11 @@
           FORCE_STORAGE_KEY,
           JSON.stringify({ value: force, ts: Date.now() })
         );
+        if (force === "custom") {
+          window.sessionStorage.setItem(LEGACY_FORCE_STORAGE_KEY, "1");
+        } else {
+          window.sessionStorage.removeItem(LEGACY_FORCE_STORAGE_KEY);
+        }
       }
     } catch {}
   }
@@ -86,6 +97,7 @@
   function getForceCheckout() {
     var force = readUrlForceCheckout();
     if (force === "custom" || force === "chekly") return force;
+    if (force === "shopify") return null;
     return getStoredForceCheckout();
   }
 
