@@ -2,13 +2,24 @@ import { prisma } from "@/lib/db";
 import { createInvoicePdf } from "@/lib/documents/invoice-pdf";
 import { invoicePaymentPurpose, renderInvoiceHtml } from "@/lib/documents/templates";
 import { uploadPrivateDocument } from "@/lib/supabase/storage";
-import { resolveInvoiceLineTitle } from "@/lib/checkout/line-display";
 import type { B2BDocumentInput, FopOrderAttributes, ShopifyOrderLine, ShopifyOrderPayload } from "@/lib/b2b/types";
 
-function invoiceDocumentLines(lines: ShopifyOrderLine[]): ShopifyOrderLine[] {
+async function invoiceDocumentLines(
+  lines: ShopifyOrderLine[],
+  shopDomain?: string | null
+): Promise<ShopifyOrderLine[]> {
+  const dilovodNamesBySku = await fetchDilovodInvoiceNamesBySku(
+    shopDomain,
+    lines.map((line) => line.sku)
+  );
   return lines.map((line) => ({
     ...line,
-    title: resolveInvoiceLineTitle(line),
+    title: resolveLineInvoiceTitle({
+      storefrontTitle: line.title,
+      sku: line.sku,
+      dilovodNamesBySku,
+      metadata: { dilovodInvoiceName: line.dilovodInvoiceName },
+    }),
   }));
 }
 
@@ -24,7 +35,11 @@ export function generateInvoiceNumber(sequence: number, date = new Date()) {
   return `KAYER-UA-${date.getFullYear()}-${String(sequence).padStart(6, "0")}`;
 }
 
-export async function getOrCreateInvoiceDocument(order: ShopifyOrderPayload, buyer: FopOrderAttributes) {
+export async function getOrCreateInvoiceDocument(
+  order: ShopifyOrderPayload,
+  buyer: FopOrderAttributes,
+  shopDomain?: string | null
+) {
   const shopifyOrderId = String(order.id);
   const existing = await prisma.b2BDocument.findFirst({
     where: { shopifyOrderId, type: "invoice" },
@@ -50,7 +65,10 @@ export async function getOrCreateInvoiceDocument(order: ShopifyOrderPayload, buy
   const invoiceNumber = existing?.number ?? generateInvoiceNumber(sequence + 1);
   const invoiceDate = existing?.createdAt ?? new Date();
   const paymentPurpose = invoicePaymentPurpose(invoiceNumber, invoiceDate, order.name);
-  const documentLines = invoiceDocumentLines(order.line_items ?? []);
+  const documentLines = await invoiceDocumentLines(
+    order.line_items ?? [],
+    shopDomain ?? order.myshopify_domain ?? order.shop_domain
+  );
   const input: B2BDocumentInput = {
     shopifyOrderId,
     shopifyOrderName: order.name,

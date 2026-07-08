@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { resolveLineInvoiceTitle } from "@/lib/shopify/variant-invoice-names";
 import {
   getCheckoutLineInvoiceTitle,
   resolveInvoiceLineTitle,
@@ -30,5 +31,15 @@ describe("checkout line display", () => {
         dilovodInvoiceName: "Dilovod title",
       })
     ).toBe("Dilovod title");
+  });
+
+  it("prefers admin-token dilovod name by sku", () => {
+    expect(
+      resolveLineInvoiceTitle({
+        storefrontTitle: "Luxio Base — Default Title",
+        sku: "LUX-GEL-001",
+        dilovodNamesBySku: new Map([["LUX-GEL-001", "гель для нігтів -грунтівка LUXIO Base BASE"]]),
+      })
+    ).toBe("гель для нігтів -грунтівка LUXIO Base BASE");
   });
 });

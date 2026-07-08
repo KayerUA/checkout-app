@@ -8,6 +8,7 @@ import { sendDocumentEmail } from "@/lib/email/resend";
 import { createPdfFromHtml } from "@/lib/documents/pdf";
 import { createInvoicePdf } from "@/lib/documents/invoice-pdf";
 import { uploadPrivateDocument } from "@/lib/supabase/storage";
+import { fetchDilovodInvoiceNamesBySku, resolveLineInvoiceTitle } from "@/lib/shopify/variant-invoice-names";
 import type { B2BDocumentInput } from "@/lib/b2b/types";
 
 export const runtime = "nodejs";
@@ -67,11 +68,30 @@ export async function POST(
       where: { shopifyOrderId, type: "invoice" },
       orderBy: { createdAt: "desc" },
     });
-    const metadata = invoice?.metadata as { html?: unknown; input?: unknown } | null;
+    const metadata = invoice?.metadata as { html?: unknown; input?: B2BDocumentInput } | null;
+    let input = metadata?.input;
     const html = typeof metadata?.html === "string" ? metadata.html : null;
-    const input = metadata?.input as B2BDocumentInput | undefined;
     if (!invoice?.number || (!html && !input)) {
       return NextResponse.json({ error: "Invoice HTML missing" }, { status: 400 });
+    }
+
+    if (input?.lines?.length) {
+      const dilovodNamesBySku = await fetchDilovodInvoiceNamesBySku(
+        order.shopDomain,
+        input.lines.map((line) => line.sku)
+      );
+      input = {
+        ...input,
+        lines: input.lines.map((line) => ({
+          ...line,
+          title: resolveLineInvoiceTitle({
+            storefrontTitle: line.title,
+            sku: line.sku,
+            dilovodNamesBySku,
+            metadata: { dilovodInvoiceName: line.dilovodInvoiceName },
+          }),
+        })),
+      };
     }
 
     const pdf = input ? await createInvoicePdf(input) : await createPdfFromHtml(html ?? "");
@@ -88,6 +108,7 @@ export async function POST(
         pdfUrl,
         metadata: {
           ...(typeof invoice.metadata === "object" && invoice.metadata ? invoice.metadata : {}),
+          input,
           regeneratedAt: new Date().toISOString(),
         },
       },

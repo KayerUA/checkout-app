@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { prisma } from "@/lib/db";
 import { getMerchantShopifySession } from "@/lib/shopify/session-store";
 import { shopifyAdminGraphQL } from "@/lib/shopify/admin";
+import { fetchVariantDilovodInvoiceNames } from "@/lib/shopify/variant-invoice-names";
 import { calcTotals } from "@/lib/checkout/pricing";
 import { assertTransition } from "@/lib/checkout/state-machine";
 import type { CheckoutStatus, PaymentProvider, Prisma } from "@prisma/client";
@@ -94,9 +95,12 @@ export async function resolveAndPriceLines(
   if (!session) throw new Error("Merchant Shopify session not found");
 
   const ids = cartLines.map((l) => l.variantGid);
-  const result = await shopifyAdminGraphQL<{
-    data: { nodes: (VariantNode | null)[] };
-  }>(session, VARIANT_QUERY, { ids });
+  const [result, dilovodNames] = await Promise.all([
+    shopifyAdminGraphQL<{
+      data: { nodes: (VariantNode | null)[] };
+    }>(session, VARIANT_QUERY, { ids }),
+    fetchVariantDilovodInvoiceNames(session.shop, ids),
+  ]);
 
   const nodes = result.data?.nodes ?? [];
   return cartLines.map((line, i) => {
@@ -118,7 +122,10 @@ export async function resolveAndPriceLines(
         imageUrl: variant.image?.url ?? variant.product.featuredImage?.url ?? null,
         imageAlt: variant.image?.altText ?? variant.product.featuredImage?.altText ?? variant.product.title,
         productHandle: variant.product.handle,
-        dilovodInvoiceName: variant.metafield?.value?.trim() || null,
+        dilovodInvoiceName:
+          dilovodNames.get(variant.id)?.trim() ||
+          variant.metafield?.value?.trim() ||
+          null,
       },
     };
   });

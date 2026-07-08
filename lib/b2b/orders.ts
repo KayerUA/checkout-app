@@ -98,7 +98,7 @@ export async function handleB2BOrderCreated(order: ShopifyOrderPayload, shopDoma
   }
 
   await upsertB2BOrder(order, buyer, "CREATED");
-  const invoice = await getOrCreateInvoiceDocument(order, buyer);
+  const invoice = await getOrCreateInvoiceDocument(order, buyer, orderShop);
   await prisma.b2BOrder.update({
     where: { shopifyOrderId: String(order.id) },
     data: { status: "WAITING_BANK_PAYMENT" },

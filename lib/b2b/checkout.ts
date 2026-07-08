@@ -1,6 +1,10 @@
 import { prisma } from "@/lib/db";
 import { handleB2BOrderCreated } from "@/lib/b2b/orders";
-import { getCheckoutLineInvoiceTitle } from "@/lib/checkout/line-display";
+import {
+  fetchDilovodInvoiceNamesBySku,
+  fetchVariantDilovodInvoiceNames,
+  resolveLineInvoiceTitle,
+} from "@/lib/shopify/variant-invoice-names";
 import type { ShopifyOrderPayload } from "@/lib/b2b/types";
 
 export async function ensureB2BInvoiceForCheckoutSession(publicToken: string) {
@@ -16,6 +20,16 @@ export async function ensureB2BInvoiceForCheckoutSession(publicToken: string) {
   }
 
   const shopifyOrderId = session.orderLink.shopifyOrderGid.replace("gid://shopify/Order/", "");
+  const [dilovodNamesByVariantGid, dilovodNamesBySku] = await Promise.all([
+    fetchVariantDilovodInvoiceNames(
+      session.merchant.shopDomain,
+      session.lines.map((line) => line.variantGid)
+    ),
+    fetchDilovodInvoiceNamesBySku(
+      session.merchant.shopDomain,
+      session.lines.map((line) => line.sku)
+    ),
+  ]);
   const order: ShopifyOrderPayload = {
     id: shopifyOrderId,
     admin_graphql_api_id: session.orderLink.shopifyOrderGid,
@@ -36,7 +50,14 @@ export async function ensureB2BInvoiceForCheckoutSession(publicToken: string) {
       { name: "accounting_comment", value: String(attrs.accounting_comment ?? "") },
     ],
     line_items: session.lines.map((line) => {
-      const invoiceTitle = getCheckoutLineInvoiceTitle(line);
+      const invoiceTitle = resolveLineInvoiceTitle({
+        storefrontTitle: line.title,
+        variantGid: line.variantGid,
+        metadata: line.metadata,
+        sku: line.sku,
+        dilovodNamesByVariantGid,
+        dilovodNamesBySku,
+      });
       return {
         sku: line.sku,
         title: invoiceTitle,
