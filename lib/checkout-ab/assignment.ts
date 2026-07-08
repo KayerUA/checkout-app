@@ -31,6 +31,45 @@ export async function assignCheckoutVariant(
   const config = getCheckoutAbConfig();
   const experimentId = config.CHECKOUT_AB_EXPERIMENT_ID;
 
+  if (input.forceCheckout === "chekly" || input.forceCheckout === "custom") {
+    const variant =
+      input.forceCheckout === "custom" ? AB_VARIANTS.CUSTOM : AB_VARIANTS.CHEKLY;
+
+    await logCheckoutAbEvent({
+      experimentId,
+      visitorId: input.visitorId,
+      variant,
+      eventName: "variant_assigned",
+      payload: { forced: true, customWeight: config.CUSTOM_WEIGHT },
+    });
+
+    return {
+      experimentId,
+      visitorId: input.visitorId,
+      variant,
+      forced: true,
+      isNewAssignment: false,
+    };
+  }
+
+  if (!config.CUSTOM_CHECKOUT_ENABLED) {
+    await logCheckoutAbEvent({
+      experimentId,
+      visitorId: input.visitorId,
+      variant: AB_VARIANTS.CHEKLY,
+      eventName: "variant_assigned",
+      payload: { forced: true, customWeight: config.CUSTOM_WEIGHT, reason: "custom_disabled" },
+    });
+
+    return {
+      experimentId,
+      visitorId: input.visitorId,
+      variant: AB_VARIANTS.CHEKLY,
+      forced: true,
+      isNewAssignment: false,
+    };
+  }
+
   const existing = await prisma.checkoutAbAssignment.findUnique({
     where: {
       experimentId_visitorId: {
@@ -50,25 +89,11 @@ export async function assignCheckoutVariant(
     };
   }
 
-  let variant: AbVariant;
-  let forced = false;
-
-  if (input.forceCheckout === "chekly") {
-    variant = AB_VARIANTS.CHEKLY;
-    forced = true;
-  } else if (input.forceCheckout === "custom") {
-    variant = AB_VARIANTS.CUSTOM;
-    forced = true;
-  } else if (!config.CUSTOM_CHECKOUT_ENABLED) {
-    variant = AB_VARIANTS.CHEKLY;
-    forced = true;
-  } else {
-    variant = pickVariantFromBucket(
-      input.visitorId,
-      experimentId,
-      config.CUSTOM_WEIGHT
-    );
-  }
+  const variant = pickVariantFromBucket(
+    input.visitorId,
+    experimentId,
+    config.CUSTOM_WEIGHT
+  );
 
   await prisma.checkoutAbAssignment.create({
     data: {
@@ -83,14 +108,14 @@ export async function assignCheckoutVariant(
     visitorId: input.visitorId,
     variant,
     eventName: "variant_assigned",
-    payload: { forced, customWeight: config.CUSTOM_WEIGHT },
+    payload: { forced: false, customWeight: config.CUSTOM_WEIGHT },
   });
 
   return {
     experimentId,
     visitorId: input.visitorId,
     variant,
-    forced,
+    forced: false,
     isNewAssignment: true,
   };
 }

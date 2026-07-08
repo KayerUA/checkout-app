@@ -20,6 +20,7 @@
     },
     window.KAYER_CHECKOUT_AB_CONFIG || {}
   );
+  var FORCE_STORAGE_KEY = "kayer_force_checkout";
 
   function asList(value) {
     if (Array.isArray(value)) return value;
@@ -42,10 +43,55 @@
     });
   }
 
+  function readUrlForceCheckout() {
+    var params = new URLSearchParams(window.location.search);
+    var force = params.get("force_checkout");
+    if (force === "chekly" || force === "custom") return force;
+    if (params.get(config.queryParam) === "1") return "custom";
+    if (force === "shopify" || force === "native") return "shopify";
+    return null;
+  }
+
+  function getStoredForceCheckout() {
+    try {
+      var raw = window.sessionStorage.getItem(FORCE_STORAGE_KEY);
+      if (!raw) return null;
+      var parsed = JSON.parse(raw);
+      if (!parsed || Date.now() - Number(parsed.ts || 0) > 2 * 60 * 60 * 1000) {
+        window.sessionStorage.removeItem(FORCE_STORAGE_KEY);
+        return null;
+      }
+      return parsed.value === "custom" || parsed.value === "chekly" ? parsed.value : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function persistForceCheckoutFromUrl() {
+    var force = readUrlForceCheckout();
+    try {
+      if (force === "shopify") {
+        window.sessionStorage.removeItem(FORCE_STORAGE_KEY);
+        return;
+      }
+      if (force === "custom" || force === "chekly") {
+        window.sessionStorage.setItem(
+          FORCE_STORAGE_KEY,
+          JSON.stringify({ value: force, ts: Date.now() })
+        );
+      }
+    } catch {}
+  }
+
+  function getForceCheckout() {
+    var force = readUrlForceCheckout();
+    if (force === "custom" || force === "chekly") return force;
+    return getStoredForceCheckout();
+  }
+
   function isAudienceEligible() {
-    var force = new URLSearchParams(window.location.search).get("force_checkout");
+    var force = getForceCheckout();
     if (force === "chekly" || force === "custom") return true;
-    if (new URLSearchParams(window.location.search).get(config.queryParam) === "1") return true;
 
     if (config.audienceMode === "disabled") return false;
     if (config.audienceMode === "all") return true;
@@ -75,6 +121,47 @@
         "[data-kayer-checkout]",
       ].join(", ")
     );
+  }
+
+  function looksLikeCheckoutElement(el) {
+    if (!el) return false;
+    var text = normalize(el.textContent || el.value || el.getAttribute("aria-label") || "");
+    var href = normalize(el.getAttribute && el.getAttribute("href"));
+    var action = normalize(el.getAttribute && el.getAttribute("action"));
+    var formaction = normalize(el.getAttribute && el.getAttribute("formaction"));
+    var className = normalize(el.className);
+    var id = normalize(el.id);
+    var name = normalize(el.getAttribute && el.getAttribute("name"));
+    return (
+      href.indexOf("checkout") >= 0 ||
+      href.indexOf("chekly") >= 0 ||
+      action.indexOf("checkout") >= 0 ||
+      action.indexOf("chekly") >= 0 ||
+      formaction.indexOf("checkout") >= 0 ||
+      formaction.indexOf("chekly") >= 0 ||
+      className.indexOf("checkout") >= 0 ||
+      className.indexOf("chekly") >= 0 ||
+      id.indexOf("checkout") >= 0 ||
+      id.indexOf("chekly") >= 0 ||
+      name === "checkout" ||
+      text.indexOf("checkout") >= 0 ||
+      text.indexOf("check out") >= 0 ||
+      text.indexOf("оформити") >= 0 ||
+      text.indexOf("оформлен") >= 0 ||
+      text.indexOf("замовити") >= 0 ||
+      text.indexOf("замовлення") >= 0 ||
+      text.indexOf("оплат") >= 0 ||
+      text.indexOf("сплат") >= 0
+    );
+  }
+
+  function findLikelyCheckoutTrigger(el) {
+    var explicit = isCheckoutElement(el);
+    if (explicit) return explicit;
+    var candidate = el && el.closest
+      ? el.closest("button, a, input, [role='button'], [onclick]")
+      : null;
+    return looksLikeCheckoutElement(candidate) ? candidate : null;
   }
 
   function appendUtmParams(url) {
@@ -233,58 +320,98 @@
     });
   }
 
-  document.addEventListener(
-    "click",
-    async function (event) {
-      if (!isAudienceEligible()) return;
-      var target = isCheckoutElement(event.target);
-      if (!target) return;
+  async function routeToCheckout() {
+    if (window.__kayerCheckoutAbRouting) return;
+    window.__kayerCheckoutAbRouting = true;
+    try {
+      var root =
+        (window.Shopify && window.Shopify.routes && window.Shopify.routes.root) || "/";
+      var cartRes = await fetch(root + "cart.js", { credentials: "same-origin" });
+      if (!cartRes.ok) throw new Error("cart_load_failed");
+      var cart = await cartRes.json();
 
-      event.preventDefault();
-      event.stopPropagation();
-
-      try {
-        var root =
-          (window.Shopify && window.Shopify.routes && window.Shopify.routes.root) || "/";
-        var cartRes = await fetch(root + "cart.js", { credentials: "same-origin" });
-        if (!cartRes.ok) throw new Error("cart_load_failed");
-        var cart = await cartRes.json();
-
-        if (!cart || !cart.items || cart.items.length === 0) {
-          window.location.href = root + "cart";
-          return;
-        }
-
-        await fetch(root + "cart/update.js", {
-          method: "POST",
-          credentials: "same-origin",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ attributes: readB2BAttributes(cart.attributes || {}) }),
-        }).catch(function () {});
-
-        var force = new URLSearchParams(window.location.search).get("force_checkout");
-        var routerUrl = config.routerUrl;
-        if (force === "chekly" || force === "custom") {
-          routerUrl +=
-            (routerUrl.indexOf("?") >= 0 ? "&" : "?") +
-            "force_checkout=" +
-            encodeURIComponent(force);
-        }
-
-        window.location.href = appendUtmParams(routerUrl);
-      } catch (err) {
-        console.error("[CheckoutAB intercept]", err);
-        window.location.href = config.fallbackUrl;
+      if (!cart || !cart.items || cart.items.length === 0) {
+        window.location.href = root + "cart";
+        return;
       }
-    },
-    true
-  );
+
+      await fetch(root + "cart/update.js", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ attributes: readB2BAttributes(cart.attributes || {}) }),
+      }).catch(function () {});
+
+      var force = getForceCheckout();
+      var routerUrl = config.routerUrl;
+      if (force === "chekly" || force === "custom") {
+        routerUrl +=
+          (routerUrl.indexOf("?") >= 0 ? "&" : "?") +
+          "force_checkout=" +
+          encodeURIComponent(force);
+      }
+
+      window.location.href = appendUtmParams(routerUrl);
+    } catch (err) {
+      window.__kayerCheckoutAbRouting = false;
+      console.error("[CheckoutAB intercept]", err);
+      window.location.href = config.fallbackUrl;
+    }
+  }
+
+  function interceptCheckoutEvent(event) {
+    if (!isAudienceEligible()) return;
+    var target = findLikelyCheckoutTrigger(event.target);
+    if (!target && getForceCheckout() !== "custom") return;
+    if (!target && !looksLikeCheckoutElement(event.target)) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    routeToCheckout();
+  }
+
+  function interceptCheckoutSubmit(event) {
+    if (!isAudienceEligible()) return;
+    var form = event.target;
+    if (!form || !form.matches || !form.matches("form")) return;
+    var action = normalize(form.getAttribute("action"));
+    var submitter = event.submitter || document.activeElement;
+    var checkoutSubmitter = findLikelyCheckoutTrigger(submitter);
+    var formHasCheckout = Boolean(form.querySelector(
+      [
+        'button[name="checkout"]',
+        'input[name="checkout"]',
+        "[data-kayer-checkout]",
+        ".checkout-button",
+        ".cart__checkout",
+      ].join(", ")
+    ));
+    if (
+      action.indexOf("checkout") < 0 &&
+      action.indexOf("chekly") < 0 &&
+      !checkoutSubmitter &&
+      !formHasCheckout
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    routeToCheckout();
+  }
 
   function bindDynamicUi() {
     injectB2BBlock();
   }
 
+  persistForceCheckoutFromUrl();
   clearCartIfRequested();
+  window.addEventListener("click", interceptCheckoutEvent, true);
+  document.addEventListener("click", interceptCheckoutEvent, true);
+  window.addEventListener("submit", interceptCheckoutSubmit, true);
+  document.addEventListener("submit", interceptCheckoutSubmit, true);
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", bindDynamicUi);

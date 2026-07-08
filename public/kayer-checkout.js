@@ -19,6 +19,7 @@
     },
     window.KAYER_CHECKOUT_CONFIG || {}
   );
+  var FORCE_STORAGE_KEY = "kayer_force_checkout";
 
   function asList(value) {
     if (Array.isArray(value)) return value;
@@ -43,8 +44,8 @@
 
   function isAudienceEligible() {
     var params = new URLSearchParams(window.location.search);
-    if (params.get(config.queryParam) === "1") return true;
-    if (params.get("force_checkout") === "custom") return true;
+    var force = getForceCheckout();
+    if (force === "custom") return true;
     if (params.get("force_checkout") === "shopify") return false;
 
     if (config.audienceMode === "disabled") return false;
@@ -163,8 +164,53 @@
   }
 
   function isForcedCustomCheckout() {
+    return getForceCheckout() === "custom";
+  }
+
+  function readUrlForceCheckout() {
     var params = new URLSearchParams(window.location.search);
-    return params.get(config.queryParam) === "1" || params.get("force_checkout") === "custom";
+    var force = params.get("force_checkout");
+    if (force === "custom") return "custom";
+    if (force === "shopify" || force === "native") return "shopify";
+    if (params.get(config.queryParam) === "1") return "custom";
+    return null;
+  }
+
+  function getStoredForceCheckout() {
+    try {
+      var raw = window.sessionStorage.getItem(FORCE_STORAGE_KEY);
+      if (!raw) return null;
+      var parsed = JSON.parse(raw);
+      if (!parsed || Date.now() - Number(parsed.ts || 0) > 2 * 60 * 60 * 1000) {
+        window.sessionStorage.removeItem(FORCE_STORAGE_KEY);
+        return null;
+      }
+      return parsed.value === "custom" ? parsed.value : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function persistForceCheckoutFromUrl() {
+    var force = readUrlForceCheckout();
+    try {
+      if (force === "shopify") {
+        window.sessionStorage.removeItem(FORCE_STORAGE_KEY);
+        return;
+      }
+      if (force === "custom") {
+        window.sessionStorage.setItem(
+          FORCE_STORAGE_KEY,
+          JSON.stringify({ value: force, ts: Date.now() })
+        );
+      }
+    } catch {}
+  }
+
+  function getForceCheckout() {
+    var force = readUrlForceCheckout();
+    if (force === "custom") return force;
+    return getStoredForceCheckout();
   }
 
   function shopifyRoot() {
@@ -539,10 +585,7 @@
 
   function shouldAutoOpenForcedCheckout() {
     var params = new URLSearchParams(window.location.search);
-    var explicitlyForced =
-      params.get(config.queryParam) === "1" ||
-      params.get("force_checkout") === "custom";
-    if (!explicitlyForced) return false;
+    if (getForceCheckout() !== "custom") return false;
     if (params.get("kayer_no_auto") === "1") return false;
     return window.location.pathname.indexOf("/cart") >= 0;
   }
@@ -564,6 +607,7 @@
   document.addEventListener("click", interceptCheckoutEvent, true);
   window.addEventListener("submit", interceptCheckoutSubmit, true);
   document.addEventListener("submit", interceptCheckoutSubmit, true);
+  persistForceCheckoutFromUrl();
   clearCartIfRequested();
   installForcedCheckoutGuards();
   scheduleForcedAutoOpen();
