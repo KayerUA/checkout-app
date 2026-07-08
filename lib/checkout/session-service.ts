@@ -16,12 +16,14 @@ const VARIANT_QUERY = `
         price
         compareAtPrice
         image { url altText }
-        product { id title }
         product {
           id
           title
           handle
           featuredImage { url altText }
+        }
+        metafield(namespace: "kayer_dilovod", key: "invoice_name") {
+          value
         }
       }
     }
@@ -58,6 +60,7 @@ type VariantNode = {
   price: string;
   compareAtPrice: string | null;
   image: { url: string; altText: string | null } | null;
+  metafield: { value: string } | null;
   product: {
     id: string;
     title: string;
@@ -115,6 +118,7 @@ export async function resolveAndPriceLines(
         imageUrl: variant.image?.url ?? variant.product.featuredImage?.url ?? null,
         imageAlt: variant.image?.altText ?? variant.product.featuredImage?.altText ?? variant.product.title,
         productHandle: variant.product.handle,
+        dilovodInvoiceName: variant.metafield?.value?.trim() || null,
       },
     };
   });

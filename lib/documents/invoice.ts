@@ -2,7 +2,15 @@ import { prisma } from "@/lib/db";
 import { createInvoicePdf } from "@/lib/documents/invoice-pdf";
 import { invoicePaymentPurpose, renderInvoiceHtml } from "@/lib/documents/templates";
 import { uploadPrivateDocument } from "@/lib/supabase/storage";
-import type { B2BDocumentInput, FopOrderAttributes, ShopifyOrderPayload } from "@/lib/b2b/types";
+import { resolveInvoiceLineTitle } from "@/lib/checkout/line-display";
+import type { B2BDocumentInput, FopOrderAttributes, ShopifyOrderLine, ShopifyOrderPayload } from "@/lib/b2b/types";
+
+function invoiceDocumentLines(lines: ShopifyOrderLine[]): ShopifyOrderLine[] {
+  return lines.map((line) => ({
+    ...line,
+    title: resolveInvoiceLineTitle(line),
+  }));
+}
 
 export function invoiceGoodsAmount(order: ShopifyOrderPayload) {
   return (order.line_items ?? []).reduce((sum, line) => {
@@ -42,15 +50,16 @@ export async function getOrCreateInvoiceDocument(order: ShopifyOrderPayload, buy
   const invoiceNumber = existing?.number ?? generateInvoiceNumber(sequence + 1);
   const invoiceDate = existing?.createdAt ?? new Date();
   const paymentPurpose = invoicePaymentPurpose(invoiceNumber, invoiceDate, order.name);
+  const documentLines = invoiceDocumentLines(order.line_items ?? []);
   const input: B2BDocumentInput = {
     shopifyOrderId,
     shopifyOrderName: order.name,
     invoiceNumber,
     invoiceDate,
     buyer,
-    amount: invoiceGoodsAmount(order),
+    amount: invoiceGoodsAmount({ ...order, line_items: documentLines }),
     currency: order.currency ?? "UAH",
-    lines: order.line_items ?? [],
+    lines: documentLines,
     paymentPurpose,
   };
   const html = renderInvoiceHtml(input);

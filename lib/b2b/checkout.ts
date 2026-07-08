@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { handleB2BOrderCreated } from "@/lib/b2b/orders";
+import { getCheckoutLineInvoiceTitle } from "@/lib/checkout/line-display";
 import type { ShopifyOrderPayload } from "@/lib/b2b/types";
 
 export async function ensureB2BInvoiceForCheckoutSession(publicToken: string) {
@@ -34,18 +35,22 @@ export async function ensureB2BInvoiceForCheckoutSession(publicToken: string) {
       { name: "docs_phone", value: String(attrs.docs_phone ?? session.buyerPhone ?? "") },
       { name: "accounting_comment", value: String(attrs.accounting_comment ?? "") },
     ],
-    line_items: session.lines.map((line) => ({
-      sku: line.sku,
-      title: line.title,
-      quantity: line.quantity,
-      price: String((line.unitPrice / 100).toFixed(2)),
-      price_set: {
-        shop_money: {
-          amount: String((line.unitPrice / 100).toFixed(2)),
-          currency_code: session.currency,
+    line_items: session.lines.map((line) => {
+      const invoiceTitle = getCheckoutLineInvoiceTitle(line);
+      return {
+        sku: line.sku,
+        title: invoiceTitle,
+        dilovodInvoiceName: invoiceTitle !== line.title ? invoiceTitle : null,
+        quantity: line.quantity,
+        price: String((line.unitPrice / 100).toFixed(2)),
+        price_set: {
+          shop_money: {
+            amount: String((line.unitPrice / 100).toFixed(2)),
+            currency_code: session.currency,
+          },
         },
-      },
-    })),
+      };
+    }),
   };
 
   return handleB2BOrderCreated(order, session.merchant.shopDomain);

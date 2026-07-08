@@ -15,6 +15,7 @@ export type FopOrderAttributes = {
 export type ShopifyOrderLine = {
   sku?: string | null;
   title: string;
+  dilovodInvoiceName?: string | null;
   quantity: number;
   price?: string | number | null;
   price_set?: {
