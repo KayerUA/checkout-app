@@ -5,6 +5,11 @@ import { writeAutomationLog } from "@/lib/b2b/log";
 import { getOrCreateInvoiceDocument } from "@/lib/documents/invoice";
 import { getOrCreateDeliveryNoteDocument } from "@/lib/documents/delivery-note";
 import { sendDocumentEmail } from "@/lib/email/resend";
+import {
+  renderDeliveryNoteEmailHtml,
+  renderInvoiceEmailHtml,
+  renderInvoiceEmailText,
+} from "@/lib/email/document-templates";
 import { sendOrderInvoiceEmail, setOrderMetafields, updateOrderTags } from "@/lib/shopify/b2b-admin";
 import type { FopOrderAttributes, ShopifyOrderPayload } from "@/lib/b2b/types";
 
@@ -126,8 +131,10 @@ export async function handleB2BOrderCreated(order: ShopifyOrderPayload, shopDoma
       orderId: String(order.id),
       to: buyer.docs_email,
       invoiceNumber: invoice.document.number ?? "",
+      orderName: order.name,
       paymentPurpose: invoice.paymentPurpose,
       pdfUrl: invoice.document.pdfUrl,
+      pdf: invoice.pdf,
     });
   }
 
@@ -147,24 +154,51 @@ async function sendInvoiceEmail(input: {
   orderId: string;
   to: string;
   invoiceNumber: string;
+  orderName?: string | null;
   paymentPurpose: string;
   pdfUrl?: string | null;
+  pdf?: Buffer | null;
 }) {
-  await sendOrderInvoiceEmail({
-    shopDomain: input.shopDomain,
-    orderId: input.orderId,
-    to: input.to,
-    subject: `Рахунок на оплату ${input.invoiceNumber} — KAYER UA`,
-    customMessage: [
+  const subject = `Рахунок ${input.invoiceNumber} готовий до оплати - KAYER UA`;
+  const fallbackMessage = [
       "Дякуємо за замовлення.",
       "Ви обрали оплату як ФОП / юридична особа.",
       "Будь ласка, дочекайтесь генерації рахунку і оплатіть його з підприємницького або юридичного рахунку.",
       `Призначення платежу: ${input.paymentPurpose}`,
-      input.pdfUrl ? `Рахунок PDF можна скачати за посиланням: ${input.pdfUrl}` : "",
+      input.pdfUrl ? `Скачати рахунок PDF: ${input.pdfUrl}` : "",
       "Після надходження коштів замовлення буде автоматично передано в обробку.",
     ]
       .filter(Boolean)
-      .join("\n\n"),
+      .join("\n\n");
+
+  try {
+    const result = await sendDocumentEmail({
+      to: input.to,
+      subject,
+      html: renderInvoiceEmailHtml(input),
+      text: renderInvoiceEmailText(input),
+      attachments: input.pdf
+        ? [{ filename: `${input.invoiceNumber}.pdf`, content: input.pdf, contentType: "application/pdf" }]
+        : undefined,
+    });
+    if (!("skipped" in result && result.skipped)) return;
+  } catch (error) {
+    await writeAutomationLog({
+      shopifyOrderId: input.orderId,
+      eventType: "invoice_email",
+      step: "styled_invoice_email",
+      status: "WARN",
+      message: "Styled invoice email failed, falling back to Shopify order invoice email",
+      error,
+    }).catch(() => {});
+  }
+
+  await sendOrderInvoiceEmail({
+    shopDomain: input.shopDomain,
+    orderId: input.orderId,
+    to: input.to,
+    subject,
+    customMessage: fallbackMessage,
   });
 }
 
@@ -234,11 +268,11 @@ export async function createPostPaymentDocuments(input: {
     await sendDocumentEmail({
       to: docsEmail,
       subject: `Оплату отримано — документи KAYER UA`,
-      html: `
-        <p>Оплату отримано.</p>
-        <p>Замовлення передано в обробку.</p>
-        ${note.document.pdfUrl ? `<p>Видаткова накладна: <a href="${note.document.pdfUrl}">${note.document.pdfUrl}</a></p>` : ""}
-      `,
+      html: renderDeliveryNoteEmailHtml({
+        documentNumber: note.document.number,
+        orderName: input.order.name,
+        pdfUrl: note.document.pdfUrl,
+      }),
       attachments: note.pdf
         ? [{ filename: `${note.document.number}.pdf`, content: note.pdf, contentType: "application/pdf" }]
         : undefined,

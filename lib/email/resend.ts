@@ -4,6 +4,7 @@ export async function sendDocumentEmail(input: {
   to: string;
   subject: string;
   html: string;
+  text?: string;
   attachments?: Array<{ filename: string; content: Buffer; contentType: string }>;
 }) {
   const env = getEnv();
@@ -22,6 +23,7 @@ export async function sendDocumentEmail(input: {
       to: [input.to],
       subject: input.subject,
       html: input.html,
+      text: input.text,
       attachments: input.attachments?.map((attachment) => ({
         filename: attachment.filename,
         content: attachment.content.toString("base64"),

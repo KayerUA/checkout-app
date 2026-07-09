@@ -5,6 +5,7 @@ import { requireMerchantSession } from "@/lib/session";
 import { B2B_TAGS } from "@/lib/b2b/constants";
 import { updateOrderTags } from "@/lib/shopify/b2b-admin";
 import { sendDocumentEmail } from "@/lib/email/resend";
+import { renderInvoiceEmailHtml, renderInvoiceEmailText } from "@/lib/email/document-templates";
 import { createPdfFromHtml } from "@/lib/documents/pdf";
 import { createInvoicePdf } from "@/lib/documents/invoice-pdf";
 import { uploadPrivateDocument } from "@/lib/supabase/storage";
@@ -58,10 +59,27 @@ export async function POST(
     if (!invoice || !order.docsEmail) {
       return NextResponse.json({ error: "Invoice or docs email missing" }, { status: 400 });
     }
+    const metadata = invoice.metadata as { paymentPurpose?: unknown } | null;
+    const paymentPurpose =
+      typeof metadata?.paymentPurpose === "string"
+        ? metadata.paymentPurpose
+        : `Оплата замовлення № ${order.shopifyOrderName ?? shopifyOrderId}, рахунок ${invoice.number}, без ПДВ`;
+
     await sendDocumentEmail({
       to: order.docsEmail,
-      subject: `Рахунок на оплату ${invoice.number} — KAYER UA`,
-      html: `<p>Повторно надсилаємо рахунок на оплату.</p><p><a href="${invoice.pdfUrl}">${invoice.pdfUrl}</a></p>`,
+      subject: `Рахунок ${invoice.number} готовий до оплати - KAYER UA`,
+      html: renderInvoiceEmailHtml({
+        invoiceNumber: invoice.number ?? "",
+        orderName: order.shopifyOrderName,
+        paymentPurpose,
+        pdfUrl: invoice.pdfUrl,
+      }),
+      text: renderInvoiceEmailText({
+        invoiceNumber: invoice.number ?? "",
+        orderName: order.shopifyOrderName,
+        paymentPurpose,
+        pdfUrl: invoice.pdfUrl,
+      }),
     });
   } else if (action === "regenerate_invoice") {
     const invoice = await prisma.b2BDocument.findFirst({

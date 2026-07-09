@@ -14,7 +14,7 @@ import { formatMoney } from "@/lib/checkout/pricing";
 import { cn } from "@/lib/utils";
 import {
   AlertCircle,
-  ChevronRight,
+  CheckCircle2,
   CreditCard,
   FileText,
   Headphones,
@@ -155,14 +155,16 @@ function CheckoutSheetRow({
   label,
   value,
   helper,
+  complete,
 }: {
   icon: React.ElementType;
   label: string;
   value: string;
   helper?: string;
+  complete?: boolean;
 }) {
   return (
-    <div className="flex items-center gap-3 rounded-[1.15rem] bg-white/92 p-3 shadow-[0_1px_0_rgba(255,255,255,0.9)_inset,0_8px_18px_rgba(17,17,17,0.045)] ring-1 ring-black/[0.04] sm:rounded-[1.35rem]">
+    <div className="flex cursor-default select-none items-center gap-3 rounded-[1.15rem] bg-white/92 p-3 shadow-[0_1px_0_rgba(255,255,255,0.9)_inset,0_8px_18px_rgba(17,17,17,0.045)] ring-1 ring-black/[0.04] sm:rounded-[1.35rem]">
       <span className="flex size-10 shrink-0 items-center justify-center rounded-[1.05rem] bg-zinc-50 text-foreground ring-1 ring-black/5 sm:rounded-2xl">
         <Icon className="size-4" />
       </span>
@@ -171,7 +173,11 @@ function CheckoutSheetRow({
         <p className="truncate text-[15px] font-semibold leading-5">{value}</p>
         {helper ? <p className="truncate text-xs text-muted-foreground">{helper}</p> : null}
       </div>
-      <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+      {complete ? (
+        <CheckCircle2 className="size-4 shrink-0 text-emerald-600" />
+      ) : (
+        <span className="h-2 w-2 shrink-0 rounded-full bg-zinc-300" aria-hidden="true" />
+      )}
     </div>
   );
 }
@@ -183,6 +189,10 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
   const [cityQuery, setCityQuery] = useState("");
   const [cities, setCities] = useState<City[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
+  const [cityListOpen, setCityListOpen] = useState(false);
+  const [branchListOpen, setBranchListOpen] = useState(false);
+  const [loadingBranches, setLoadingBranches] = useState(false);
+  const [selectingBranchRef, setSelectingBranchRef] = useState<string | null>(null);
   const [selectedCityRef, setSelectedCityRef] = useState(
     (initial.shippingPayload?.cityRef as string | undefined) ?? ""
   );
@@ -253,6 +263,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
         `/api/public/shipping/nova-poshta/cities?q=${encodeURIComponent(cityQuery)}`
       );
       setCities(await res.json());
+      setCityListOpen(true);
       setSearchingCities(false);
     }, 300);
     return () => clearTimeout(t);
@@ -262,7 +273,8 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
     if (!selectedCityRef) return;
     fetch(`/api/public/shipping/nova-poshta/branches?cityRef=${selectedCityRef}`)
       .then((r) => r.json())
-      .then(setBranches);
+      .then(setBranches)
+      .finally(() => setLoadingBranches(false));
   }, [selectedCityRef]);
 
   useEffect(() => {
@@ -348,34 +360,43 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
   }
 
   async function selectBranch(branch: Branch) {
-    const updated = await saveSession({
-      shippingPayload: {
-        cityRef: branch.cityRef ?? selectedCityRef,
-        cityName: branch.cityName,
-        branchRef: branch.ref,
-        branchName: branch.shortAddress,
-        branchNumber: branch.number,
-        branchType: branch.type ?? "branch",
-      },
-    });
-    setData(updated);
-    if (data.ab?.experimentId && data.ab.visitorId && data.ab.variant) {
-      fetch("/api/checkout-ab/events", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          experimentId: data.ab.experimentId,
-          visitorId: data.ab.visitorId,
-          variant: data.ab.variant,
-          eventName: "shipping_selected",
-          checkoutSessionId: data.publicToken,
-          payload: { branchRef: branch.ref },
-        }),
-      }).catch(() => {});
+    setSelectingBranchRef(branch.ref);
+    setError(null);
+    try {
+      const updated = await saveSession({
+        shippingPayload: {
+          cityRef: branch.cityRef ?? selectedCityRef,
+          cityName: branch.cityName,
+          branchRef: branch.ref,
+          branchName: branch.shortAddress,
+          branchNumber: branch.number,
+          branchType: branch.type ?? "branch",
+        },
+      });
+      setData(updated);
+      setBranchListOpen(false);
+      if (data.ab?.experimentId && data.ab.visitorId && data.ab.variant) {
+        fetch("/api/checkout-ab/events", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            experimentId: data.ab.experimentId,
+            visitorId: data.ab.visitorId,
+            variant: data.ab.variant,
+            eventName: "shipping_selected",
+            checkoutSessionId: data.publicToken,
+            payload: { branchRef: branch.ref },
+          }),
+        }).catch(() => {});
+      }
+      await fetch(`/api/public/checkout-sessions/${data.publicToken}/reprice`, { method: "POST" });
+      const refresh = await fetch(`/api/public/checkout-sessions/${data.publicToken}`);
+      setData(await refresh.json());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Не вдалося обрати відділення.");
+    } finally {
+      setSelectingBranchRef(null);
     }
-    await fetch(`/api/public/checkout-sessions/${data.publicToken}/reprice`, { method: "POST" });
-    const refresh = await fetch(`/api/public/checkout-sessions/${data.publicToken}`);
-    setData(await refresh.json());
   }
 
   async function addRecommendation(recommendation: CheckoutRecommendation) {
@@ -440,10 +461,36 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
             </div>
           ) : null}
 
-          <div className="mb-4 grid gap-2.5 sm:mb-5 sm:gap-3">
-            <CheckoutSheetRow icon={User} label="Контакти" value={contactValue} helper={contactHelper} />
-            <CheckoutSheetRow icon={MapPin} label="Доставка" value={shippingValue} helper={shippingHelper} />
-            <CheckoutSheetRow icon={buyerType === "fop_company" ? FileText : CreditCard} label="Оплата" value={paymentValue} helper={paymentHelper} />
+          <div className="mb-4 sm:mb-5">
+            <div className="mb-2 flex items-center justify-between px-1">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                Короткий огляд
+              </p>
+              <p className="text-[11px] text-muted-foreground">Заповніть блоки нижче</p>
+            </div>
+            <div className="grid gap-2.5 sm:gap-3" aria-label="Короткий огляд checkout">
+              <CheckoutSheetRow
+                icon={User}
+                label="Контакти"
+                value={contactValue}
+                helper={contactHelper}
+                complete={Boolean(data.buyerPhone)}
+              />
+              <CheckoutSheetRow
+                icon={MapPin}
+                label="Доставка"
+                value={shippingValue}
+                helper={shippingHelper}
+                complete={Boolean(data.shippingPayload?.branchRef)}
+              />
+              <CheckoutSheetRow
+                icon={buyerType === "fop_company" ? FileText : CreditCard}
+                label="Оплата"
+                value={paymentValue}
+                helper={paymentHelper}
+                complete
+              />
+            </div>
           </div>
 
           <details className="mb-4 rounded-[1.25rem] bg-white/92 px-4 py-3 text-left shadow-sm ring-1 ring-black/[0.045] sm:mb-5 sm:rounded-[1.5rem] lg:hidden">
@@ -606,10 +653,14 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
                     value={cityQuery}
                     onChange={(e) => {
                       setCityQuery(e.target.value);
+                      setCityListOpen(e.target.value.length >= 2);
                       if (e.target.value.length < 2) {
                         setCities([]);
                         setSearchingCities(false);
                       }
+                    }}
+                    onFocus={() => {
+                      if (cities.length > 0) setCityListOpen(true);
                     }}
                     placeholder="Почніть вводити назву міста"
                     autoComplete="off"
@@ -617,7 +668,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
                   />
                 </div>
                 {searchingCities && <Skeleton className="h-10 w-full" />}
-                {cities.length > 0 && (
+                {cityListOpen && cities.length > 0 && (
                   <ScrollArea className="h-40 rounded-xl border bg-background">
                     <div className="p-1">
                       {cities.map((c) => (
@@ -629,6 +680,9 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
                             setSelectedCityRef(c.ref);
                             setCityQuery(c.name);
                             setCities([]);
+                            setCityListOpen(false);
+                            setBranchListOpen(true);
+                            setLoadingBranches(true);
                             void saveSession({
                               shippingPayload: {
                                 cityRef: c.ref,
@@ -645,7 +699,43 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
                 )}
               </div>
 
-              {branches.length > 0 && (
+              {data.shippingPayload?.cityName && (
+                <div className="flex items-center justify-between gap-3 rounded-xl border bg-secondary/35 px-3 py-2 text-sm">
+                  <span className="min-w-0 truncate">
+                    <span className="text-muted-foreground">Місто: </span>
+                    <span className="font-medium">{data.shippingPayload.cityName as string}</span>
+                  </span>
+                  <button
+                    type="button"
+                    className="shrink-0 text-xs font-semibold underline underline-offset-4"
+                    onClick={() => {
+                      setCityQuery("");
+                      setCities([]);
+                      setBranches([]);
+                      setSelectedCityRef("");
+                      setBranchListOpen(false);
+                      void saveSession({ shippingPayload: {} }).then(setData);
+                    }}
+                  >
+                    Змінити
+                  </button>
+                </div>
+              )}
+
+              {selectedCityRef && !data.shippingPayload?.branchRef && !branchListOpen && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full rounded-xl"
+                  onClick={() => setBranchListOpen(true)}
+                >
+                  Обрати відділення або поштомат
+                </Button>
+              )}
+
+              {loadingBranches && selectedCityRef && <Skeleton className="h-14 w-full rounded-xl" />}
+
+              {branchListOpen && branches.length > 0 && (
                 <div className="space-y-2">
                   <Label>Відділення</Label>
                   <ScrollArea className="h-48 rounded-xl border bg-background">
@@ -661,8 +751,13 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
                               selected && "bg-secondary font-medium"
                             )}
                             onClick={() => selectBranch(b)}
+                            disabled={selectingBranchRef === b.ref}
                           >
-                            <MapPin className="mt-0.5 size-3.5 shrink-0 text-accent" />
+                            {selectingBranchRef === b.ref ? (
+                              <Loader2 className="mt-0.5 size-3.5 shrink-0 animate-spin text-accent" />
+                            ) : (
+                              <MapPin className="mt-0.5 size-3.5 shrink-0 text-accent" />
+                            )}
                             <span>
                               <span className="font-medium">№{b.number}</span> — {b.shortAddress}
                             </span>
@@ -675,13 +770,22 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
               )}
 
               {data.shippingPayload?.branchName && (
-                <Alert>
-                  <MapPin className="size-4" />
-                  <AlertDescription>
-                    <span className="font-medium">Обрано: </span>
-                    {data.shippingPayload.branchName as string}
-                  </AlertDescription>
-                </Alert>
+                <div className="rounded-[1.15rem] border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-950">
+                  <div className="flex items-start gap-2">
+                    <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-600" />
+                    <div className="min-w-0 flex-1">
+                      <p className="font-semibold">Відділення обрано</p>
+                      <p className="mt-1 leading-5">{data.shippingPayload.branchName as string}</p>
+                      <button
+                        type="button"
+                        className="mt-2 text-xs font-semibold underline underline-offset-4"
+                        onClick={() => setBranchListOpen(true)}
+                      >
+                        Змінити відділення
+                      </button>
+                    </div>
+                  </div>
+                </div>
               )}
             </div>
           </StepCard>
