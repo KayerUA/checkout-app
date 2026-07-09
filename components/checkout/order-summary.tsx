@@ -184,7 +184,7 @@ export function OrderSummary({
         </div>
       </details>
 
-      <Card className="hidden bg-card/82 shadow-[0_28px_80px_rgba(28,20,16,0.08)] ring-white/70 backdrop-blur-2xl lg:sticky lg:top-6 lg:flex">
+      <Card className="hidden bg-card/82 shadow-[0_28px_80px_rgba(28,20,16,0.08)] ring-white/70 backdrop-blur-2xl lg:flex">
         <CardHeader>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">

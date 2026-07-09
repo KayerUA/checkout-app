@@ -150,38 +150,6 @@ function StepCard({
   );
 }
 
-function CheckoutSheetRow({
-  icon: Icon,
-  label,
-  value,
-  helper,
-  complete,
-}: {
-  icon: React.ElementType;
-  label: string;
-  value: string;
-  helper?: string;
-  complete?: boolean;
-}) {
-  return (
-    <div className="flex cursor-default select-none items-center gap-3 rounded-[1.15rem] bg-white/86 p-3 shadow-[0_1px_0_rgba(255,255,255,0.9)_inset,0_10px_24px_rgba(17,17,17,0.045)] ring-1 ring-black/[0.04] sm:rounded-[1.35rem]">
-      <span className="flex size-10 shrink-0 items-center justify-center rounded-[1.05rem] bg-zinc-50 text-foreground shadow-sm ring-1 ring-black/5 sm:rounded-2xl">
-        <Icon className="size-4" />
-      </span>
-      <div className="min-w-0 flex-1">
-        <p className="text-[11px] font-medium text-muted-foreground">{label}</p>
-        <p className="truncate text-[15px] font-semibold leading-5">{value}</p>
-        {helper ? <p className="truncate text-xs text-muted-foreground">{helper}</p> : null}
-      </div>
-      {complete ? (
-        <CheckCircle2 className="size-4 shrink-0 text-emerald-600" />
-      ) : (
-        <span className="h-2 w-2 shrink-0 rounded-full bg-zinc-300" aria-hidden="true" />
-      )}
-    </div>
-  );
-}
-
 export function CheckoutForm({ initial }: { initial: CheckoutData }) {
   const [data, setData] = useState(initial);
   const [loading, setLoading] = useState(false);
@@ -213,15 +181,6 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
       : "Готуємо безпечний перехід до LiqPay...";
   const firstLine = data.lines[0];
   const extraLinesCount = Math.max(data.lines.length - 1, 0);
-  const customerName = [data.buyerFirstName, data.buyerLastName].filter(Boolean).join(" ");
-  const contactValue = customerName || data.buyerPhone || "Додайте контакти";
-  const contactHelper = data.buyerPhone || data.buyerEmail || "Телефон потрібен для доставки";
-  const shippingValue = data.shippingPayload?.branchName ?? "Оберіть Нову Пошту";
-  const shippingHelper = data.shippingPayload?.cityName ?? "Відділення або поштомат";
-  const paymentValue =
-    buyerType === "fop_company" ? "Оплата за рахунком" : "LiqPay";
-  const paymentHelper =
-    buyerType === "fop_company" ? "PDF-рахунок після підтвердження" : "Картка, Apple Pay, Google Pay";
 
   useEffect(() => {
     const ab = data.ab;
@@ -460,40 +419,6 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
               </p>
             </div>
           ) : null}
-
-          <div className="mb-4 sm:mb-5">
-            <div className="mb-2 flex items-center justify-between px-1">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                Короткий огляд
-              </p>
-              <p className="rounded-full bg-white/70 px-2 py-1 text-[11px] text-muted-foreground ring-1 ring-black/[0.04]">
-                Заповніть блоки нижче
-              </p>
-            </div>
-            <div className="grid gap-2.5 sm:gap-3" aria-label="Короткий огляд checkout">
-              <CheckoutSheetRow
-                icon={User}
-                label="Контакти"
-                value={contactValue}
-                helper={contactHelper}
-                complete={Boolean(data.buyerPhone)}
-              />
-              <CheckoutSheetRow
-                icon={MapPin}
-                label="Доставка"
-                value={shippingValue}
-                helper={shippingHelper}
-                complete={Boolean(data.shippingPayload?.branchRef)}
-              />
-              <CheckoutSheetRow
-                icon={buyerType === "fop_company" ? FileText : CreditCard}
-                label="Оплата"
-                value={paymentValue}
-                helper={paymentHelper}
-                complete
-              />
-            </div>
-          </div>
 
           <details className="mb-4 rounded-[1.25rem] bg-white/92 px-4 py-3 text-left shadow-sm ring-1 ring-black/[0.045] sm:mb-5 sm:rounded-[1.5rem] lg:hidden">
             <summary className="flex cursor-pointer list-none items-center justify-between gap-4">
@@ -896,7 +821,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
           </div>
         </form>
 
-        <div className="order-2 hidden lg:block">
+        <div className="order-2 hidden self-start lg:sticky lg:top-6 lg:block lg:max-h-[calc(100vh-3rem)] lg:overflow-y-auto lg:pb-2">
           <OrderSummary
             lines={data.lines}
             currency={data.currency}
