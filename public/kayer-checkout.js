@@ -314,6 +314,17 @@
     window.location.href = config.fallbackUrl;
   }
 
+  function cartLinePayload(item) {
+    var unit = item.final_price != null ? item.final_price : item.price;
+    var original = item.original_price != null ? item.original_price : unit;
+    return {
+      variantGid: "gid://shopify/ProductVariant/" + item.variant_id,
+      quantity: item.quantity,
+      unitPriceCents: unit,
+      originalUnitPriceCents: original,
+    };
+  }
+
   async function redirectToCheckout() {
     if (window.__kayerRedirectInProgress) return;
     window.__kayerRedirectInProgress = true;
@@ -328,12 +339,7 @@
       return;
     }
 
-    const cartLines = cart.items.map(function (item) {
-      return {
-        variantGid: "gid://shopify/ProductVariant/" + item.variant_id,
-        quantity: item.quantity,
-      };
-    });
+    const cartLines = cart.items.map(cartLinePayload);
 
     const sessionRes = await fetch(
       config.checkoutApiUrl + "/api/public/checkout-sessions",

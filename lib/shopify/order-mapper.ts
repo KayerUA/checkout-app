@@ -115,18 +115,22 @@ export function mapCheckoutToOrderCreateInput(
           ]
         : []),
     ],
-    lineItems: session.lines.map((line) => ({
+    lineItems: session.lines.map((line) => {
+      const lineTotal = line.unitPrice * line.quantity - line.lineDiscountAmount;
+      const effectiveUnit = line.quantity > 0 ? lineTotal / line.quantity : line.unitPrice;
+      return {
       variantId: line.variantGid,
       quantity: line.quantity,
       priceSet: {
         shopMoney: {
-          amount: line.unitPrice / 100,
+          amount: effectiveUnit / 100,
           currencyCode: session.currency,
         },
       },
       sku: line.sku ?? undefined,
       title: line.title,
-    })),
+    };
+    }),
     shippingAddress: {
       firstName: session.buyerFirstName ?? "",
       lastName: session.buyerLastName ?? "",

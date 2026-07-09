@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { getMerchantShopifySession } from "@/lib/shopify/session-store";
 import { shopifyAdminGraphQL } from "@/lib/shopify/admin";
 import { fetchVariantDilovodInvoiceNames } from "@/lib/shopify/variant-invoice-names";
+import { applyCartUnitPriceHint, type CartLinePriceHint } from "@/lib/checkout/cart-pricing";
 import { calcTotals } from "@/lib/checkout/pricing";
 import { assertTransition } from "@/lib/checkout/state-machine";
 import type { CheckoutStatus, PaymentProvider, Prisma } from "@prisma/client";
@@ -89,7 +90,7 @@ type RecommendationProductNode = {
 
 export async function resolveAndPriceLines(
   merchantId: string,
-  cartLines: Array<{ variantGid: string; quantity: number }>
+  cartLines: CartLinePriceHint[]
 ) {
   const session = await getMerchantShopifySession(merchantId);
   if (!session) throw new Error("Merchant Shopify session not found");
@@ -106,18 +107,25 @@ export async function resolveAndPriceLines(
   return cartLines.map((line, i) => {
     const variant = nodes[i];
     if (!variant) throw new Error(`Variant not found: ${line.variantGid}`);
-    const unitPrice = Math.round(parseFloat(variant.price) * 100);
-    const compareAtPrice = variant.compareAtPrice
-      ? Math.round(parseFloat(variant.compareAtPrice) * 100)
-      : null;
+    const catalogUnitPrice = Math.round(parseFloat(variant.price) * 100);
+    const cartPricing = applyCartUnitPriceHint({
+      catalogUnitPriceCents: catalogUnitPrice,
+      quantity: line.quantity,
+      unitPriceCents: line.unitPriceCents,
+      originalUnitPriceCents: line.originalUnitPriceCents,
+    });
+    const compareAtPrice =
+      cartPricing.compareAtPrice ??
+      (variant.compareAtPrice ? Math.round(parseFloat(variant.compareAtPrice) * 100) : null);
     return {
       variantGid: variant.id,
       productGid: variant.product.id,
       sku: variant.sku,
       title: `${variant.product.title} — ${variant.title}`,
       quantity: line.quantity,
-      unitPrice,
+      unitPrice: cartPricing.unitPrice,
       compareAtPrice,
+      lineDiscountAmount: cartPricing.lineDiscountAmount,
       metadata: {
         imageUrl: variant.image?.url ?? variant.product.featuredImage?.url ?? null,
         imageAlt: variant.image?.altText ?? variant.product.featuredImage?.altText ?? variant.product.title,
@@ -126,6 +134,8 @@ export async function resolveAndPriceLines(
           dilovodNames.get(variant.id)?.trim() ||
           variant.metafield?.value?.trim() ||
           null,
+        catalogUnitPriceCents: catalogUnitPrice,
+        cartUnitPriceCents: line.unitPriceCents ?? null,
       },
     };
   });
@@ -172,7 +182,7 @@ async function getCheckoutRecommendations(merchantId: string, excludedProductGid
 
 export type CreateCheckoutSessionInput = {
   merchantId: string;
-  cartLines: Array<{ variantGid: string; quantity: number }>;
+  cartLines: CartLinePriceHint[];
   buyerIp?: string;
   utm?: Record<string, string>;
   sourceUrl?: string;
@@ -196,8 +206,7 @@ export async function createCheckoutSession(input: CreateCheckoutSessionInput) {
       ...l,
       id: "",
       checkoutSessionId: "",
-      lineDiscountAmount: 0,
-      metadata: null,
+      metadata: l.metadata ?? null,
     }))
   );
 
@@ -217,7 +226,19 @@ export async function createCheckoutSession(input: CreateCheckoutSessionInput) {
         ab: input.ab ?? null,
         checkoutRecommendations: recommendations,
       },
-      lines: { create: pricedLines },
+      lines: {
+        create: pricedLines.map((line) => ({
+          variantGid: line.variantGid,
+          productGid: line.productGid,
+          sku: line.sku,
+          title: line.title,
+          quantity: line.quantity,
+          unitPrice: line.unitPrice,
+          compareAtPrice: line.compareAtPrice,
+          lineDiscountAmount: line.lineDiscountAmount,
+          metadata: line.metadata,
+        })),
+      },
     },
     include: { lines: true, merchant: true },
   });
@@ -261,6 +282,7 @@ export async function addCheckoutSessionLine(
           quantity: pricedLine.quantity,
           unitPrice: pricedLine.unitPrice,
           compareAtPrice: pricedLine.compareAtPrice,
+          lineDiscountAmount: pricedLine.lineDiscountAmount,
           metadata: pricedLine.metadata,
         },
       });

@@ -12,6 +12,8 @@ const bodySchema = z.object({
     z.object({
       variantGid: z.string(),
       quantity: z.number().int().positive(),
+      unitPriceCents: z.number().int().nonnegative().optional(),
+      originalUnitPriceCents: z.number().int().nonnegative().optional(),
     })
   ).min(1),
   utm: z.record(z.string(), z.string()).optional(),

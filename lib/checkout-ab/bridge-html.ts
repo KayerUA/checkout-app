@@ -102,9 +102,13 @@ export function renderCheckoutAbBridgePage(config: BridgePageConfig): string {
       }
 
       var lines = cart.items.map(function (item) {
+        var unit = item.final_price != null ? item.final_price : item.price;
+        var original = item.original_price != null ? item.original_price : unit;
         return {
           variantGid: 'gid://shopify/ProductVariant/' + item.variant_id,
-          quantity: item.quantity
+          quantity: item.quantity,
+          unitPriceCents: unit,
+          originalUnitPriceCents: original
         };
       });
 
