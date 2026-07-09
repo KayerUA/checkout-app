@@ -35,7 +35,7 @@ export default async function OrdersPage() {
         description="Shopify order links, payment state and fiscalization status for the latest checkout sessions."
         action={
         <form action="/api/admin/reconcile-orders" method="post">
-          <Button type="submit" variant="outline">Create missing Shopify orders</Button>
+          <Button type="submit" variant="outline">Reconcile orders & Diloshop</Button>
         </form>
         }
       />
