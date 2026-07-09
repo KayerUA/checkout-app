@@ -169,7 +169,7 @@ export function OrderSummary({
 
   return (
     <>
-      <details className="rounded-2xl border bg-card/95 p-4 shadow-sm shadow-black/5 lg:hidden">
+      <details className="rounded-2xl border bg-card/90 p-4 shadow-[0_18px_45px_rgba(28,20,16,0.07)] ring-1 ring-white/70 backdrop-blur-xl lg:hidden">
         <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
           <span className="flex items-center gap-2 font-medium">
             <Package className="size-4 text-muted-foreground" />
@@ -184,14 +184,16 @@ export function OrderSummary({
         </div>
       </details>
 
-      <Card className="hidden bg-card/95 shadow-sm shadow-black/5 lg:sticky lg:top-6 lg:flex">
+      <Card className="hidden bg-card/82 shadow-[0_28px_80px_rgba(28,20,16,0.08)] ring-white/70 backdrop-blur-2xl lg:sticky lg:top-6 lg:flex">
         <CardHeader>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Package className="size-4 text-muted-foreground" />
+            <span className="flex size-9 items-center justify-center rounded-2xl bg-secondary text-foreground ring-1 ring-black/[0.04]">
+              <Package className="size-4" />
+            </span>
             <CardTitle>Ваше замовлення</CardTitle>
           </div>
-          <Badge variant="secondary">{lines.length} поз.</Badge>
+          <Badge variant="secondary" className="rounded-full">{lines.length} поз.</Badge>
         </div>
         <CardDescription>Перевірте склад замовлення перед оплатою</CardDescription>
       </CardHeader>

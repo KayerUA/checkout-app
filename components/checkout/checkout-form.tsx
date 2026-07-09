@@ -119,14 +119,14 @@ function StepCard({
   return (
     <section
       className={cn(
-        "rounded-[1.3rem] bg-white/82 p-3 shadow-[0_6px_22px_rgba(18,18,18,0.05)] ring-1 ring-black/[0.04] backdrop-blur transition-colors sm:rounded-[1.65rem] sm:p-5",
+        "rounded-[1.3rem] bg-white/84 p-3 shadow-[0_12px_34px_rgba(18,18,18,0.055)] ring-1 ring-black/[0.045] backdrop-blur-xl transition-colors sm:rounded-[1.65rem] sm:p-5",
         active && "ring-primary/25"
       )}
     >
       <div className="mb-3 flex items-start gap-3 sm:mb-4">
         <div
           className={cn(
-            "flex size-9 shrink-0 items-center justify-center rounded-[1.05rem] bg-zinc-50 text-muted-foreground ring-1 ring-black/5 sm:size-10 sm:rounded-2xl",
+            "flex size-9 shrink-0 items-center justify-center rounded-[1.05rem] bg-zinc-50 text-muted-foreground shadow-sm ring-1 ring-black/5 sm:size-10 sm:rounded-2xl",
             active && "bg-primary text-primary-foreground"
           )}
         >
@@ -164,8 +164,8 @@ function CheckoutSheetRow({
   complete?: boolean;
 }) {
   return (
-    <div className="flex cursor-default select-none items-center gap-3 rounded-[1.15rem] bg-white/92 p-3 shadow-[0_1px_0_rgba(255,255,255,0.9)_inset,0_8px_18px_rgba(17,17,17,0.045)] ring-1 ring-black/[0.04] sm:rounded-[1.35rem]">
-      <span className="flex size-10 shrink-0 items-center justify-center rounded-[1.05rem] bg-zinc-50 text-foreground ring-1 ring-black/5 sm:rounded-2xl">
+    <div className="flex cursor-default select-none items-center gap-3 rounded-[1.15rem] bg-white/86 p-3 shadow-[0_1px_0_rgba(255,255,255,0.9)_inset,0_10px_24px_rgba(17,17,17,0.045)] ring-1 ring-black/[0.04] sm:rounded-[1.35rem]">
+      <span className="flex size-10 shrink-0 items-center justify-center rounded-[1.05rem] bg-zinc-50 text-foreground shadow-sm ring-1 ring-black/5 sm:rounded-2xl">
         <Icon className="size-4" />
       </span>
       <div className="min-w-0 flex-1">
@@ -420,14 +420,14 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
 
   return (
     <div className="relative mx-auto max-w-[430px] px-2 pb-8 [font-family:var(--font-geist-sans),ui-sans-serif,system-ui,sans-serif] sm:max-w-6xl sm:px-6 sm:pb-12">
-      <div className="pointer-events-none absolute inset-x-2 top-0 h-[420px] rounded-[2.75rem] bg-[radial-gradient(circle_at_50%_0%,rgba(255,255,255,0.98),rgba(236,224,216,0.86)_52%,rgba(245,245,244,0.2)_100%)] blur-0 lg:hidden" />
+      <div className="pointer-events-none absolute inset-x-2 top-0 h-[460px] rounded-[2.75rem] bg-[radial-gradient(circle_at_50%_0%,rgba(255,255,255,0.98),rgba(238,226,218,0.82)_54%,rgba(248,247,245,0.24)_100%)] blur-0 lg:hidden" />
       <div className="relative grid gap-6 lg:grid-cols-[minmax(0,620px)_380px] lg:justify-center lg:gap-8">
         <form
           onSubmit={handleSubmit}
-          className="order-1 overflow-hidden rounded-[2.15rem] bg-zinc-100/82 p-2 pt-3 shadow-[0_24px_80px_rgba(18,18,18,0.18)] ring-1 ring-white/70 backdrop-blur-2xl sm:rounded-[2.5rem] sm:p-5 lg:order-1"
+          className="order-1 overflow-hidden rounded-[2.15rem] bg-white/62 p-2 pt-3 shadow-[0_28px_90px_rgba(18,18,18,0.16)] ring-1 ring-white/80 backdrop-blur-2xl sm:rounded-[2.5rem] sm:p-5 lg:order-1"
           aria-busy={loading}
         >
-          <div className="mx-auto mb-3 h-1 w-9 rounded-full bg-zinc-300 sm:mb-4 sm:h-1.5 sm:w-10" />
+          <div className="mx-auto mb-3 h-1 w-9 rounded-full bg-zinc-300/80 sm:mb-4 sm:h-1.5 sm:w-10" />
           <div className="mb-4 text-center sm:mb-5">
             <p className="text-[17px] font-semibold tracking-tight sm:text-lg">Підтвердіть замовлення</p>
             <p className="mt-0.5 text-[11px] font-medium text-muted-foreground sm:mt-1 sm:text-xs">Офіційний checkout KAYER</p>
@@ -466,7 +466,9 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
               <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
                 Короткий огляд
               </p>
-              <p className="text-[11px] text-muted-foreground">Заповніть блоки нижче</p>
+              <p className="rounded-full bg-white/70 px-2 py-1 text-[11px] text-muted-foreground ring-1 ring-black/[0.04]">
+                Заповніть блоки нижче
+              </p>
             </div>
             <div className="grid gap-2.5 sm:gap-3" aria-label="Короткий огляд checkout">
               <CheckoutSheetRow
@@ -519,11 +521,11 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
             </div>
           </details>
 
-          <div className="mb-4 rounded-[1.35rem] bg-white/90 p-3 shadow-[0_14px_30px_rgba(18,18,18,0.1)] ring-1 ring-black/[0.05] backdrop-blur-xl sm:hidden">
+          <div className="mb-4 rounded-[1.35rem] bg-white/92 p-3 shadow-[0_18px_42px_rgba(18,18,18,0.12)] ring-1 ring-black/[0.05] backdrop-blur-xl sm:hidden">
             <Button
               type="submit"
               size="lg"
-              className="h-13 w-full rounded-full bg-black text-[15px] font-semibold text-white shadow-[0_14px_24px_rgba(0,0,0,0.2)] hover:bg-black/90"
+              className="h-13 w-full rounded-full bg-black text-[15px] font-semibold text-white shadow-[0_18px_30px_rgba(0,0,0,0.22)] hover:bg-black/90"
               disabled={loading || !data.shippingPayload?.branchRef}
             >
               {loading ? (

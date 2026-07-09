@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AlertCircle, CreditCard, Package, Receipt, ShoppingCart, TrendingUp } from "lucide-react";
+import { AlertCircle, CreditCard, LockKeyhole, Package, Receipt, ShoppingCart, TrendingUp } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -30,18 +30,22 @@ export default async function AdminDashboardPage({ searchParams }: AdminDashboar
     session = await requireMerchantSession();
   } catch {
     return (
-      <div className="flex min-h-[calc(100vh-4rem)] items-center justify-center py-10">
-        <div className="w-full max-w-md space-y-6">
+      <div className="relative flex min-h-[calc(100vh-4rem)] items-center justify-center py-10">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_15%,rgba(218,183,164,0.3),transparent_26rem)]" />
+        <div className="relative w-full max-w-md space-y-6">
           <div className="text-center">
+            <div className="mx-auto mb-4 flex size-14 items-center justify-center rounded-[1.35rem] bg-foreground text-background shadow-[0_18px_40px_rgba(20,20,20,0.18)]">
+              <LockKeyhole className="size-5" />
+            </div>
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
               Internal access
             </p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-tight">KAYER Checkout Admin</h1>
+            <h1 className="mt-2 text-3xl font-semibold tracking-[-0.03em]">KAYER Checkout Admin</h1>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">
               Захищена панель для платежів, доставки, рахунків і операцій KAYER UA.
             </p>
           </div>
-          <Card className="bg-card/95 shadow-xl shadow-black/5">
+          <Card className="bg-card/82 shadow-[0_30px_90px_rgba(28,20,16,0.12)] ring-white/70 backdrop-blur-2xl">
             <CardHeader>
               <CardTitle>Sign in</CardTitle>
             </CardHeader>
@@ -54,7 +58,7 @@ export default async function AdminDashboardPage({ searchParams }: AdminDashboar
                     name="password"
                     type="password"
                     autoComplete="current-password"
-                    className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none transition focus:border-ring focus:ring-3 focus:ring-ring/30"
+                    className="h-11 w-full rounded-2xl border border-input bg-background/80 px-3 text-sm outline-none transition focus:border-ring focus:ring-3 focus:ring-ring/30"
                     required
                   />
                 </label>
@@ -63,7 +67,9 @@ export default async function AdminDashboardPage({ searchParams }: AdminDashboar
                     Невірний пароль адміністратора.
                   </p>
                 ) : null}
-                <Button type="submit" className="h-10 w-full">Увійти в адмінку</Button>
+                <Button type="submit" className="h-11 w-full rounded-2xl bg-foreground text-background hover:bg-foreground/90">
+                  Увійти в адмінку
+                </Button>
               </form>
               <p className="mt-4 text-xs leading-5 text-muted-foreground">
                 Доступ тільки для внутрішньої команди. Shopify install залишено як резервний спосіб підключення.
@@ -71,7 +77,7 @@ export default async function AdminDashboardPage({ searchParams }: AdminDashboar
             </CardContent>
           </Card>
           <div className="text-center">
-            <Button nativeButton={false} variant="outline" render={<Link href="/api/auth/shopify/install" />}>
+            <Button nativeButton={false} variant="outline" className="rounded-2xl bg-white/70" render={<Link href="/api/auth/shopify/install" />}>
               Install on Shopify
             </Button>
           </div>
@@ -171,9 +177,17 @@ export default async function AdminDashboardPage({ searchParams }: AdminDashboar
         <StatCard label="Fiscal errors" value={fiscalErrors} icon={<Receipt className="size-4" />} tone={fiscalErrors ? "danger" : "default"} />
       </div>
 
-      <Card className="bg-card/95 shadow-sm shadow-black/5">
+      <Card className="bg-card/82 shadow-[0_24px_70px_rgba(28,20,16,0.07)] ring-white/70 backdrop-blur-xl">
         <CardHeader>
-          <CardTitle>Recent orders</CardTitle>
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <CardTitle>Recent orders</CardTitle>
+              <p className="mt-1 text-sm text-muted-foreground">Latest paid, pending and fiscal events.</p>
+            </div>
+            <Button nativeButton={false} variant="outline" className="hidden rounded-2xl bg-white/60 sm:inline-flex" render={<Link href="/admin/orders" />}>
+              View all
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           {recentOrders.length > 0 ? (

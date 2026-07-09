@@ -5,7 +5,7 @@ import { Mail } from "lucide-react";
 
 export function CheckoutFooter() {
   return (
-    <footer className="mt-auto border-t bg-card">
+    <footer className="mt-auto border-t bg-card/70 backdrop-blur-xl">
       <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-4 py-6 sm:flex-row sm:px-6">
         <p className="text-xs text-muted-foreground">
           © {new Date().getFullYear()} {BRAND.name}. Всі права захищені.
