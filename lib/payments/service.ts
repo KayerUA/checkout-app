@@ -45,6 +45,15 @@ async function ensureShopifyOrderCreation(checkoutSessionId: string) {
 
   try {
     await createShopifyOrderIdempotent(checkoutSessionId);
+    const { retryDiloshopForwardForCheckoutSession } = await import("@/lib/accounting/diloshop-retry");
+    await retryDiloshopForwardForCheckoutSession(checkoutSessionId).catch((error) => {
+      logWithCorrelation(
+        "warn",
+        "Diloshop forward retry failed after inline Shopify order creation",
+        { checkoutSessionId },
+        { error: error instanceof Error ? error.message : String(error) }
+      );
+    });
     return;
   } catch (error) {
     logWithCorrelation(

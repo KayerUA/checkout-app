@@ -16,6 +16,7 @@ export async function POST(request: NextRequest) {
   const { createShopifyOrderIdempotent } = await import("@/lib/shopify/order-writer");
   const { fiscalizeOrder } = await import("@/lib/fiscal/checkbox");
   const { syncNovaPoshtaDictionary } = await import("@/lib/shipping/nova-poshta");
+  const { retryMissingDiloshopForRecentPaidOrders } = await import("@/lib/accounting/diloshop-retry");
   const { prisma } = await import("@/lib/db");
   const { getPaymentAdapter } = await import("@/lib/payments");
 
@@ -37,7 +38,8 @@ export async function POST(request: NextRequest) {
           results.push({ error: String(e), sessionId: s.id });
         }
       }
-      return NextResponse.json({ results });
+      const diloshopForward = await retryMissingDiloshopForRecentPaidOrders({ take: 20 });
+      return NextResponse.json({ results, diloshopForward });
     }
     case "reconcile-payments": {
       const attempts = await prisma.paymentAttempt.findMany({

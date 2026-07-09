@@ -62,6 +62,10 @@ export async function forwardExternalCheckoutOrderToDiloshop(input: {
   order: ShopifyOrderPayload;
   shopDomain?: string | null;
   checkoutSessionId: string;
+  targets?: {
+    orders?: boolean;
+    novaPoshta?: boolean;
+  };
 }) {
   const env = getEnv();
   if (env.ACCOUNTING_PROVIDER !== "diloshop") {
@@ -70,15 +74,27 @@ export async function forwardExternalCheckoutOrderToDiloshop(input: {
 
   const secret = env.DILOSHOP_WEBHOOK_SECRET || env.SHOPIFY_WEBHOOK_SECRET || env.SHOPIFY_API_SECRET;
   const npFlowSecret = env.DILOSHOP_NP_FLOW_SECRET;
-  const ordersUrl = getOrdersWebhookUrl();
-  const npUrl = getNovaPoshtaWebhookUrl();
-  if ((!secret && !npFlowSecret) || (!ordersUrl && !npUrl)) {
+  const forwardOrders = input.targets?.orders ?? true;
+  const forwardNovaPoshta = input.targets?.novaPoshta ?? true;
+  const ordersUrl = forwardOrders ? getOrdersWebhookUrl() : null;
+  const npUrl = forwardNovaPoshta ? getNovaPoshtaWebhookUrl() : null;
+  const missingOrdersAuth = forwardOrders && !secret;
+  const missingNovaPoshtaAuth = forwardNovaPoshta && !secret && !npFlowSecret;
+
+  if (missingOrdersAuth || missingNovaPoshtaAuth || (!ordersUrl && !npUrl)) {
     await writeAutomationLog({
       shopifyOrderId: String(input.order.id),
       eventType: "diloshop/forward",
       step: "config",
       status: "WARN",
       message: "Diloshop forward is not configured",
+      metadata: {
+        targets: { orders: forwardOrders, novaPoshta: forwardNovaPoshta },
+        ordersUrl: Boolean(ordersUrl),
+        npUrl: Boolean(npUrl),
+        missingOrdersAuth,
+        missingNovaPoshtaAuth,
+      },
     });
     return { skipped: true, reason: "missing_config" as const };
   }
@@ -132,6 +148,7 @@ export async function forwardExternalCheckoutOrderToDiloshop(input: {
       status: "ERROR",
       message: "External checkout forward failed",
       metadata: {
+        targets: { orders: forwardOrders, novaPoshta: forwardNovaPoshta },
         ordersUrl: Boolean(ordersUrl),
         npUrl: Boolean(npUrl),
         errors,
@@ -147,6 +164,7 @@ export async function forwardExternalCheckoutOrderToDiloshop(input: {
     status: "OK",
     message: "External checkout order forwarded to Diloshop (Dilovod + Nova Poshta)",
     metadata: {
+      targets: { orders: forwardOrders, novaPoshta: forwardNovaPoshta },
       ordersUrl: Boolean(ordersUrl),
       npUrl: Boolean(npUrl),
     },

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCheckoutSessionByToken } from "@/lib/checkout/session-service";
 import { reconcilePendingPayments } from "@/lib/payments/reconciliation";
 import { createShopifyOrderIdempotent } from "@/lib/shopify/order-writer";
+import { retryDiloshopForwardForCheckoutSession } from "@/lib/accounting/diloshop-retry";
 
 export async function GET(
   _request: NextRequest,
@@ -27,6 +28,10 @@ export async function GET(
     await createShopifyOrderIdempotent(refreshed.id);
     const withOrder = await getCheckoutSessionByToken(token);
     if (withOrder) finalSession = withOrder;
+  }
+
+  if (finalSession.orderLink?.shopifyOrderGid) {
+    await retryDiloshopForwardForCheckoutSession(finalSession.id).catch(() => {});
   }
 
   const latestPayment = finalSession.paymentAttempts[0];
