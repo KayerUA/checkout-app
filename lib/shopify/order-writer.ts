@@ -5,6 +5,7 @@ import {
   mapCheckoutToOrderCreateInput,
   ORDER_CREATE_MUTATION,
 } from "@/lib/shopify/order-mapper";
+import { ensureSessionLinePricing } from "@/lib/checkout/session-service";
 import { enqueueJob, QUEUE_NAMES } from "@/lib/queue";
 import { logWithCorrelation } from "@/lib/logger";
 import { withIdempotency } from "@/lib/idempotency";
@@ -200,7 +201,17 @@ export async function createShopifyOrderIdempotent(checkoutSessionId: string) {
       },
     });
 
-    const paidAttempt = session.paymentAttempts.find((a) => a.status === "PAID");
+    await ensureSessionLinePricing(session.publicToken);
+    const pricedSession = await prisma.checkoutSession.findUniqueOrThrow({
+      where: { id: checkoutSessionId },
+      include: {
+        lines: true,
+        paymentAttempts: true,
+        merchant: true,
+      },
+    });
+
+    const paidAttempt = pricedSession.paymentAttempts.find((a) => a.status === "PAID");
     if (!paidAttempt) throw new Error("No successful payment attempt");
 
     const shopifySession = await getMerchantShopifySession(session.merchantId);
@@ -229,7 +240,7 @@ export async function createShopifyOrderIdempotent(checkoutSessionId: string) {
       });
     }
 
-    const orderInput = mapCheckoutToOrderCreateInput(session, paidAttempt);
+    const orderInput = mapCheckoutToOrderCreateInput(pricedSession, paidAttempt);
     const response = await shopifyAdminGraphQL<{
       data: {
         orderCreate: {
@@ -259,7 +270,7 @@ export async function createShopifyOrderIdempotent(checkoutSessionId: string) {
         body: {
           order: {
             id: Number(orderId),
-            note_attributes: buildBaseCheckoutNoteAttributes(session, paidAttempt),
+            note_attributes: buildBaseCheckoutNoteAttributes(pricedSession, paidAttempt),
           },
         },
       });
@@ -364,6 +375,7 @@ export async function createShopifyOrderIdempotent(checkoutSessionId: string) {
 
 export async function createBankInvoiceShopifyOrderIdempotent(publicToken: string) {
   return withIdempotency("shopify-bank-invoice-order", publicToken, async () => {
+    await ensureSessionLinePricing(publicToken);
     return prisma.$transaction(async (tx) => {
       const session = await tx.checkoutSession.findUniqueOrThrow({
         where: { publicToken },

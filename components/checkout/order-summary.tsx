@@ -60,6 +60,10 @@ export function OrderSummary({
   const visibleRecommendations = recommendations
     .filter((item) => !lineVariantTitles.has(`${item.title} — ${item.variantTitle}`))
     .slice(0, 3);
+  const deliveryTerms =
+    shippingAmount === 0
+      ? "Від 3 000 грн доставка безкоштовна. До 3 000 грн клієнт оплачує доставку Новій Пошті під час отримання."
+      : formatMoney(shippingAmount, currency);
 
   const itemsBlock = (
     <>
@@ -153,10 +157,12 @@ export function OrderSummary({
         <span>Підсумок</span>
         <span>{formatMoney(subtotal, currency)}</span>
       </div>
-      <div className="flex justify-between gap-4 text-sm text-muted-foreground">
-        <span>Доставка{shippingLabel ? ` · ${shippingLabel}` : ""}</span>
-        <span className="text-right">
-          {shippingAmount === 0 ? "Оплачується за умовами магазину / Нової Пошти" : formatMoney(shippingAmount, currency)}
+      <div className="flex items-start justify-between gap-5 text-sm text-muted-foreground">
+        <span className="shrink-0">Доставка</span>
+        <span className="text-right leading-5">
+          {shippingLabel ? <span className="font-medium text-foreground/75">{shippingLabel}</span> : null}
+          {shippingLabel ? <br /> : null}
+          {deliveryTerms}
         </span>
       </div>
       <Separator />

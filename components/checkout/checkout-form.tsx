@@ -88,12 +88,12 @@ function cleanDigits(value: FormDataEntryValue | null) {
 function validateCompanyBillingFields(form: FormData) {
   const companyName = String(form.get("fop_name") ?? "").trim();
   const taxId = cleanDigits(form.get("fop_tax_id"));
-  const docsEmail = String(form.get("docs_email") ?? "").trim();
+  const docsEmail = String(form.get("docs_email") || form.get("email") || "").trim();
   const docsPhone = cleanDigits(form.get("docs_phone") || form.get("phone"));
   const legalAddress = String(form.get("fop_legal_address") ?? "").trim();
 
   if (companyName.length < 3) return "Вкажіть назву компанії або ПІБ ФОП.";
-  if (![8, 10].includes(taxId.length)) return "ЄДРПОУ має містити 8 цифр, ІПН/РНОКПП — 10 цифр.";
+  if (![8, 10].includes(taxId.length)) return "ЄДРПОУ має містити 8 цифр, ІПН або РНОКПП — 10 цифр.";
   if (!docsEmail.includes("@")) return "Вкажіть коректний email для документів.";
   if (docsPhone.length < 10) return "Вкажіть коректний телефон для документів.";
   if (legalAddress.length < 8) return "Вкажіть юридичну адресу.";
@@ -179,8 +179,14 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
     buyerType === "fop_company"
       ? "Створюємо замовлення та генеруємо рахунок..."
       : "Готуємо безпечний перехід до LiqPay...";
+  const deliveryTerms =
+    "Від 3 000 грн доставка безкоштовна. До 3 000 грн оплата доставки Новій Пошті під час отримання.";
   const firstLine = data.lines[0];
   const extraLinesCount = Math.max(data.lines.length - 1, 0);
+  const contactFirstNameDefault = data.buyerFirstName ?? initialAttrs.customer_first_name ?? "";
+  const contactLastNameDefault = data.buyerLastName ?? initialAttrs.customer_last_name ?? "";
+  const contactEmailDefault = data.buyerEmail ?? initialAttrs.customer_email ?? initialAttrs.docs_email ?? "";
+  const contactPhoneDefault = data.buyerPhone ?? initialAttrs.customer_phone ?? initialAttrs.docs_phone ?? "";
 
   useEffect(() => {
     const ab = data.ab;
@@ -320,6 +326,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
 
   async function selectBranch(branch: Branch) {
     setSelectingBranchRef(branch.ref);
+    setBranchListOpen(false);
     setError(null);
     try {
       const updated = await saveSession({
@@ -441,7 +448,9 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
               ))}
               <div className="flex justify-between text-sm text-muted-foreground">
                 <span>Доставка</span>
-                <span>{data.shippingAmount === 0 ? "за умовами НП" : formatMoney(data.shippingAmount, data.currency)}</span>
+                <span className="max-w-[70%] text-right leading-5">
+                  {data.shippingAmount === 0 ? deliveryTerms : formatMoney(data.shippingAmount, data.currency)}
+                </span>
               </div>
             </div>
           </details>
@@ -478,26 +487,26 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="firstName">Ім&apos;я</Label>
-                <Input id="firstName" name="firstName" defaultValue={data.buyerFirstName ?? ""} placeholder="Олена" required />
+                <Input id="firstName" name="firstName" defaultValue={contactFirstNameDefault} placeholder="Олена" required />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="lastName">Прізвище</Label>
-                <Input id="lastName" name="lastName" defaultValue={data.buyerLastName ?? ""} placeholder="Коваленко" required />
+                <Input id="lastName" name="lastName" defaultValue={contactLastNameDefault} placeholder="Коваленко" required />
               </div>
               <div className="space-y-2 sm:col-span-2">
                 <Label htmlFor="phone">Телефон</Label>
-                <Input id="phone" name="phone" type="tel" defaultValue={data.buyerPhone ?? ""} placeholder="+380 XX XXX XX XX" required />
+                <Input id="phone" name="phone" type="tel" defaultValue={contactPhoneDefault} placeholder="+380 XX XXX XX XX" required />
               </div>
               <div className="space-y-2 sm:col-span-2">
                 <Label htmlFor="email">Email</Label>
-                <Input id="email" name="email" type="email" defaultValue={data.buyerEmail ?? ""} placeholder="email@example.com" />
+                <Input id="email" name="email" type="email" defaultValue={contactEmailDefault} placeholder="email@example.com" required={buyerType === "fop_company"} />
               </div>
 
               <div className="space-y-3 rounded-[1.2rem] border bg-secondary/35 p-3 sm:col-span-2 sm:rounded-2xl sm:p-4">
                 <div>
-                  <p className="text-sm font-medium">Покупаєте як ФОП або компанія?</p>
+                  <p className="text-sm font-medium">Потрібен рахунок для ФОП або компанії?</p>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    Для покупок від ФОП або компанії рекомендуємо оплату за рахунком з підприємницького/юридичного рахунку. Так ми зможемо автоматично підготувати документи для бухгалтерії.
+                    Оберіть цей варіант, якщо потрібен рахунок і документи для бухгалтерії. Оплата буде доступна за рахунком з підприємницького або корпоративного рахунку.
                   </p>
                 </div>
                 <div className="grid gap-2 sm:grid-cols-2">
@@ -525,36 +534,31 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
                         setPaymentPreference("bank_invoice");
                       }}
                     />
-                    ФОП / юридична особа
+                    ФОП або компанія
                   </label>
                 </div>
 
                 {buyerType === "fop_company" && (
                   <div className="grid gap-4 sm:grid-cols-2">
                     <div className="space-y-2 sm:col-span-2">
-                      <Label htmlFor="fop_name">Назва компанії / ПІБ ФОП</Label>
+                      <Label htmlFor="fop_name">Назва компанії або ПІБ ФОП</Label>
                       <Input id="fop_name" name="fop_name" defaultValue={initialAttrs.fop_name ?? ""} minLength={3} required={buyerType === "fop_company"} />
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="fop_tax_id">ЄДРПОУ / ІПН</Label>
+                      <Label htmlFor="fop_tax_id">ЄДРПОУ або ІПН</Label>
                       <Input
                         id="fop_tax_id"
                         name="fop_tax_id"
                         defaultValue={initialAttrs.fop_tax_id ?? ""}
                         inputMode="numeric"
                         pattern="(?:[0-9]{8}|[0-9]{10})"
-                        title="ЄДРПОУ має містити 8 цифр, ІПН/РНОКПП — 10 цифр"
+                        title="ЄДРПОУ має містити 8 цифр, ІПН або РНОКПП — 10 цифр"
                         required={buyerType === "fop_company"}
                       />
                     </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="docs_email">Email для документів</Label>
-                      <Input id="docs_email" name="docs_email" type="email" defaultValue={initialAttrs.docs_email ?? data.buyerEmail ?? ""} required={buyerType === "fop_company"} />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="docs_phone">Телефон</Label>
-                      <Input id="docs_phone" name="docs_phone" type="tel" defaultValue={initialAttrs.docs_phone ?? data.buyerPhone ?? ""} required={buyerType === "fop_company"} />
-                    </div>
+                    <p className="rounded-2xl bg-white/70 px-3 py-2 text-xs leading-5 text-muted-foreground ring-1 ring-black/[0.04] sm:col-span-2">
+                      Рахунок і документи надішлемо на email з контактних даних. Телефон також використаємо з блоку контактів вище.
+                    </p>
                     <div className="space-y-2 sm:col-span-2">
                       <Label htmlFor="fop_legal_address">Юридична адреса</Label>
                       <Input id="fop_legal_address" name="fop_legal_address" defaultValue={initialAttrs.fop_legal_address ?? ""} minLength={8} required={buyerType === "fop_company"} />
@@ -569,7 +573,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
             </div>
           </StepCard>
 
-          <StepCard step={2} title="Доставка" description="Нова Пошта — відділення або поштомат. Доставка оплачується за умовами магазину або при отриманні." icon={Truck} active={currentStep === 2}>
+          <StepCard step={2} title="Доставка" description={deliveryTerms} icon={Truck} active={currentStep === 2}>
             <div className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="city">Місто</Label>
@@ -717,7 +721,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
             </div>
           </StepCard>
 
-          <StepCard step={3} title="Спосіб оплати" description="Картка для фізичних осіб або рахунок для ФОП / юридичної особи" icon={CreditCard} active={currentStep === 3}>
+          <StepCard step={3} title="Спосіб оплати" description="Карткою для фізичних осіб або за рахунком для ФОП чи компанії." icon={CreditCard} active={currentStep === 3}>
             <div className="grid gap-3">
               {buyerType === "individual" ? (
                 <label className={cn("flex cursor-pointer items-center gap-4 rounded-2xl border bg-background p-4 transition-colors", paymentPreference === "card" && "border-primary bg-secondary/70")}>
@@ -734,7 +738,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
                   <span className="flex-1">
                     <span className="block text-sm font-medium">LiqPay secure checkout</span>
                     <span className="block text-xs leading-5 text-muted-foreground">
-                      Visa, Mastercard, Apple Pay. Після натискання ми відкриємо захищену сторінку LiqPay.
+                      Visa, Mastercard, Apple Pay. Після підтвердження відкриємо захищену сторінку LiqPay.
                     </span>
                   </span>
                   <ShieldCheck className="hidden size-4 text-emerald-600 sm:block" />
@@ -754,7 +758,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
                   </span>
                   <span className="flex-1">
                     <span className="block text-sm font-medium">Оплата за рахунком</span>
-                    <span className="block text-xs leading-5 text-muted-foreground">Рахунок буде створено після підтвердження і його можна буде скачати на наступній сторінці.</span>
+                    <span className="block text-xs leading-5 text-muted-foreground">Рахунок створимо після підтвердження. Його можна буде завантажити на наступній сторінці.</span>
                   </span>
                 </label>
               )}
@@ -763,7 +767,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
                   <FileText className="size-4" />
                   <AlertDescription>
                     Після натискання кнопки зачекайте: ми створимо замовлення в Shopify,
-                    згенеруємо рахунок і відкриємо сторінку, де його можна буде скачати.
+                    згенеруємо рахунок і відкриємо сторінку, де його можна буде завантажити.
                   </AlertDescription>
                 </Alert>
               )}

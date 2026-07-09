@@ -32,7 +32,7 @@ export default async function CheckoutPage({
   return (
     <>
       <CheckoutHeader logoUrl={data.theme?.logoUrl} />
-      <main className="relative flex-1 overflow-hidden py-3 sm:py-8">
+      <main className="relative flex-1 overflow-visible py-3 sm:py-8">
         <div className="pointer-events-none absolute inset-x-0 top-0 h-96 bg-[radial-gradient(circle_at_50%_0%,rgba(232,205,190,0.55),transparent_64%)]" />
         <div className="relative mx-auto mb-5 hidden max-w-6xl px-4 sm:mb-7 sm:block sm:px-6">
           <div className="relative overflow-hidden rounded-[2rem] border bg-card/70 p-4 shadow-[0_28px_80px_rgba(28,20,16,0.08)] ring-1 ring-white/70 backdrop-blur-2xl sm:p-6">
@@ -46,7 +46,7 @@ export default async function CheckoutPage({
                   Оформлення замовлення KAYER
                 </h1>
                 <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
-                  Спокійний checkout офіційного магазину: контакти, Нова Пошта, оплата.
+                  Офіційне оформлення KAYER: контактні дані, доставка Новою Поштою та безпечна оплата.
                 </p>
               </div>
               <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground sm:grid-cols-4 lg:w-[500px]">

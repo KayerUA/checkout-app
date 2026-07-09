@@ -162,10 +162,10 @@ async function sendInvoiceEmail(input: {
   const subject = `Рахунок ${input.invoiceNumber} готовий до оплати - KAYER UA`;
   const fallbackMessage = [
       "Дякуємо за замовлення.",
-      "Ви обрали оплату як ФОП / юридична особа.",
+      "Ви обрали оплату як ФОП або компанія.",
       "Будь ласка, дочекайтесь генерації рахунку і оплатіть його з підприємницького або юридичного рахунку.",
       `Призначення платежу: ${input.paymentPurpose}`,
-      input.pdfUrl ? `Скачати рахунок PDF: ${input.pdfUrl}` : "",
+      input.pdfUrl ? `Завантажити рахунок PDF: ${input.pdfUrl}` : "",
       "Після надходження коштів замовлення буде автоматично передано в обробку.",
     ]
       .filter(Boolean)

@@ -3,7 +3,21 @@ import { prisma } from "@/lib/db";
 import { getMerchantShopifySession } from "@/lib/shopify/session-store";
 import { shopifyAdminGraphQL } from "@/lib/shopify/admin";
 import { fetchVariantDilovodInvoiceNames } from "@/lib/shopify/variant-invoice-names";
-import { applyCartUnitPriceHint, type CartLinePriceHint } from "@/lib/checkout/cart-pricing";
+import {
+  applyCartUnitPriceHint,
+  cartSubtotalMatchesHint,
+  cartTotalMatchesExpected,
+  computeCartLevelDiscountCents,
+  type CartLinePriceHint,
+} from "@/lib/checkout/cart-pricing";
+import {
+  fetchPartnerPricingContext,
+  fetchPartnerPricingContextByGid,
+  normalizeCheckoutEmail,
+  partnerUnitPriceFromCatalog,
+  type PartnerPricingContext,
+} from "@/lib/checkout/partner-pricing";
+import { verifyStorefrontPricingToken } from "@/lib/checkout/storefront-pricing-token";
 import { calcTotals } from "@/lib/checkout/pricing";
 import { assertTransition } from "@/lib/checkout/state-machine";
 import type { CheckoutStatus, PaymentProvider, Prisma } from "@prisma/client";
@@ -23,6 +37,9 @@ const VARIANT_QUERY = `
           title
           handle
           featuredImage { url altText }
+          collections(first: 50) {
+            nodes { handle }
+          }
         }
         metafield(namespace: "kayer_dilovod", key: "invoice_name") {
           value
@@ -68,6 +85,7 @@ type VariantNode = {
     title: string;
     handle: string;
     featuredImage: { url: string; altText: string | null } | null;
+    collections: { nodes: Array<{ handle: string }> };
   };
 };
 
@@ -90,7 +108,11 @@ type RecommendationProductNode = {
 
 export async function resolveAndPriceLines(
   merchantId: string,
-  cartLines: CartLinePriceHint[]
+  cartLines: CartLinePriceHint[],
+  options?: {
+    partnerContext?: PartnerPricingContext | null;
+    useRetailCartHints?: boolean;
+  }
 ) {
   const session = await getMerchantShopifySession(merchantId);
   if (!session) throw new Error("Merchant Shopify session not found");
@@ -108,24 +130,44 @@ export async function resolveAndPriceLines(
     const variant = nodes[i];
     if (!variant) throw new Error(`Variant not found: ${line.variantGid}`);
     const catalogUnitPrice = Math.round(parseFloat(variant.price) * 100);
-    const cartPricing = applyCartUnitPriceHint({
-      catalogUnitPriceCents: catalogUnitPrice,
-      quantity: line.quantity,
-      unitPriceCents: line.unitPriceCents,
-      originalUnitPriceCents: line.originalUnitPriceCents,
-    });
+    const collectionHandles = (variant.product.collections?.nodes ?? []).map((node) => node.handle);
+    const partnerContext = options?.partnerContext;
+    let unitPrice = catalogUnitPrice;
+    let pricingSource: "catalog" | "partner_rules" | "shopify_cart" = "catalog";
+
+    if (partnerContext) {
+      unitPrice = partnerUnitPriceFromCatalog(
+        catalogUnitPrice,
+        partnerContext.rules,
+        collectionHandles
+      );
+      pricingSource = "partner_rules";
+    } else if (options?.useRetailCartHints !== false) {
+      const cartPricing = applyCartUnitPriceHint({
+        catalogUnitPriceCents: catalogUnitPrice,
+        quantity: line.quantity,
+        unitPriceCents: line.unitPriceCents,
+        originalUnitPriceCents: line.originalUnitPriceCents,
+      });
+      unitPrice = cartPricing.unitPrice;
+      if (cartPricing.usedCartHint) pricingSource = "shopify_cart";
+    }
+
     const compareAtPrice =
-      cartPricing.compareAtPrice ??
-      (variant.compareAtPrice ? Math.round(parseFloat(variant.compareAtPrice) * 100) : null);
+      unitPrice < catalogUnitPrice
+        ? catalogUnitPrice
+        : variant.compareAtPrice
+          ? Math.round(parseFloat(variant.compareAtPrice) * 100)
+          : catalogUnitPrice || null;
     return {
       variantGid: variant.id,
       productGid: variant.product.id,
       sku: variant.sku,
       title: `${variant.product.title} — ${variant.title}`,
       quantity: line.quantity,
-      unitPrice: cartPricing.unitPrice,
-      compareAtPrice,
-      lineDiscountAmount: cartPricing.lineDiscountAmount,
+      unitPrice,
+      compareAtPrice: compareAtPrice && compareAtPrice > unitPrice ? compareAtPrice : catalogUnitPrice || null,
+      lineDiscountAmount: 0,
       metadata: {
         imageUrl: variant.image?.url ?? variant.product.featuredImage?.url ?? null,
         imageAlt: variant.image?.altText ?? variant.product.featuredImage?.altText ?? variant.product.title,
@@ -136,6 +178,8 @@ export async function resolveAndPriceLines(
           null,
         catalogUnitPriceCents: catalogUnitPrice,
         cartUnitPriceCents: line.unitPriceCents ?? null,
+        pricingSource,
+        partnerCustomerGid: partnerContext?.customerGid ?? null,
       },
     };
   });
@@ -183,6 +227,14 @@ async function getCheckoutRecommendations(merchantId: string, excludedProductGid
 export type CreateCheckoutSessionInput = {
   merchantId: string;
   cartLines: CartLinePriceHint[];
+  storefrontCustomerEmail?: string;
+  storefrontCustomerFirstName?: string;
+  storefrontCustomerLastName?: string;
+  storefrontCustomerPhone?: string;
+  storefrontPricingToken?: string;
+  cartToken?: string;
+  cartItemsSubtotalCents?: number;
+  cartTotalCents?: number;
   buyerIp?: string;
   utm?: Record<string, string>;
   sourceUrl?: string;
@@ -195,8 +247,214 @@ export type CreateCheckoutSessionInput = {
   };
 };
 
+async function resolvePartnerContextForMerchant(input: {
+  merchantId: string;
+  shopDomain?: string;
+  storefrontPricingToken?: string;
+  storefrontCustomerEmail?: string;
+  verifiedPartnerEmail?: string | null;
+  verifiedPartnerGid?: string | null;
+  buyerEmail?: string | null;
+}): Promise<PartnerPricingContext | null> {
+  const shopifySession = await getMerchantShopifySession(input.merchantId);
+  if (!shopifySession) return null;
+
+  if (input.storefrontPricingToken) {
+    const payload = verifyStorefrontPricingToken(
+      input.storefrontPricingToken,
+      input.shopDomain ?? shopifySession.shop
+    );
+    if (payload) {
+      return fetchPartnerPricingContextByGid(shopifySession, payload.customerGid);
+    }
+  }
+
+  const verifiedGid = input.verifiedPartnerGid?.trim();
+  if (verifiedGid) {
+    return fetchPartnerPricingContextByGid(shopifySession, verifiedGid);
+  }
+
+  const verified = normalizeCheckoutEmail(input.verifiedPartnerEmail);
+  if (verified) {
+    return fetchPartnerPricingContext(shopifySession, verified);
+  }
+
+  const storefront = normalizeCheckoutEmail(input.storefrontCustomerEmail);
+  if (storefront) {
+    return fetchPartnerPricingContext(shopifySession, storefront);
+  }
+
+  const buyer = normalizeCheckoutEmail(input.buyerEmail);
+  if (buyer) {
+    return fetchPartnerPricingContext(shopifySession, buyer);
+  }
+
+  return null;
+}
+
+async function resolvePartnerContextForSession(input: {
+  merchantId: string;
+  verifiedPartnerEmail?: string | null;
+  verifiedPartnerGid?: string | null;
+  buyerEmail?: string | null;
+}): Promise<PartnerPricingContext | null> {
+  return resolvePartnerContextForMerchant({
+    merchantId: input.merchantId,
+    verifiedPartnerEmail: input.verifiedPartnerEmail,
+    verifiedPartnerGid: input.verifiedPartnerGid,
+    buyerEmail: input.buyerEmail,
+  });
+}
+
+function verifiedIdentityFromPricingToken(input: {
+  storefrontPricingToken?: string;
+  shopDomain?: string;
+}): { email: string | null; customerGid: string | null } {
+  if (!input.storefrontPricingToken) {
+    return { email: null, customerGid: null };
+  }
+  const payload = verifyStorefrontPricingToken(input.storefrontPricingToken, input.shopDomain);
+  if (!payload) return { email: null, customerGid: null };
+  return {
+    email: normalizeCheckoutEmail(payload.email) || null,
+    customerGid: payload.customerGid,
+  };
+}
+
+export async function ensureSessionLinePricing(publicToken: string) {
+  const session = await prisma.checkoutSession.findUnique({
+    where: { publicToken },
+    include: { lines: true },
+  });
+  if (!session) throw new Error("Session not found");
+  if (!session.lines.length) return;
+
+  const attrs = (session.customAttributes ?? {}) as Record<string, unknown>;
+  const verifiedPartnerEmail =
+    typeof attrs.verifiedPartnerEmail === "string" ? attrs.verifiedPartnerEmail : null;
+  const verifiedPartnerGid =
+    typeof attrs.partnerCustomerGid === "string" ? attrs.partnerCustomerGid : null;
+
+  const partnerContext = await resolvePartnerContextForSession({
+    merchantId: session.merchantId,
+    verifiedPartnerEmail,
+    verifiedPartnerGid,
+    buyerEmail: session.buyerEmail,
+  });
+
+  const repricedLines = await resolveAndPriceLines(
+    session.merchantId,
+    session.lines.map((line) => {
+      const metadata = (line.metadata ?? {}) as Record<string, unknown>;
+      return {
+        variantGid: line.variantGid,
+        quantity: line.quantity,
+        unitPriceCents:
+          typeof metadata.cartUnitPriceCents === "number" ? metadata.cartUnitPriceCents : undefined,
+        originalUnitPriceCents:
+          typeof metadata.catalogUnitPriceCents === "number"
+            ? metadata.catalogUnitPriceCents
+            : undefined,
+      };
+    }),
+    { partnerContext, useRetailCartHints: !partnerContext }
+  );
+
+  await prisma.$transaction(async (tx) => {
+    for (let i = 0; i < session.lines.length; i += 1) {
+      const existing = session.lines[i];
+      const repriced = repricedLines[i];
+      if (!repriced) continue;
+      await tx.checkoutLine.update({
+        where: { id: existing.id },
+        data: {
+          unitPrice: repriced.unitPrice,
+          compareAtPrice: repriced.compareAtPrice,
+          lineDiscountAmount: 0,
+          metadata: repriced.metadata as Prisma.InputJsonValue,
+        },
+      });
+    }
+  });
+}
+
+async function recalcCheckoutSessionTotals(publicToken: string, shippingAmount?: number) {
+  const session = await prisma.checkoutSession.findUnique({
+    where: { publicToken },
+    include: { lines: true },
+  });
+  if (!session) throw new Error("Session not found");
+
+  const shipping = shippingAmount ?? session.shippingAmount;
+  const totals = calcTotals(session.lines, shipping, session.discountAmount);
+
+  return prisma.checkoutSession.update({
+    where: { publicToken },
+    data: {
+      shippingAmount: totals.shippingAmount,
+      subtotal: totals.subtotal,
+      totalAmount: totals.totalAmount,
+      status: session.status === "DRAFT" ? "READY" : session.status,
+    },
+    include: { lines: true, merchant: true },
+  });
+}
+
 export async function createCheckoutSession(input: CreateCheckoutSessionInput) {
-  const pricedLines = await resolveAndPriceLines(input.merchantId, input.cartLines);
+  const merchant = await prisma.merchant.findUnique({ where: { id: input.merchantId } });
+  const shopDomain = merchant?.shopDomain;
+
+  const tokenIdentity = verifiedIdentityFromPricingToken({
+    storefrontPricingToken: input.storefrontPricingToken,
+    shopDomain,
+  });
+
+  const partnerContext = await resolvePartnerContextForMerchant({
+    merchantId: input.merchantId,
+    shopDomain,
+    storefrontPricingToken: input.storefrontPricingToken,
+    storefrontCustomerEmail: input.storefrontCustomerEmail,
+  });
+
+  let pricedLines = await resolveAndPriceLines(input.merchantId, input.cartLines, {
+    partnerContext,
+    useRetailCartHints: !partnerContext,
+  });
+
+  if (!partnerContext && input.cartItemsSubtotalCents != null) {
+    if (!cartSubtotalMatchesHint(pricedLines, input.cartItemsSubtotalCents)) {
+      pricedLines = await resolveAndPriceLines(input.merchantId, input.cartLines, {
+        partnerContext: null,
+        useRetailCartHints: false,
+      });
+    }
+  }
+
+  const linesSubtotal = pricedLines.reduce(
+    (sum, line) => sum + line.unitPrice * line.quantity - line.lineDiscountAmount,
+    0
+  );
+  const discountAmount = partnerContext
+    ? 0
+    : computeCartLevelDiscountCents(linesSubtotal, input.cartTotalCents);
+
+  if (
+    !partnerContext &&
+    !cartTotalMatchesExpected(linesSubtotal, discountAmount, input.cartTotalCents)
+  ) {
+    throw new Error("Cart total mismatch — refresh cart and try again");
+  }
+
+  const verifiedPartnerEmail =
+    partnerContext?.email ??
+    tokenIdentity.email ??
+    (normalizeCheckoutEmail(input.storefrontCustomerEmail) || null);
+  const verifiedPartnerGid =
+    partnerContext?.customerGid ?? tokenIdentity.customerGid ?? null;
+  const storefrontCustomerFirstName = input.storefrontCustomerFirstName?.trim() || null;
+  const storefrontCustomerLastName = input.storefrontCustomerLastName?.trim() || null;
+  const storefrontCustomerPhone = input.storefrontCustomerPhone?.trim() || null;
+
   const recommendations = await getCheckoutRecommendations(
     input.merchantId,
     pricedLines.map((line) => line.productGid).filter(Boolean) as string[]
@@ -207,7 +465,9 @@ export async function createCheckoutSession(input: CreateCheckoutSessionInput) {
       id: "",
       checkoutSessionId: "",
       metadata: l.metadata ?? null,
-    }))
+    })),
+    0,
+    discountAmount
   );
 
   const session = await prisma.checkoutSession.create({
@@ -217,14 +477,23 @@ export async function createCheckoutSession(input: CreateCheckoutSessionInput) {
       status: "DRAFT",
       sourceIdentifier: `chk_${crypto.randomUUID()}`,
       subtotal: totals.subtotal,
+      discountAmount: totals.discountAmount,
       totalAmount: totals.totalAmount,
+      buyerEmail: verifiedPartnerEmail,
+      buyerPhone: storefrontCustomerPhone,
+      buyerFirstName: storefrontCustomerFirstName,
+      buyerLastName: storefrontCustomerLastName,
       customAttributes: {
         ...(input.customAttributes ?? {}),
         utm: input.utm ?? {},
         buyerIp: input.buyerIp ?? null,
         sourceUrl: input.sourceUrl ?? null,
         ab: input.ab ?? null,
+        cartToken: input.cartToken ?? input.ab?.cartToken ?? null,
         checkoutRecommendations: recommendations,
+        verifiedPartnerEmail,
+        partnerCustomerGid: verifiedPartnerGid,
+        pricingMode: partnerContext ? "partner_rules" : "shopify_cart",
       },
       lines: {
         create: pricedLines.map((line) => ({
@@ -260,9 +529,20 @@ export async function addCheckoutSessionLine(
   }
 
   const quantity = input.quantity && input.quantity > 0 ? input.quantity : 1;
-  const [pricedLine] = await resolveAndPriceLines(session.merchantId, [
-    { variantGid: input.variantGid, quantity },
-  ]);
+  const attrs = (session.customAttributes ?? {}) as Record<string, unknown>;
+  const partnerContext = await resolvePartnerContextForSession({
+    merchantId: session.merchantId,
+    verifiedPartnerEmail:
+      typeof attrs.verifiedPartnerEmail === "string" ? attrs.verifiedPartnerEmail : null,
+    verifiedPartnerGid:
+      typeof attrs.partnerCustomerGid === "string" ? attrs.partnerCustomerGid : null,
+    buyerEmail: session.buyerEmail,
+  });
+  const [pricedLine] = await resolveAndPriceLines(
+    session.merchantId,
+    [{ variantGid: input.variantGid, quantity }],
+    { partnerContext, useRetailCartHints: !partnerContext }
+  );
   const existing = session.lines.find((line) => line.variantGid === pricedLine.variantGid);
 
   await prisma.$transaction(async (tx) => {
@@ -341,29 +621,20 @@ export async function updateCheckoutSession(
       shippingPayload: data.shippingPayload as Prisma.InputJsonValue | undefined,
     },
     include: { lines: true, merchant: true },
+  }).then(async (session) => {
+    if (data.buyerEmail) {
+      await ensureSessionLinePricing(session.publicToken);
+    }
+    return prisma.checkoutSession.findUniqueOrThrow({
+      where: { publicToken },
+      include: { lines: true, merchant: true },
+    });
   });
 }
 
 export async function repriceCheckoutSession(publicToken: string, shippingAmount?: number) {
-  const session = await prisma.checkoutSession.findUnique({
-    where: { publicToken },
-    include: { lines: true },
-  });
-  if (!session) throw new Error("Session not found");
-
-  const shipping = shippingAmount ?? session.shippingAmount;
-  const totals = calcTotals(session.lines, shipping, session.discountAmount);
-
-  return prisma.checkoutSession.update({
-    where: { publicToken },
-    data: {
-      shippingAmount: totals.shippingAmount,
-      subtotal: totals.subtotal,
-      totalAmount: totals.totalAmount,
-      status: session.status === "DRAFT" ? "READY" : session.status,
-    },
-    include: { lines: true, merchant: true },
-  });
+  await ensureSessionLinePricing(publicToken);
+  return recalcCheckoutSessionTotals(publicToken, shippingAmount);
 }
 
 export async function markAbandonedSessions(staleMinutes = 60) {

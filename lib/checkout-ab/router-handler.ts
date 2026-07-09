@@ -59,6 +59,13 @@ function resolveShopOrigin(request: NextRequest, searchParams: URLSearchParams):
 
 export async function handleCheckoutAbRouter(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
+  if (searchParams.get("resource") === "pricing-token") {
+    const { handleStorefrontPricingToken } = await import(
+      "@/lib/checkout/storefront-pricing-token-handler"
+    );
+    return handleStorefrontPricingToken(request);
+  }
+
   const isProxyRequest = searchParams.has("signature") && searchParams.has("shop");
 
   if (isProxyRequest && !verifyShopifyAppProxy(searchParams)) {

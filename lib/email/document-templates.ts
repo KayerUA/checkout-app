@@ -111,15 +111,15 @@ export function renderInvoiceEmailHtml(input: InvoiceEmailInput) {
 
   const note = `
     <div style="padding:18px;border-radius:16px;background:#fff8ee;border:1px solid #f0dfc5;color:#594b3b;font-size:14px;line-height:1.6;">
-      Оплатіть рахунок з підприємницького або юридичного рахунку. Після надходження коштів замовлення автоматично перейде в обробку.
+      Оплатіть рахунок з підприємницького або корпоративного рахунку. Після надходження коштів замовлення автоматично перейде в обробку.
     </div>
   `;
 
   return emailShell({
     preheader: `Рахунок ${input.invoiceNumber} готовий до оплати.`,
     title: `Рахунок ${input.invoiceNumber}`,
-    intro: "Дякуємо за замовлення. Ми підготували рахунок для оплати від ФОП або юридичної особи.",
-    ctaLabel: "Скачати рахунок PDF",
+    intro: "Дякуємо за замовлення. Ми підготували рахунок для оплати від ФОП або компанії.",
+    ctaLabel: "Завантажити рахунок PDF",
     ctaUrl: input.pdfUrl,
     detailsHtml: details,
     noteHtml: note,
@@ -132,8 +132,8 @@ export function renderInvoiceEmailText(input: InvoiceEmailInput) {
     `Рахунок ${input.invoiceNumber} готовий до оплати.`,
     input.orderName ? `Замовлення: ${input.orderName}` : "",
     `Призначення платежу: ${input.paymentPurpose}`,
-    input.pdfUrl ? `Скачати рахунок PDF: ${input.pdfUrl}` : "",
-    "Оплатіть рахунок з підприємницького або юридичного рахунку.",
+    input.pdfUrl ? `Завантажити рахунок PDF: ${input.pdfUrl}` : "",
+    "Оплатіть рахунок з підприємницького або корпоративного рахунку.",
     "Після надходження коштів замовлення автоматично перейде в обробку.",
   ]
     .filter(Boolean)

@@ -112,12 +112,30 @@ export function renderCheckoutAbBridgePage(config: BridgePageConfig): string {
         };
       });
 
+      var pricingAuth = null;
+      try {
+        var pricingRes = await fetch('/apps/checkout-ab?resource=pricing-token', { credentials: 'same-origin' });
+        if (pricingRes.ok) pricingAuth = await pricingRes.json();
+      } catch (e) {}
+
       var sessionRes = await fetch(config.checkoutApiUrl + '/api/public/checkout-sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           shopDomain: config.shopDomain,
           cartLines: lines,
+          storefrontCustomerEmail:
+            (cart.attributes && (cart.attributes.customer_email || cart.attributes.docs_email)) || undefined,
+          storefrontCustomerFirstName:
+            (cart.attributes && cart.attributes.customer_first_name) || undefined,
+          storefrontCustomerLastName:
+            (cart.attributes && cart.attributes.customer_last_name) || undefined,
+          storefrontCustomerPhone:
+            (cart.attributes && (cart.attributes.customer_phone || cart.attributes.docs_phone)) || undefined,
+          storefrontPricingToken: pricingAuth && pricingAuth.pricingToken,
+          cartToken: cart.token,
+          cartItemsSubtotalCents: cart.items_subtotal_price,
+          cartTotalCents: cart.total_price,
           sourceUrl: window.location.href,
           customAttributes: {
             buyer_type: (cart.attributes && cart.attributes.buyer_type) || 'individual',
@@ -130,7 +148,11 @@ export function renderCheckoutAbBridgePage(config: BridgePageConfig): string {
             fop_legal_address: (cart.attributes && cart.attributes.fop_legal_address) || '',
             docs_email: (cart.attributes && cart.attributes.docs_email) || '',
             docs_phone: (cart.attributes && cart.attributes.docs_phone) || '',
-            accounting_comment: (cart.attributes && cart.attributes.accounting_comment) || ''
+            accounting_comment: (cart.attributes && cart.attributes.accounting_comment) || '',
+            customer_email: (cart.attributes && cart.attributes.customer_email) || '',
+            customer_first_name: (cart.attributes && cart.attributes.customer_first_name) || '',
+            customer_last_name: (cart.attributes && cart.attributes.customer_last_name) || '',
+            customer_phone: (cart.attributes && cart.attributes.customer_phone) || ''
           },
           ab: {
             experimentId: config.experimentId,

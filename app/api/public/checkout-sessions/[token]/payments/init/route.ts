@@ -24,7 +24,7 @@ export async function POST(
     const attrs = (session?.customAttributes ?? {}) as Record<string, unknown>;
     if (attrs.buyer_type === "fop_company") {
       return NextResponse.json(
-        { error: "Для ФОП / юридичної особи доступна тільки оплата за рахунком" },
+        { error: "Для ФОП або компанії доступна тільки оплата за рахунком" },
         { status: 400 }
       );
     }

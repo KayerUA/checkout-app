@@ -13,6 +13,9 @@
       audienceMode: "all",
       customerTags: [],
       customerEmail: "",
+      customerFirstName: "",
+      customerLastName: "",
+      customerPhone: "",
       allowedCustomerTags: [],
       allowedCustomerEmails: [],
       queryParam: "custom_checkout",
@@ -239,6 +242,10 @@
             docs_email: "",
             docs_phone: "",
             accounting_comment: "",
+            customer_email: "",
+            customer_first_name: "",
+            customer_last_name: "",
+            customer_phone: "",
           },
         }),
       }).catch(function () {});
@@ -275,10 +282,14 @@
       fop_tax_id: cartAttributes.fop_tax_id || getFieldValue("fop_tax_id") || "",
       fop_legal_address:
         cartAttributes.fop_legal_address || getFieldValue("fop_legal_address") || "",
-      docs_email: cartAttributes.docs_email || getFieldValue("docs_email") || "",
-      docs_phone: cartAttributes.docs_phone || getFieldValue("docs_phone") || "",
+      docs_email: cartAttributes.docs_email || config.customerEmail || "",
+      docs_phone: cartAttributes.docs_phone || config.customerPhone || "",
       accounting_comment:
         cartAttributes.accounting_comment || getFieldValue("accounting_comment") || "",
+      customer_email: cartAttributes.customer_email || config.customerEmail || "",
+      customer_first_name: cartAttributes.customer_first_name || config.customerFirstName || "",
+      customer_last_name: cartAttributes.customer_last_name || config.customerLastName || "",
+      customer_phone: cartAttributes.customer_phone || config.customerPhone || "",
     };
   }
 
@@ -309,18 +320,17 @@
     block.style.cssText =
       "margin:16px 0;padding:16px;border:1px solid #d9d9d9;border-radius:8px;background:#fff;color:#111;";
     block.innerHTML =
-      '<div style="font-weight:600;margin-bottom:8px;">Покупаєте як ФОП або компанія?</div>' +
+      '<div style="font-weight:600;margin-bottom:8px;">Потрібен рахунок для ФОП або компанії?</div>' +
+      '<p style="font-size:12px;line-height:1.45;color:#666;margin:0 0 10px;">Оберіть цей варіант, якщо потрібен рахунок і документи для бухгалтерії.</p>' +
       '<label style="display:block;margin:8px 0;"><input type="radio" name="buyer_type" value="individual" checked> Фізична особа</label>' +
-      '<label style="display:block;margin:8px 0;"><input type="radio" name="buyer_type" value="fop_company"> ФОП / юридична особа</label>' +
+      '<label style="display:block;margin:8px 0;"><input type="radio" name="buyer_type" value="fop_company"> ФОП або компанія</label>' +
       '<div data-kayer-fop-fields style="display:none;margin-top:12px;">' +
-      '<input name="fop_name" placeholder="Назва компанії / ПІБ ФОП" minlength="3" style="box-sizing:border-box;width:100%;margin:6px 0;padding:10px;border:1px solid #ccc;border-radius:6px;">' +
-      '<input name="fop_tax_id" inputmode="numeric" pattern="(?:[0-9]{8}|[0-9]{10})" placeholder="ЄДРПОУ / ІПН" style="box-sizing:border-box;width:100%;margin:6px 0;padding:10px;border:1px solid #ccc;border-radius:6px;">' +
-      '<input name="docs_email" type="email" placeholder="Email для документів" style="box-sizing:border-box;width:100%;margin:6px 0;padding:10px;border:1px solid #ccc;border-radius:6px;">' +
-      '<input name="docs_phone" type="tel" placeholder="Телефон" style="box-sizing:border-box;width:100%;margin:6px 0;padding:10px;border:1px solid #ccc;border-radius:6px;">' +
+      '<input name="fop_name" placeholder="Назва компанії або ПІБ ФОП" minlength="3" style="box-sizing:border-box;width:100%;margin:6px 0;padding:10px;border:1px solid #ccc;border-radius:6px;">' +
+      '<input name="fop_tax_id" inputmode="numeric" pattern="(?:[0-9]{8}|[0-9]{10})" placeholder="ЄДРПОУ або ІПН" style="box-sizing:border-box;width:100%;margin:6px 0;padding:10px;border:1px solid #ccc;border-radius:6px;">' +
       '<input name="fop_legal_address" placeholder="Юридична адреса" style="box-sizing:border-box;width:100%;margin:6px 0;padding:10px;border:1px solid #ccc;border-radius:6px;">' +
       '<input name="accounting_comment" placeholder="Коментар для бухгалтерії" style="box-sizing:border-box;width:100%;margin:6px 0;padding:10px;border:1px solid #ccc;border-radius:6px;">' +
       '<input type="hidden" name="payment_preference" value="bank_invoice">' +
-      '<p style="font-size:12px;line-height:1.4;color:#555;margin:8px 0 0;">Для покупок від ФОП або компанії доступна оплата тільки за рахунком з підприємницького/юридичного рахунку.</p>' +
+      '<p style="font-size:12px;line-height:1.4;color:#555;margin:8px 0 0;">Рахунок і документи надішлемо на email з контактних даних. Оплата буде доступна за рахунком з підприємницького або корпоративного рахунку.</p>' +
       "</div>";
 
     target.insertBefore(block, target.firstChild);

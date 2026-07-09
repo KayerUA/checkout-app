@@ -47,6 +47,9 @@ Partner Dashboard → App setup → App proxy:
     allowedCustomerTags: ["custom_checkout_beta"],
     customerTags: [{% if customer %}{% for tag in customer.tags %}"{{ tag | escape }}"{% unless forloop.last %},{% endunless %}{% endfor %}{% endif %}],
     customerEmail: {% if customer %}"{{ customer.email | escape }}"{% else %}""{% endif %},
+    customerFirstName: {% if customer %}"{{ customer.first_name | escape }}"{% else %}""{% endif %},
+    customerLastName: {% if customer %}"{{ customer.last_name | escape }}"{% else %}""{% endif %},
+    customerPhone: {% if customer and customer.phone %}"{{ customer.phone | escape }}"{% else %}""{% endif %},
     showB2BBlock: true
   };
 </script>

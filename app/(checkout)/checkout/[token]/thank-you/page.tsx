@@ -107,7 +107,7 @@ export default async function ThankYouPage({
             </h1>
             <p className="text-sm text-muted-foreground">
               {isBankInvoice
-                ? "Дочекайтесь генерації рахунку на цій сторінці. Ми також надішлемо invoice email через Shopify на email для документів. Замовлення піде в обробку після надходження коштів з підприємницького або юридичного рахунку."
+                ? "Дочекайтесь генерації рахунку на цій сторінці. Ми також надішлемо його на email для документів. Замовлення перейде в обробку після надходження коштів з підприємницького або корпоративного рахунку."
                 : isLiqPayPending
                   ? "LiqPay повернув вас у checkout. Зачекайте кілька секунд, поки ми підтвердимо оплату та створимо замовлення в Shopify."
                 : "Ми вже отримали ваше замовлення і незабаром почнемо обробку."}
@@ -121,7 +121,7 @@ export default async function ThankYouPage({
                 <CardTitle className="text-base">Деталі замовлення</CardTitle>
               </div>
               <CardDescription>
-                {isBankInvoice ? "Оплата за рахунком для ФОП / юридичної особи" : "Підтвердження надіслано на email"}
+                {isBankInvoice ? "Оплата за рахунком для ФОП або компанії" : "Підтвердження надіслано на email"}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3 text-sm">
@@ -181,7 +181,7 @@ export default async function ThankYouPage({
                       <p className="font-medium">Генеруємо рахунок</p>
                       <p className="mt-1 text-muted-foreground">
                         Зачекайте кілька секунд. Коли рахунок буде готовий, тут з&apos;явиться
-                        посилання для скачування PDF.
+                        посилання для завантаження PDF.
                       </p>
                     </div>
                   )}
@@ -189,7 +189,7 @@ export default async function ThankYouPage({
                   <div className="rounded-2xl bg-secondary/60 p-4 text-sm leading-relaxed">
                     <p className="font-medium">Що далі</p>
                     <p className="mt-1 text-muted-foreground">
-                      Скачайте PDF-рахунок і оплатіть його саме з рахунку ФОП або юридичної особи. Після автоматичної звірки банк-платежу ми позначимо замовлення як готове до обробки.
+                      Завантажте PDF-рахунок і оплатіть його з рахунку ФОП або компанії. Після автоматичної звірки банківського платежу ми передамо замовлення в обробку.
                     </p>
                   </div>
                   {invoiceReady && (
@@ -206,7 +206,7 @@ export default async function ThankYouPage({
                         />
                       }
                     >
-                      Скачати рахунок PDF
+                      Завантажити рахунок PDF
                       <ExternalLink className="size-4" />
                     </Button>
                   )}

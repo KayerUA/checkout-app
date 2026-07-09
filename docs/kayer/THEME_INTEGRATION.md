@@ -55,6 +55,10 @@ window.KayerCheckout.redirectToCheckout();
   window.KAYER_CHECKOUT_CONFIG = {
     checkoutApiUrl: 'https://checkout.kayer.ua',
     shopDomain: 'kayer.myshopify.com',
+    customerEmail: {% if customer %}'{{ customer.email | escape }}'{% else %}''{% endif %},
+    customerFirstName: {% if customer %}'{{ customer.first_name | escape }}'{% else %}''{% endif %},
+    customerLastName: {% if customer %}'{{ customer.last_name | escape }}'{% else %}''{% endif %},
+    customerPhone: {% if customer and customer.phone %}'{{ customer.phone | escape }}'{% else %}''{% endif %},
   };
 </script>
 <script src="https://checkout.kayer.ua/kayer-checkout.js" defer></script>
@@ -63,7 +67,7 @@ window.KayerCheckout.redirectToCheckout();
 ## Как это работает
 
 1. Скрипт читает `/cart.js` на kayer.ua
-2. Скрипт добавляет на cart/cart drawer блок “Покупаєте як ФОП або компанія?” для клиентов, которым включён custom/router audience
+2. Скрипт добавляет на cart/cart drawer блок “Потрібен рахунок для ФОП або компанії?” для клиентов, которым включён custom/router audience
 3. Для ФОП/компаний сохраняет `buyer_type`, `payment_preference` и реквизиты в Shopify cart attributes через `/cart/update.js`
 4. POST `https://checkout.kayer.ua/api/public/checkout-sessions`
 5. Редирект на `/checkout/{token}`
@@ -83,7 +87,11 @@ Cart/order attributes:
 - `fop_name`
 - `fop_tax_id`
 - `fop_legal_address`
-- `docs_email`
+- `docs_email` (автоматично береться з контактного email)
+- `customer_email`
+- `customer_first_name`
+- `customer_last_name`
+- `customer_phone`
 - `accounting_comment`
 
 ## Отладка
