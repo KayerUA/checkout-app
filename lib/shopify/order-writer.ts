@@ -476,6 +476,28 @@ export async function createBankInvoiceShopifyOrderIdempotent(publicToken: strin
         merchantId: session.merchantId,
       });
 
+      try {
+        const orderResponse = (await shopifyAdminREST(shopifySession, `orders/${orderId}.json`)) as {
+          order: import("@/lib/b2b/types").ShopifyOrderPayload;
+        };
+        const { forwardExternalCheckoutOrderToDiloshop } = await import(
+          "@/lib/accounting/diloshop-forward"
+        );
+        await forwardExternalCheckoutOrderToDiloshop({
+          order: orderResponse.order,
+          shopDomain: shopifySession.shop,
+          checkoutSessionId: session.id,
+          targets: { orders: true, novaPoshta: true },
+        });
+      } catch (error) {
+        logWithCorrelation(
+          "warn",
+          "Diloshop forward failed after B2B bank invoice order create",
+          { checkoutSessionId: session.id, shopifyOrderGid: created.id },
+          { error: error instanceof Error ? error.message : String(error) }
+        );
+      }
+
       return orderLink;
     });
   });
