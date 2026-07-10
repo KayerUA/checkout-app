@@ -21,3 +21,15 @@ export function resolveInvoiceLineTitle(line: {
   const dilovodName = line.dilovodInvoiceName?.trim();
   return dilovodName || line.title;
 }
+
+export function buildCheckoutLineTitle(input: {
+  productTitle: string;
+  variantTitle?: string | null;
+}): string {
+  const productTitle = input.productTitle.trim();
+  const variantTitle = input.variantTitle?.trim();
+  if (!variantTitle || variantTitle.toLowerCase() === "default title") {
+    return productTitle;
+  }
+  return `${productTitle} — ${variantTitle}`;
+}

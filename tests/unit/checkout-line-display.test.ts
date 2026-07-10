@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { resolveLineInvoiceTitle } from "@/lib/shopify/variant-invoice-names";
 import {
+  buildCheckoutLineTitle,
   getCheckoutLineInvoiceTitle,
   resolveInvoiceLineTitle,
 } from "@/lib/checkout/line-display";
@@ -41,5 +42,23 @@ describe("checkout line display", () => {
         dilovodNamesBySku: new Map([["LUX-GEL-001", "гель для нігтів -грунтівка LUXIO Base BASE"]]),
       })
     ).toBe("гель для нігтів -грунтівка LUXIO Base BASE");
+  });
+
+  it("does not show Shopify default variant title to customers", () => {
+    expect(
+      buildCheckoutLineTitle({
+        productTitle: "Luxio Base",
+        variantTitle: "Default Title",
+      })
+    ).toBe("Luxio Base");
+  });
+
+  it("keeps meaningful variant titles", () => {
+    expect(
+      buildCheckoutLineTitle({
+        productTitle: "Luxio Colour",
+        variantTitle: "Delicate",
+      })
+    ).toBe("Luxio Colour — Delicate");
   });
 });

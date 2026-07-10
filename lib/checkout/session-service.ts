@@ -18,6 +18,7 @@ import {
   type PartnerPricingContext,
 } from "@/lib/checkout/partner-pricing";
 import { verifyStorefrontPricingToken } from "@/lib/checkout/storefront-pricing-token";
+import { buildCheckoutLineTitle } from "@/lib/checkout/line-display";
 import { calcTotals } from "@/lib/checkout/pricing";
 import { assertTransition } from "@/lib/checkout/state-machine";
 import type { CheckoutStatus, PaymentProvider, Prisma } from "@prisma/client";
@@ -163,7 +164,10 @@ export async function resolveAndPriceLines(
       variantGid: variant.id,
       productGid: variant.product.id,
       sku: variant.sku,
-      title: `${variant.product.title} — ${variant.title}`,
+      title: buildCheckoutLineTitle({
+        productTitle: variant.product.title,
+        variantTitle: variant.title,
+      }),
       quantity: line.quantity,
       unitPrice,
       compareAtPrice: compareAtPrice && compareAtPrice > unitPrice ? compareAtPrice : catalogUnitPrice || null,

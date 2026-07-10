@@ -1,4 +1,5 @@
 import { formatMoney } from "@/lib/checkout/pricing";
+import { buildCheckoutLineTitle } from "@/lib/checkout/line-display";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -62,7 +63,7 @@ export function OrderSummary({
     .slice(0, 3);
   const deliveryTerms =
     shippingAmount === 0
-      ? "Від 3 000 грн доставка безкоштовна. До 3 000 грн клієнт оплачує доставку Новій Пошті під час отримання."
+      ? "Якщо замовлення відповідає умовам безкоштовної доставки, її оплатить магазин. В іншому разі клієнт оплачує доставку Новій Пошті під час отримання."
       : formatMoney(shippingAmount, currency);
 
   const itemsBlock = (
@@ -126,7 +127,12 @@ export function OrderSummary({
                     )}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="line-clamp-2 text-xs font-medium leading-snug">{item.title}</p>
+                    <p className="line-clamp-2 text-xs font-medium leading-snug">
+                      {buildCheckoutLineTitle({
+                        productTitle: item.title,
+                        variantTitle: item.variantTitle,
+                      })}
+                    </p>
                     <p className="mt-1 text-xs text-muted-foreground">
                       {formatMoney(item.unitPrice, currency)}
                     </p>

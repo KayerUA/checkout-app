@@ -180,7 +180,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
       ? "Створюємо замовлення та генеруємо рахунок..."
       : "Готуємо безпечний перехід до LiqPay...";
   const deliveryTerms =
-    "Від 3 000 грн доставка безкоштовна. До 3 000 грн оплата доставки Новій Пошті під час отримання.";
+    "Якщо замовлення відповідає умовам безкоштовної доставки, її оплатить магазин. В іншому разі доставку оплачуєте Новій Пошті під час отримання.";
   const firstLine = data.lines[0];
   const extraLinesCount = Math.max(data.lines.length - 1, 0);
   const contactFirstNameDefault = data.buyerFirstName ?? initialAttrs.customer_first_name ?? "";
