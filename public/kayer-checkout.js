@@ -86,7 +86,6 @@
         'a[href$="/checkout"]',
         'a[href*="/checkout"]',
         'a[href*="/checkouts/"]',
-        'a[href*="checkout"]',
         'a[href*="chekly-app.com"]',
         'button[class*="checkout"]',
         'a[class*="checkout"]',
@@ -110,6 +109,9 @@
     var className = normalize(el.className);
     var id = normalize(el.id);
     var name = normalize(el.getAttribute && el.getAttribute("name"));
+    var isButtonLike =
+      el.matches &&
+      el.matches("button, input, [role='button'], [data-checkout], [data-kayer-checkout], [data-chekly]");
     return (
       href.indexOf("checkout") >= 0 ||
       href.indexOf("chekly") >= 0 ||
@@ -122,8 +124,8 @@
       id.indexOf("checkout") >= 0 ||
       id.indexOf("chekly") >= 0 ||
       name === "checkout" ||
-      text.indexOf("checkout") >= 0 ||
-      text.indexOf("check out") >= 0 ||
+      (isButtonLike && text.indexOf("checkout") >= 0) ||
+      (isButtonLike && text.indexOf("check out") >= 0) ||
       text.indexOf("оформити") >= 0 ||
       text.indexOf("оформлен") >= 0 ||
       text.indexOf("замовити") >= 0
@@ -153,7 +155,6 @@
       'a[href$="/checkout"]',
       'a[href*="/checkout"]',
       'a[href*="/checkouts/"]',
-      'a[href*="checkout"]',
       'a[href*="chekly-app.com"]',
       'button[class*="checkout"]',
       'a[class*="checkout"]',
