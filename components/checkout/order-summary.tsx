@@ -190,8 +190,8 @@ export function OrderSummary({
         </div>
       </details>
 
-      <Card className="hidden bg-card/82 shadow-[0_28px_80px_rgba(28,20,16,0.08)] ring-white/70 backdrop-blur-2xl lg:flex">
-        <CardHeader>
+      <Card className="hidden max-h-[calc(100vh-3rem)] bg-card/82 shadow-[0_28px_80px_rgba(28,20,16,0.08)] ring-white/70 backdrop-blur-2xl lg:flex">
+        <CardHeader className="shrink-0">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="flex size-9 items-center justify-center rounded-2xl bg-secondary text-foreground ring-1 ring-black/[0.04]">
@@ -204,11 +204,11 @@ export function OrderSummary({
         <CardDescription>Перевірте склад замовлення перед оплатою</CardDescription>
       </CardHeader>
 
-      <CardContent className="space-y-4">
+      <CardContent className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-2">
         {itemsBlock}
       </CardContent>
 
-      <CardFooter className="flex-col items-stretch gap-3 border-t">
+      <CardFooter className="shrink-0 flex-col items-stretch gap-3 border-t">
         {totalsBlock}
       </CardFooter>
     </Card>

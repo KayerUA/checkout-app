@@ -825,7 +825,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
           </div>
         </form>
 
-        <div className="order-2 hidden self-start lg:sticky lg:top-6 lg:block lg:max-h-[calc(100vh-3rem)] lg:overflow-y-auto lg:pb-2">
+        <div className="order-2 hidden self-start lg:sticky lg:top-6 lg:block lg:pb-2">
           <OrderSummary
             lines={data.lines}
             currency={data.currency}
