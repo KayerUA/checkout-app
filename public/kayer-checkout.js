@@ -124,10 +124,7 @@
       text.indexOf("check out") >= 0 ||
       text.indexOf("оформити") >= 0 ||
       text.indexOf("оформлен") >= 0 ||
-      text.indexOf("замовити") >= 0 ||
-      text.indexOf("замовлення") >= 0 ||
-      text.indexOf("оплат") >= 0 ||
-      text.indexOf("сплат") >= 0
+      text.indexOf("замовити") >= 0
     );
   }
 
@@ -302,7 +299,6 @@
       var el = path[i];
       if (!el || el === window || el === document) continue;
       if (findLikelyCheckoutTrigger(el)) return true;
-      if (el.matches && el.matches("form") && looksLikeCheckoutElement(el)) return true;
     }
     return false;
   }
@@ -541,7 +537,7 @@
   function interceptCheckoutEvent(event) {
     if (!isAudienceEligible()) return;
     var target = findLikelyCheckoutTrigger(event.target);
-    if (!target && (!isForcedCustomCheckout() || !eventLooksLikeCheckout(event))) return;
+    if (!target) return;
 
     event.preventDefault();
     event.stopPropagation();
