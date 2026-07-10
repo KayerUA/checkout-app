@@ -12,6 +12,7 @@
       audienceMode: "all",
       customerTags: [],
       customerEmail: "",
+      customerId: "",
       customerFirstName: "",
       customerLastName: "",
       customerPhone: "",
@@ -25,6 +26,7 @@
   );
   var FORCE_STORAGE_KEY = "kayer_force_checkout";
   var LEGACY_FORCE_STORAGE_KEY = "kayer_force_custom_checkout";
+  var PENDING_CLEAR_STORAGE_KEY = "kayer_pending_checkout_clear";
 
   function asList(value) {
     if (Array.isArray(value)) return value;
@@ -237,48 +239,126 @@
     } catch {}
   }
 
+  async function clearStorefrontCart() {
+    var root = shopifyRoot();
+    var clearRes = await fetch(root + "cart/clear.js", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+    });
+    var cart = await clearRes.json().catch(function () {
+      return null;
+    });
+
+    await fetch(root + "cart/update.js", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        attributes: {
+          buyer_type: "",
+          payment_preference: "",
+          fop_name: "",
+          fop_tax_id: "",
+          fop_legal_address: "",
+          docs_email: "",
+          docs_phone: "",
+          accounting_comment: "",
+        },
+      }),
+    }).catch(function () {});
+
+    window.dispatchEvent(new CustomEvent("cart:refresh", { detail: { cart: cart } }));
+    window.dispatchEvent(new CustomEvent("cart:updated", { detail: { cart: cart } }));
+    document.dispatchEvent(new CustomEvent("cart:refresh", { detail: { cart: cart } }));
+    document.dispatchEvent(new CustomEvent("cart:updated", { detail: { cart: cart } }));
+    return cart;
+  }
+
   async function clearCartIfRequested() {
     var params = new URLSearchParams(window.location.search);
     if (params.get("kayer_clear_cart") !== "1") return;
     if (window.__kayerCartClearHandled) return;
     window.__kayerCartClearHandled = true;
 
-    var root = shopifyRoot();
     try {
-      var clearRes = await fetch(root + "cart/clear.js", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-      });
-      var cart = await clearRes.json().catch(function () {
-        return null;
-      });
-
-      await fetch(root + "cart/update.js", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          attributes: {
-            buyer_type: "",
-            payment_preference: "",
-            fop_name: "",
-            fop_tax_id: "",
-            fop_legal_address: "",
-            docs_email: "",
-            docs_phone: "",
-            accounting_comment: "",
-          },
-        }),
-      }).catch(function () {});
-
-      window.dispatchEvent(new CustomEvent("cart:refresh", { detail: { cart: cart } }));
-      window.dispatchEvent(new CustomEvent("cart:updated", { detail: { cart: cart } }));
-      document.dispatchEvent(new CustomEvent("cart:refresh", { detail: { cart: cart } }));
-      document.dispatchEvent(new CustomEvent("cart:updated", { detail: { cart: cart } }));
+      await clearStorefrontCart();
       removeCartClearParams();
     } catch (err) {
       console.warn("[KayerCheckout] cart clear failed", err);
+    }
+  }
+
+  function rememberCheckoutForCartClear(publicToken, cartToken) {
+    if (!publicToken) return;
+    try {
+      window.localStorage.setItem(
+        PENDING_CLEAR_STORAGE_KEY,
+        JSON.stringify({
+          publicToken: publicToken,
+          cartToken: cartToken || "",
+          ts: Date.now(),
+        })
+      );
+    } catch {}
+  }
+
+  function forgetCheckoutForCartClear() {
+    try {
+      window.localStorage.removeItem(PENDING_CLEAR_STORAGE_KEY);
+    } catch {}
+  }
+
+  function readCheckoutForCartClear() {
+    try {
+      var raw = window.localStorage.getItem(PENDING_CLEAR_STORAGE_KEY);
+      if (!raw) return null;
+      var parsed = JSON.parse(raw);
+      if (!parsed || !parsed.publicToken) return null;
+      if (Date.now() - Number(parsed.ts || 0) > 7 * 24 * 60 * 60 * 1000) {
+        forgetCheckoutForCartClear();
+        return null;
+      }
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  function checkoutIsCompleteForCartClear(status) {
+    if (!status) return false;
+    return (
+      status.status === "PAID" ||
+      status.status === "COMPLETED" ||
+      status.paymentStatus === "PAID" ||
+      Boolean(status.orderLink && status.orderLink.shopifyOrderGid)
+    );
+  }
+
+  async function clearCompletedCheckoutCart() {
+    if (window.__kayerCompletedCartClearChecked) return;
+    window.__kayerCompletedCartClearChecked = true;
+    var pending = readCheckoutForCartClear();
+    if (!pending) return;
+
+    try {
+      var statusRes = await fetch(
+        config.checkoutApiUrl + "/api/public/checkout-sessions/" + encodeURIComponent(pending.publicToken) + "/status",
+        { credentials: "omit" }
+      );
+      if (statusRes.status === 404) {
+        forgetCheckoutForCartClear();
+        return;
+      }
+      if (!statusRes.ok) return;
+      var status = await statusRes.json().catch(function () {
+        return null;
+      });
+      if (!checkoutIsCompleteForCartClear(status)) return;
+      await clearStorefrontCart();
+      forgetCheckoutForCartClear();
+    } catch (err) {
+      console.warn("[KayerCheckout] completed checkout cart clear failed", err);
     }
   }
 
@@ -303,12 +383,27 @@
     return false;
   }
 
+  function formatCheckoutError(err) {
+    var message = err && err.message ? String(err.message) : "Checkout session failed";
+    if (message.indexOf("Cart total mismatch") >= 0) {
+      return "Ціни в кошику змінились. Оновіть сторінку кошика і спробуйте ще раз.";
+    }
+    if (message.indexOf("Merchant Shopify session not found") >= 0) {
+      return "Checkout тимчасово недоступний. Спробуйте через кілька хвилин.";
+    }
+    if (message.indexOf("Variant not found") >= 0) {
+      return "У кошику застарілий товар. Оновіть кошик і спробуйте ще раз.";
+    }
+    return message;
+  }
+
   function handleRedirectError(err, trigger) {
     window.__kayerRedirectInProgress = false;
     console.error("[KayerCheckout]", err);
     if (trigger && trigger.disabled !== undefined) trigger.disabled = false;
+    var message = formatCheckoutError(err);
     if (isForcedCustomCheckout()) {
-      alert("Не вдалося відкрити checkout KAYER. Оновіть кошик і спробуйте ще раз.");
+      alert("Не вдалося відкрити checkout KAYER.\n" + message);
       return;
     }
     window.location.href = config.fallbackUrl;
@@ -365,6 +460,7 @@
           shopDomain: config.shopDomain,
           cartLines: cartLines,
           storefrontCustomerEmail: config.customerEmail || undefined,
+          storefrontCustomerId: config.customerId || undefined,
           storefrontCustomerFirstName: config.customerFirstName || undefined,
           storefrontCustomerLastName: config.customerLastName || undefined,
           storefrontCustomerPhone: config.customerPhone || undefined,
@@ -386,6 +482,7 @@
     }
 
     const data = await sessionRes.json();
+    rememberCheckoutForCartClear(data.publicToken, cart.token);
     const url = data.checkoutUrl.startsWith("http")
       ? data.checkoutUrl
       : config.checkoutApiUrl + data.checkoutUrl;
@@ -649,6 +746,7 @@
   document.addEventListener("submit", interceptCheckoutSubmit, true);
   persistForceCheckoutFromUrl();
   clearCartIfRequested();
+  clearCompletedCheckoutCart();
   installForcedCheckoutGuards();
   scheduleForcedAutoOpen();
 

@@ -6,6 +6,7 @@ import { Headphones, Mail, Phone, ShieldCheck } from "lucide-react";
 const BRAND = {
   name: "KAYER",
   siteUrl: "https://kayer.ua",
+  logoUrl: "https://kayer.ua/cdn/shop/t/2/assets/kayer-wordmark.png",
   tagline: "Професійні матеріали для нігтів",
   supportEmail: "office@kayer.ua",
   supportPhone: "+38 (050) 777 66 56",
@@ -17,7 +18,7 @@ type Props = {
 };
 
 export function CheckoutHeader({ logoUrl }: Props) {
-  const resolvedLogoUrl = logoUrl || "/kayer-logo.svg";
+  const resolvedLogoUrl = logoUrl || BRAND.logoUrl;
 
   return (
     <header className="relative z-[9998] overflow-visible border-b bg-card/72 shadow-sm ring-1 ring-white/60 backdrop-blur-2xl">

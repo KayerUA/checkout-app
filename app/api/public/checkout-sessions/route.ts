@@ -17,6 +17,7 @@ const bodySchema = z.object({
     })
   ).min(1),
   storefrontCustomerEmail: z.string().email().optional(),
+  storefrontCustomerId: z.string().optional(),
   storefrontCustomerFirstName: z.string().optional(),
   storefrontCustomerLastName: z.string().optional(),
   storefrontCustomerPhone: z.string().optional(),
@@ -83,6 +84,7 @@ export async function POST(request: NextRequest) {
       merchantId,
       cartLines: body.cartLines,
       storefrontCustomerEmail: body.storefrontCustomerEmail,
+      storefrontCustomerId: body.storefrontCustomerId,
       storefrontCustomerFirstName: body.storefrontCustomerFirstName,
       storefrontCustomerLastName: body.storefrontCustomerLastName,
       storefrontCustomerPhone: body.storefrontCustomerPhone,

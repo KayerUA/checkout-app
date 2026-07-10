@@ -3,15 +3,21 @@ import { getCheckoutSessionByToken } from "@/lib/checkout/session-service";
 import { reconcilePendingPayments } from "@/lib/payments/reconciliation";
 import { createShopifyOrderIdempotent } from "@/lib/shopify/order-writer";
 import { retryDiloshopForwardForCheckoutSession } from "@/lib/accounting/diloshop-retry";
+import { handleCorsPreflight, withCors } from "@/lib/cors";
+
+export async function OPTIONS(request: NextRequest) {
+  return handleCorsPreflight(request) ?? new NextResponse(null, { status: 204 });
+}
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ token: string }> }
 ) {
+  const origin = request.headers.get("origin");
   const { token } = await params;
   const session = await getCheckoutSessionByToken(token);
   if (!session) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+    return withCors(NextResponse.json({ error: "Not found" }, { status: 404 }), origin);
   }
 
   if (session.status === "PAYMENT_PENDING" && session.paymentAttempts[0]?.status === "PENDING") {
@@ -35,15 +41,18 @@ export async function GET(
   }
 
   const latestPayment = finalSession.paymentAttempts[0];
-  return NextResponse.json({
-    status: finalSession.status,
-    paymentStatus: latestPayment?.status ?? null,
-    orderLink: finalSession.orderLink
-      ? {
-          shopifyOrderName: finalSession.orderLink.shopifyOrderName,
-          shopifyOrderGid: finalSession.orderLink.shopifyOrderGid,
-        }
-      : null,
-    fiscalReceipt: finalSession.orderLink?.fiscalReceipt ?? null,
-  });
+  return withCors(
+    NextResponse.json({
+      status: finalSession.status,
+      paymentStatus: latestPayment?.status ?? null,
+      orderLink: finalSession.orderLink
+        ? {
+            shopifyOrderName: finalSession.orderLink.shopifyOrderName,
+            shopifyOrderGid: finalSession.orderLink.shopifyOrderGid,
+          }
+        : null,
+      fiscalReceipt: finalSession.orderLink?.fiscalReceipt ?? null,
+    }),
+    origin
+  );
 }

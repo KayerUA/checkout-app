@@ -9,6 +9,7 @@ import {
   cartTotalMatchesExpected,
   computeCartLevelDiscountCents,
   type CartLinePriceHint,
+  type ResolvedCartLinePricing,
 } from "@/lib/checkout/cart-pricing";
 import {
   fetchPartnerPricingContext,
@@ -113,6 +114,7 @@ export async function resolveAndPriceLines(
   options?: {
     partnerContext?: PartnerPricingContext | null;
     useRetailCartHints?: boolean;
+    forceCartSnapshot?: boolean;
   }
 ) {
   const session = await getMerchantShopifySession(merchantId);
@@ -136,7 +138,14 @@ export async function resolveAndPriceLines(
     let unitPrice = catalogUnitPrice;
     let pricingSource: "catalog" | "partner_rules" | "shopify_cart" = "catalog";
 
-    if (partnerContext) {
+    if (
+      options?.forceCartSnapshot &&
+      typeof line.unitPriceCents === "number" &&
+      line.unitPriceCents > 0
+    ) {
+      unitPrice = Math.round(line.unitPriceCents);
+      pricingSource = partnerContext ? "partner_rules" : "shopify_cart";
+    } else if (partnerContext) {
       unitPrice = partnerUnitPriceFromCatalog(
         catalogUnitPrice,
         partnerContext.rules,
@@ -232,6 +241,7 @@ export type CreateCheckoutSessionInput = {
   merchantId: string;
   cartLines: CartLinePriceHint[];
   storefrontCustomerEmail?: string;
+  storefrontCustomerId?: string;
   storefrontCustomerFirstName?: string;
   storefrontCustomerLastName?: string;
   storefrontCustomerPhone?: string;
@@ -256,6 +266,7 @@ async function resolvePartnerContextForMerchant(input: {
   shopDomain?: string;
   storefrontPricingToken?: string;
   storefrontCustomerEmail?: string;
+  storefrontCustomerId?: string;
   verifiedPartnerEmail?: string | null;
   verifiedPartnerGid?: string | null;
   buyerEmail?: string | null;
@@ -271,6 +282,15 @@ async function resolvePartnerContextForMerchant(input: {
     if (payload) {
       return fetchPartnerPricingContextByGid(shopifySession, payload.customerGid);
     }
+  }
+
+  const storefrontCustomerId = input.storefrontCustomerId?.trim();
+  if (storefrontCustomerId) {
+    const customerGid = storefrontCustomerId.startsWith("gid://")
+      ? storefrontCustomerId
+      : `gid://shopify/Customer/${storefrontCustomerId}`;
+    const byStorefrontId = await fetchPartnerPricingContextByGid(shopifySession, customerGid);
+    if (byStorefrontId) return byStorefrontId;
   }
 
   const verifiedGid = input.verifiedPartnerGid?.trim();
@@ -404,6 +424,12 @@ async function recalcCheckoutSessionTotals(publicToken: string, shippingAmount?:
   });
 }
 
+function linesSubtotalCents(
+  lines: Array<Pick<ResolvedCartLinePricing, "unitPrice" | "lineDiscountAmount"> & { quantity: number }>
+) {
+  return lines.reduce((sum, line) => sum + line.unitPrice * line.quantity - line.lineDiscountAmount, 0);
+}
+
 export async function createCheckoutSession(input: CreateCheckoutSessionInput) {
   const merchant = await prisma.merchant.findUnique({ where: { id: input.merchantId } });
   const shopDomain = merchant?.shopDomain;
@@ -413,17 +439,29 @@ export async function createCheckoutSession(input: CreateCheckoutSessionInput) {
     shopDomain,
   });
 
-  const partnerContext = await resolvePartnerContextForMerchant({
+  let partnerContext = await resolvePartnerContextForMerchant({
     merchantId: input.merchantId,
     shopDomain,
     storefrontPricingToken: input.storefrontPricingToken,
     storefrontCustomerEmail: input.storefrontCustomerEmail,
+    storefrontCustomerId: input.storefrontCustomerId,
   });
 
   let pricedLines = await resolveAndPriceLines(input.merchantId, input.cartLines, {
     partnerContext,
     useRetailCartHints: !partnerContext,
   });
+
+  if (partnerContext && input.cartItemsSubtotalCents != null) {
+    const partnerSubtotal = linesSubtotalCents(pricedLines);
+    const tolerance = Math.max(100, Math.round(input.cartItemsSubtotalCents * 0.02));
+    if (Math.abs(partnerSubtotal - Math.round(input.cartItemsSubtotalCents)) > tolerance) {
+      pricedLines = await resolveAndPriceLines(input.merchantId, input.cartLines, {
+        partnerContext,
+        forceCartSnapshot: true,
+      });
+    }
+  }
 
   if (!partnerContext && input.cartItemsSubtotalCents != null) {
     if (!cartSubtotalMatchesHint(pricedLines, input.cartItemsSubtotalCents)) {
@@ -434,11 +472,8 @@ export async function createCheckoutSession(input: CreateCheckoutSessionInput) {
     }
   }
 
-  const linesSubtotal = pricedLines.reduce(
-    (sum, line) => sum + line.unitPrice * line.quantity - line.lineDiscountAmount,
-    0
-  );
-  const discountAmount = partnerContext
+  let linesSubtotal = linesSubtotalCents(pricedLines);
+  let discountAmount = partnerContext
     ? 0
     : computeCartLevelDiscountCents(linesSubtotal, input.cartTotalCents);
 
@@ -446,7 +481,19 @@ export async function createCheckoutSession(input: CreateCheckoutSessionInput) {
     !partnerContext &&
     !cartTotalMatchesExpected(linesSubtotal, discountAmount, input.cartTotalCents)
   ) {
-    throw new Error("Cart total mismatch — refresh cart and try again");
+    const snapshotLines = await resolveAndPriceLines(input.merchantId, input.cartLines, {
+      partnerContext: null,
+      forceCartSnapshot: true,
+    });
+    const snapshotSubtotal = linesSubtotalCents(snapshotLines);
+    const snapshotDiscount = computeCartLevelDiscountCents(snapshotSubtotal, input.cartTotalCents);
+    if (cartTotalMatchesExpected(snapshotSubtotal, snapshotDiscount, input.cartTotalCents)) {
+      pricedLines = snapshotLines;
+      linesSubtotal = snapshotSubtotal;
+      discountAmount = snapshotDiscount;
+    } else {
+      throw new Error("Cart total mismatch — refresh cart and try again");
+    }
   }
 
   const verifiedPartnerEmail =
