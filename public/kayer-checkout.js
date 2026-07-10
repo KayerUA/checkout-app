@@ -96,7 +96,28 @@
         ".checkout-button",
         ".cart__checkout",
         ".btn--checkout",
+        ".cart-summary-panel__checkout",
+        ".shopify-payment-button",
+        ".shopify-payment-button__button",
       ].join(", ")
+    );
+  }
+
+  function isCheckoutHref(href) {
+    if (!href) return false;
+    if (href.indexOf("/checkouts/") >= 0) return true;
+    if (href.indexOf("/products/") >= 0) return false;
+    if (href === "/checkout" || href.endsWith("/checkout")) return true;
+    if (href.indexOf("/checkout?") >= 0) return true;
+    return false;
+  }
+
+  function isNativeCheckoutFallback(url) {
+    var value = normalize(url);
+    return (
+      value === "/checkout" ||
+      value.endsWith("/checkout") ||
+      value.indexOf("/checkouts/") >= 0
     );
   }
 
@@ -113,7 +134,7 @@
       el.matches &&
       el.matches("button, input, [role='button'], [data-checkout], [data-kayer-checkout], [data-chekly]");
     return (
-      href.indexOf("checkout") >= 0 ||
+      isCheckoutHref(href) ||
       href.indexOf("chekly") >= 0 ||
       action.indexOf("checkout") >= 0 ||
       action.indexOf("chekly") >= 0 ||
@@ -165,6 +186,9 @@
       ".checkout-button",
       ".cart__checkout",
       ".btn--checkout",
+      ".cart-summary-panel__checkout",
+      ".shopify-payment-button",
+      ".shopify-payment-button__button",
     ];
   }
 
@@ -403,11 +427,16 @@
     console.error("[KayerCheckout]", err);
     if (trigger && trigger.disabled !== undefined) trigger.disabled = false;
     var message = formatCheckoutError(err);
-    if (isForcedCustomCheckout()) {
+    var fallback = config.fallbackUrl || "/cart";
+    var blockNativeFallback =
+      config.audienceMode === "all" ||
+      isForcedCustomCheckout() ||
+      isNativeCheckoutFallback(fallback);
+    if (blockNativeFallback) {
       alert("Не вдалося відкрити checkout KAYER.\n" + message);
       return;
     }
-    window.location.href = config.fallbackUrl;
+    window.location.href = fallback;
   }
 
   function cartLinePayload(item) {
@@ -656,10 +685,16 @@
     var action = normalize(form.getAttribute("action"));
     var submitter = event.submitter || document.activeElement;
     var checkoutSubmitter = findLikelyCheckoutTrigger(submitter);
+    var checkoutNamedSubmitter =
+      submitter &&
+      submitter.getAttribute &&
+      (submitter.getAttribute("name") === "checkout" ||
+        submitter.getAttribute("data-kayer-original-name") === "checkout");
     if (
       action.indexOf("checkout") < 0 &&
       action.indexOf("chekly") < 0 &&
-      !checkoutSubmitter
+      !checkoutSubmitter &&
+      !checkoutNamedSubmitter
     ) {
       return;
     }
@@ -754,6 +789,13 @@
   scheduleForcedAutoOpen();
 
   window.KayerCheckout = { redirectToCheckout: redirectToCheckout, config: config };
+
+  if (window.__kayerCheckoutQueued) {
+    window.__kayerCheckoutQueued = false;
+    redirectToCheckout().catch(function (err) {
+      handleRedirectError(err, null);
+    });
+  }
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", function () {
