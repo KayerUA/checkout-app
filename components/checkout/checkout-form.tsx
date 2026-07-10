@@ -766,8 +766,8 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
                 <Alert>
                   <FileText className="size-4" />
                   <AlertDescription>
-                    Після натискання кнопки зачекайте: ми створимо замовлення в Shopify,
-                    згенеруємо рахунок і відкриємо сторінку, де його можна буде завантажити.
+                    Після підтвердження зачекайте кілька секунд: ми підготуємо рахунок
+                    і відкриємо сторінку, де його можна буде завантажити.
                   </AlertDescription>
                 </Alert>
               )}
