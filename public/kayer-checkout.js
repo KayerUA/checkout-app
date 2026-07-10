@@ -484,7 +484,7 @@
       shopDomain: config.shopDomain,
       cartLines: cartLines,
       storefrontCustomerEmail: config.customerEmail || undefined,
-      storefrontCustomerId: config.customerId || undefined,
+      storefrontCustomerId: config.customerId ? String(config.customerId) : undefined,
       storefrontCustomerFirstName: config.customerFirstName || undefined,
       storefrontCustomerLastName: config.customerLastName || undefined,
       storefrontCustomerPhone: config.customerPhone || undefined,

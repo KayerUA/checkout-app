@@ -17,7 +17,10 @@ const bodySchema = z.object({
     })
   ).min(1),
   storefrontCustomerEmail: z.string().email().optional(),
-  storefrontCustomerId: z.string().optional(),
+  storefrontCustomerId: z.preprocess(
+    (value) => (value == null || value === "" ? undefined : String(value)),
+    z.string().optional()
+  ),
   storefrontCustomerFirstName: z.string().optional(),
   storefrontCustomerLastName: z.string().optional(),
   storefrontCustomerPhone: z.string().optional(),
