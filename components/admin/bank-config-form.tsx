@@ -40,13 +40,32 @@ function summarizeReconciliation(data: Record<string, unknown>) {
     {} as Record<string, number>
   );
   const checked = Number(data.checked ?? results.length);
+  const stats =
+    data.candidateStats && typeof data.candidateStats === "object"
+      ? (data.candidateStats as { merged?: number; prismaOrders?: number; shopifyOrders?: number })
+      : null;
+  const candidateLine = stats
+    ? `Кандидатів на оплату: ${stats.merged ?? 0} (БД ${stats.prismaOrders ?? 0}, Shopify ${stats.shopifyOrders ?? 0})`
+    : null;
+  const errorDetails = results
+    .filter((item) => item && typeof item === "object" && (item as { status?: string }).status === "ERROR")
+    .map((item) => {
+      const row = item as { transactionId?: string; reason?: string; shopifyOrderId?: string };
+      return [row.transactionId, row.shopifyOrderId, row.reason].filter(Boolean).join(": ");
+    })
+    .filter(Boolean);
   return [
     `Звірку виконано. Перевірено транзакцій: ${Number.isFinite(checked) ? checked : results.length}`,
+    candidateLine,
     `MATCHED: ${counts.MATCHED ?? 0}`,
+    `SKIPPED: ${counts.SKIPPED ?? 0}`,
     `NEEDS_REVIEW: ${counts.NEEDS_REVIEW ?? 0}`,
     `NEW: ${counts.NEW ?? 0}`,
     `ERROR: ${counts.ERROR ?? 0}`,
-  ].join(" · ");
+    errorDetails.length ? `Помилки: ${errorDetails.join(" · ")}` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 export function BankConfigForm({ initial }: { initial: BankConfigInitial }) {

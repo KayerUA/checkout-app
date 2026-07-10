@@ -30,7 +30,12 @@ function escapeHtml(value: string | number | null | undefined) {
 
 export function invoicePaymentPurpose(invoiceNumber: string, invoiceDate: Date, orderName?: string | null) {
   const order = formatOrderNumber(orderName);
-  return `Оплата замовлення № ${order}, рахунок ${invoiceNumber} від ${formatDate(invoiceDate)}, без ПДВ`.trim();
+  const numeric = order.replace(/^UA/i, "");
+  const orderLabel =
+    numeric && numeric !== order && /^\d+$/.test(numeric)
+      ? `№ ${order} (або ${numeric})`
+      : `№ ${order}`;
+  return `Оплата замовлення ${orderLabel}, рахунок ${invoiceNumber} від ${formatDate(invoiceDate)}, без ПДВ`.trim();
 }
 
 function formatOrderNumber(orderName?: string | null) {

@@ -20,6 +20,20 @@ function firstParam(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
 }
 
+function paymentStatusForOrder(order: {
+  orderStatus?: string | null;
+  checkoutSession: { status: string; paymentProvider?: string | null };
+}) {
+  if (order.orderStatus === "WAITING_BANK_PAYMENT") return "WAITING_BANK_PAYMENT";
+  if (order.orderStatus === "BANK_TRANSFER_PAID" || order.orderStatus === "READY_TO_FULFILL_AFTER_BANK_PAYMENT") {
+    return order.orderStatus;
+  }
+  if (order.checkoutSession.paymentProvider === "BANK_INVOICE" && order.checkoutSession.status === "COMPLETED") {
+    return order.orderStatus ?? "WAITING_BANK_PAYMENT";
+  }
+  return order.checkoutSession.status;
+}
+
 export default async function AdminDashboardPage({ searchParams }: AdminDashboardPageProps) {
   const resolvedSearchParams = searchParams ? await searchParams : {};
   const nextPath = firstParam(resolvedSearchParams.next) ?? "/admin";
@@ -212,7 +226,7 @@ export default async function AdminDashboardPage({ searchParams }: AdminDashboar
                       {order.checkoutSession.buyerEmail ?? order.checkoutSession.buyerPhone ?? "Anonymous"}
                     </TableCell>
                     <TableCell><StatusBadge status={order.orderStatus ?? order.checkoutSession.status} /></TableCell>
-                    <TableCell><StatusBadge status={order.checkoutSession.status} /></TableCell>
+                    <TableCell><StatusBadge status={paymentStatusForOrder(order)} /></TableCell>
                     <TableCell><StatusBadge status={order.fiscalReceipt?.status} /></TableCell>
                     <TableCell className="text-right font-medium">
                       {formatMoney(order.checkoutSession.totalAmount, order.checkoutSession.currency)}

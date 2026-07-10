@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { getBankStatementProvider } from "@/lib/bank";
+import { buildBankReconciliationCandidates, ensureB2BOrderRecord } from "@/lib/reconciliation/candidates";
 import { matchBankTransaction } from "@/lib/reconciliation/matcher";
 import { B2B_TAGS } from "@/lib/b2b/constants";
 import { getOrderAttributes, normalizeB2BAttributes } from "@/lib/b2b/attributes";
@@ -36,13 +37,37 @@ async function saveBankTransaction(tx: BankTransaction) {
   });
 }
 
-async function finalizeMatchedBankPayment(input: {
+async function syncOrderLinkPaymentStatus(shopifyOrderId: string, orderStatus: string) {
+  await prisma.orderLink.updateMany({
+    where: {
+      OR: [
+        { shopifyOrderGid: orderGid(shopifyOrderId) },
+        { shopifyOrderGid: { endsWith: `/${shopifyOrderId}` } },
+      ],
+    },
+    data: { orderStatus },
+  });
+}
+
+function orderGid(orderId: string) {
+  return orderId.startsWith("gid://shopify/Order/") ? orderId : `gid://shopify/Order/${orderId}`;
+}
+
+async function applyCriticalBankPaymentMatch(input: {
   tx: BankTransaction;
   order: B2BOrder;
   confidence: number;
   invoiceNumber?: string | null;
 }) {
   const { tx, order } = input;
+
+  const shopifyPayment = await markOrderPaidByBankTransfer({
+    shopDomain: order.shopDomain,
+    orderId: order.shopifyOrderId,
+    amount: tx.amount,
+    currency: tx.currency,
+    bankTransactionId: tx.transaction_id,
+  });
 
   await prisma.bankPayment.update({
     where: { transactionId: tx.transaction_id },
@@ -53,18 +78,12 @@ async function finalizeMatchedBankPayment(input: {
     },
   });
 
-  const shopifyPayment = await markOrderPaidByBankTransfer({
-    shopDomain: order.shopDomain,
-    orderId: order.shopifyOrderId,
-    amount: tx.amount,
-    currency: tx.currency,
-    bankTransactionId: tx.transaction_id,
-  });
-
   await prisma.b2BOrder.update({
     where: { shopifyOrderId: order.shopifyOrderId },
     data: { status: "PAYMENT_MATCHED" },
   });
+  await syncOrderLinkPaymentStatus(order.shopifyOrderId, "BANK_TRANSFER_PAID");
+
   await updateOrderTags({
     shopDomain: order.shopDomain,
     orderId: order.shopifyOrderId,
@@ -88,40 +107,119 @@ async function finalizeMatchedBankPayment(input: {
     add: [B2B_TAGS.paymentConfirmed],
   });
 
+  return shopifyPayment;
+}
+
+async function completeBankPaymentSideEffects(input: {
+  tx: BankTransaction;
+  order: B2BOrder;
+  invoiceNumber?: string | null;
+}) {
   const shopifyOrder = (await getShopifyOrder({
-    shopDomain: order.shopDomain,
-    orderId: order.shopifyOrderId,
+    shopDomain: input.order.shopDomain,
+    orderId: input.order.shopifyOrderId,
   })) as ShopifyOrderPayload;
   const buyer = normalizeB2BAttributes({
     ...getOrderAttributes(shopifyOrder),
-    buyer_type: order.buyerType ?? "fop_company",
-    payment_preference: order.paymentPreference ?? "bank_invoice",
-    fop_name: order.fopName ?? "",
-    fop_tax_id: order.fopTaxId ?? "",
-    fop_legal_address: order.fopLegalAddress ?? "",
-    docs_email: order.docsEmail ?? "",
-    docs_phone: order.docsPhone ?? "",
-    accounting_comment: order.accountingComment ?? "",
+    buyer_type: input.order.buyerType ?? "fop_company",
+    payment_preference: input.order.paymentPreference ?? "bank_invoice",
+    fop_name: input.order.fopName ?? "",
+    fop_tax_id: input.order.fopTaxId ?? "",
+    fop_legal_address: input.order.fopLegalAddress ?? "",
+    docs_email: input.order.docsEmail ?? "",
+    docs_phone: input.order.docsPhone ?? "",
+    accounting_comment: input.order.accountingComment ?? "",
   });
-  await createPostPaymentDocuments({
-    order: shopifyOrder,
-    buyer,
-    invoiceNumber: input.invoiceNumber ?? "",
-    transactionId: tx.transaction_id,
-    shopDomain: order.shopDomain,
-  });
-  await notifyDiloshopOrderReady({
-    order: shopifyOrder,
-    shopDomain: order.shopDomain,
-    transactionId: tx.transaction_id,
+
+  try {
+    await createPostPaymentDocuments({
+      order: shopifyOrder,
+      buyer,
+      invoiceNumber: input.invoiceNumber ?? "",
+      transactionId: input.tx.transaction_id,
+      shopDomain: input.order.shopDomain,
+    });
+    await syncOrderLinkPaymentStatus(input.order.shopifyOrderId, "READY_TO_FULFILL_AFTER_BANK_PAYMENT");
+  } catch (error) {
+    await writeAutomationLog({
+      shopifyOrderId: input.order.shopifyOrderId,
+      eventType: "bank/reconcile",
+      step: "post_payment_documents",
+      status: "WARN",
+      message: "Bank payment matched in Shopify, but post-payment documents failed",
+      error,
+      metadata: { transactionId: input.tx.transaction_id },
+    });
+  }
+
+  try {
+    await notifyDiloshopOrderReady({
+      order: shopifyOrder,
+      shopDomain: input.order.shopDomain,
+      transactionId: input.tx.transaction_id,
+    });
+  } catch (error) {
+    await writeAutomationLog({
+      shopifyOrderId: input.order.shopifyOrderId,
+      eventType: "bank/reconcile",
+      step: "diloshop_notify",
+      status: "WARN",
+      message: "Bank payment matched in Shopify, but Diloshop notify failed",
+      error,
+      metadata: { transactionId: input.tx.transaction_id },
+    });
+  }
+
+  return shopifyOrder;
+}
+
+async function finalizeMatchedBankPayment(input: {
+  tx: BankTransaction;
+  order: B2BOrder;
+  confidence: number;
+  invoiceNumber?: string | null;
+}) {
+  const shopifyPayment = await applyCriticalBankPaymentMatch(input);
+  await completeBankPaymentSideEffects({
+    tx: input.tx,
+    order: input.order,
+    invoiceNumber: input.invoiceNumber,
   });
 
   return {
-    transactionId: tx.transaction_id,
+    transactionId: input.tx.transaction_id,
     status: "MATCHED",
+    shopifyOrderId: input.order.shopifyOrderId,
     shopifyPaymentTransactionId: shopifyPayment.transaction.id,
     shopifyPaymentCreated: shopifyPayment.created,
   };
+}
+
+async function finalizeMatchedBankPaymentSafe(input: {
+  tx: BankTransaction;
+  order: B2BOrder;
+  confidence: number;
+  invoiceNumber?: string | null;
+}) {
+  try {
+    return await finalizeMatchedBankPayment(input);
+  } catch (error) {
+    await writeAutomationLog({
+      shopifyOrderId: input.order.shopifyOrderId,
+      eventType: "bank/reconcile",
+      step: "matched_payment_finalize",
+      status: "ERROR",
+      message: "Matched bank payment finalization failed",
+      error,
+      metadata: { transactionId: input.tx.transaction_id },
+    });
+    return {
+      transactionId: input.tx.transaction_id,
+      status: "ERROR" as const,
+      shopifyOrderId: input.order.shopifyOrderId,
+      reason: error instanceof Error ? error.message : "finalize_failed",
+    };
+  }
 }
 
 export async function reconcileBankPayments(input?: { from?: Date; to?: Date }) {
@@ -138,50 +236,39 @@ export async function reconcileBankTransactions(
 ) {
   const to = range?.to ?? new Date();
   const from = range?.from ?? new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-  const openOrders = await prisma.b2BOrder.findMany({
-    where: { status: { in: ["INVOICE_SENT", "WAITING_BANK_PAYMENT", "CREATED", "NEEDS_REVIEW", "PAYMENT_MATCHED"] } },
-  });
-  const invoices = await prisma.b2BDocument.findMany({
-    where: {
-      type: "invoice",
-      shopifyOrderId: { in: openOrders.map((order) => order.shopifyOrderId) },
-    },
-  });
-  const invoiceByOrder = new Map(invoices.map((invoice) => [invoice.shopifyOrderId, invoice]));
-  const candidates = openOrders.map((order) => ({
-    shopifyOrderId: order.shopifyOrderId,
-    shopifyOrderName: order.shopifyOrderName,
-    invoiceNumber: invoiceByOrder.get(order.shopifyOrderId)?.number,
-    fopName: order.fopName,
-    amount: Number(order.orderTotalAmount ?? 0),
-    currency: order.orderCurrency ?? "UAH",
-  }));
+  const { candidates, openOrders, invoiceByOrder, stats } = await buildBankReconciliationCandidates();
 
   const results = [];
   for (const tx of transactions) {
     const saved = await saveBankTransaction(tx);
     if (saved.status === "MATCHED") {
-      const order = openOrders.find((candidate) => candidate.shopifyOrderId === saved.matchedShopifyOrderId);
+      const order =
+        openOrders.find((candidate) => candidate.shopifyOrderId === saved.matchedShopifyOrderId) ??
+        (await prisma.b2BOrder.findUnique({
+          where: { shopifyOrderId: saved.matchedShopifyOrderId ?? "" },
+        })) ??
+        (await ensureB2BOrderRecord({
+          shopifyOrderId: saved.matchedShopifyOrderId ?? "",
+          shopDomain: openOrders[0]?.shopDomain,
+        }));
+      if (order && ["PAYMENT_MATCHED", "READY_TO_FULFILL_AFTER_BANK_PAYMENT", "DOCS_SENT"].includes(order.status)) {
+        results.push({
+          transactionId: tx.transaction_id,
+          status: "SKIPPED",
+          reason: "already_finalized",
+          shopifyOrderId: order.shopifyOrderId,
+        });
+        continue;
+      }
       if (order) {
-        try {
-          results.push(await finalizeMatchedBankPayment({
+        results.push(
+          await finalizeMatchedBankPaymentSafe({
             tx,
             order,
             confidence: Number(saved.matchConfidence ?? 1),
             invoiceNumber: invoiceByOrder.get(order.shopifyOrderId)?.number,
-          }));
-        } catch (error) {
-          await writeAutomationLog({
-            shopifyOrderId: order.shopifyOrderId,
-            eventType: "bank/reconcile",
-            step: "matched_payment_finalize",
-            status: "ERROR",
-            message: "Matched bank payment finalization failed",
-            error,
-            metadata: { transactionId: tx.transaction_id },
-          });
-          results.push({ transactionId: tx.transaction_id, status: "ERROR" });
-        }
+          })
+        );
         continue;
       }
       results.push({ transactionId: tx.transaction_id, skipped: true });
@@ -196,15 +283,33 @@ export async function reconcileBankTransactions(
       }
 
       if (match.status === "MATCHED") {
-        const order = openOrders.find((candidate) => candidate.shopifyOrderId === match.candidate?.shopifyOrderId);
-        if (!order) continue;
-        results.push(await finalizeMatchedBankPayment({
-          tx,
-          order,
-          confidence: match.confidence,
-          invoiceNumber: match.invoiceNumber ?? invoiceByOrder.get(order.shopifyOrderId)?.number,
-        }));
+        const candidate = match.candidate;
+        if (!candidate) continue;
+        const order =
+          openOrders.find((row) => row.shopifyOrderId === candidate.shopifyOrderId) ??
+          (await ensureB2BOrderRecord({
+            shopifyOrderId: candidate.shopifyOrderId,
+            shopDomain: openOrders[0]?.shopDomain,
+          }));
+        if (!order) {
+          results.push({ transactionId: tx.transaction_id, status: "ERROR", reason: "b2b_order_missing" });
+          continue;
+        }
+        results.push(
+          await finalizeMatchedBankPaymentSafe({
+            tx,
+            order,
+            confidence: match.confidence,
+            invoiceNumber: match.invoiceNumber ?? invoiceByOrder.get(order.shopifyOrderId)?.number,
+          })
+        );
       } else if (match.status === "NEEDS_REVIEW") {
+        const order =
+          openOrders.find((row) => row.shopifyOrderId === match.candidate.shopifyOrderId) ??
+          (await ensureB2BOrderRecord({
+            shopifyOrderId: match.candidate.shopifyOrderId,
+            shopDomain: openOrders[0]?.shopDomain,
+          }));
         await prisma.bankPayment.update({
           where: { transactionId: tx.transaction_id },
           data: {
@@ -213,11 +318,12 @@ export async function reconcileBankTransactions(
             matchConfidence: match.confidence,
           },
         });
-        await prisma.b2BOrder.update({
-          where: { shopifyOrderId: match.candidate.shopifyOrderId },
-          data: { status: "NEEDS_REVIEW" },
-        });
-        const order = openOrders.find((candidate) => candidate.shopifyOrderId === match.candidate?.shopifyOrderId);
+        if (order) {
+          await prisma.b2BOrder.update({
+            where: { shopifyOrderId: match.candidate.shopifyOrderId },
+            data: { status: "NEEDS_REVIEW" },
+          });
+        }
         await updateOrderTags({
           shopDomain: order?.shopDomain,
           orderId: match.candidate.shopifyOrderId,
@@ -238,5 +344,5 @@ export async function reconcileBankTransactions(
     }
   }
 
-  return { from, to, checked: transactions.length, results };
+  return { from, to, checked: transactions.length, candidateStats: stats, results };
 }

@@ -44,6 +44,15 @@ function money(record: PrivatTransaction, key: string) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+async function readPrivatResponseBody(response: Response) {
+  const buffer = await response.arrayBuffer();
+  try {
+    return new TextDecoder("windows-1251").decode(buffer);
+  } catch {
+    return new TextDecoder("utf-8").decode(buffer);
+  }
+}
+
 function parsePrivatResponse(text: string, context: string) {
   if (!text.trim()) {
     throw new Error(`${context}: empty response from Privat24`);
@@ -121,12 +130,12 @@ export class PrivatBankStatementProvider implements BankStatementProvider {
       headers: this.headers(),
     });
 
-    const text = await response.text();
+    const body = await readPrivatResponseBody(response);
     if (!response.ok) {
-      throw new Error(`PrivatBank settings check failed: ${text}`);
+      throw new Error(`PrivatBank settings check failed: ${body}`);
     }
 
-    const payload = parsePrivatResponse(text, "PrivatBank settings check failed");
+    const payload = parsePrivatResponse(body, "PrivatBank settings check failed");
     if (payload.status && payload.status !== "SUCCESS") {
       throw new Error(
         `PrivatBank settings check failed: ${payload.code ? `${payload.code} ` : ""}${payload.error || payload.message || payload.status}`
@@ -156,10 +165,13 @@ export class PrivatBankStatementProvider implements BankStatementProvider {
       });
 
       if (!response.ok) {
-        throw new Error(`PrivatBank statement fetch failed: ${await response.text()}`);
+        throw new Error(`PrivatBank statement fetch failed: ${await readPrivatResponseBody(response)}`);
       }
 
-      const payload = parsePrivatResponse(await response.text(), "PrivatBank statement fetch failed");
+      const payload = parsePrivatResponse(
+        await readPrivatResponseBody(response),
+        "PrivatBank statement fetch failed"
+      );
 
       if (payload.status && payload.status !== "SUCCESS") {
         throw new Error(payload.error || payload.message || "PrivatBank API returned non-success status");
