@@ -20,7 +20,7 @@ export function CheckoutHeader({ logoUrl }: Props) {
   const resolvedLogoUrl = logoUrl || "/kayer-logo.svg";
 
   return (
-    <header className="relative z-[80] overflow-visible border-b bg-card/72 shadow-sm ring-1 ring-white/60 backdrop-blur-2xl">
+    <header className="relative z-[9998] overflow-visible border-b bg-card/72 shadow-sm ring-1 ring-white/60 backdrop-blur-2xl">
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:gap-4 sm:px-6 sm:py-4">
         <Link href={BRAND.siteUrl} className="flex items-center gap-3" target="_blank" rel="noreferrer">
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -32,7 +32,7 @@ export function CheckoutHeader({ logoUrl }: Props) {
               <Headphones className="size-3.5" />
               Підтримка KAYER
             </summary>
-            <div className="fixed right-6 top-16 z-[100] w-80 rounded-3xl border bg-white p-4 text-sm shadow-[0_24px_70px_rgba(28,20,16,0.16)] ring-1 ring-black/[0.04]">
+            <div className="fixed right-6 top-16 z-[9999] w-80 rounded-3xl border bg-white p-4 text-sm shadow-[0_24px_70px_rgba(28,20,16,0.16)] ring-1 ring-black/[0.04]">
               <p className="font-semibold">Потрібна допомога?</p>
               <p className="mt-1 text-xs leading-5 text-muted-foreground">
                 Напишіть або зателефонуйте, якщо є питання щодо замовлення, оплати чи доставки.
