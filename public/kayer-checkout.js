@@ -450,27 +450,30 @@
 
     const cartLines = cart.items.map(cartLinePayload);
     const pricingAuth = await fetchStorefrontPricingToken();
+    const payload = {
+      shopDomain: config.shopDomain,
+      cartLines: cartLines,
+      storefrontCustomerEmail: config.customerEmail || undefined,
+      storefrontCustomerId: config.customerId || undefined,
+      storefrontCustomerFirstName: config.customerFirstName || undefined,
+      storefrontCustomerLastName: config.customerLastName || undefined,
+      storefrontCustomerPhone: config.customerPhone || undefined,
+      cartToken: cart.token,
+      cartItemsSubtotalCents: cart.items_subtotal_price,
+      cartTotalCents: cart.total_price,
+      customAttributes: readB2BAttributes(cart.attributes || {}),
+      sourceUrl: window.location.href,
+    };
+    if (pricingAuth && pricingAuth.pricingToken) {
+      payload.storefrontPricingToken = pricingAuth.pricingToken;
+    }
 
     const sessionRes = await fetch(
       config.checkoutApiUrl + "/api/public/checkout-sessions",
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          shopDomain: config.shopDomain,
-          cartLines: cartLines,
-          storefrontCustomerEmail: config.customerEmail || undefined,
-          storefrontCustomerId: config.customerId || undefined,
-          storefrontCustomerFirstName: config.customerFirstName || undefined,
-          storefrontCustomerLastName: config.customerLastName || undefined,
-          storefrontCustomerPhone: config.customerPhone || undefined,
-          storefrontPricingToken: pricingAuth && pricingAuth.pricingToken,
-          cartToken: cart.token,
-          cartItemsSubtotalCents: cart.items_subtotal_price,
-          cartTotalCents: cart.total_price,
-          customAttributes: readB2BAttributes(cart.attributes || {}),
-          sourceUrl: window.location.href,
-        }),
+        body: JSON.stringify(payload),
       }
     );
 

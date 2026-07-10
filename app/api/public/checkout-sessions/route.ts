@@ -21,7 +21,10 @@ const bodySchema = z.object({
   storefrontCustomerFirstName: z.string().optional(),
   storefrontCustomerLastName: z.string().optional(),
   storefrontCustomerPhone: z.string().optional(),
-  storefrontPricingToken: z.string().min(10).optional(),
+  storefrontPricingToken: z.preprocess(
+    (value) => (value == null || value === "" ? undefined : value),
+    z.string().min(10).optional()
+  ),
   cartToken: z.string().optional(),
   cartItemsSubtotalCents: z.number().int().nonnegative().optional(),
   cartTotalCents: z.number().int().nonnegative().optional(),
