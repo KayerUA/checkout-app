@@ -592,7 +592,7 @@
   }
 
   function hardenNativeCheckoutTriggers() {
-    if (!isForcedCustomCheckout()) return;
+    if (!isAudienceEligible()) return;
 
     document.querySelectorAll(checkoutSelectors().join(", ")).forEach(function (trigger) {
       trigger.setAttribute("data-kayer-checkout", "true");
@@ -669,7 +669,7 @@
   }
 
   function installForcedCheckoutGuards() {
-    if (!isForcedCustomCheckout() || window.__kayerForcedCheckoutGuardsInstalled) return;
+    if (!isAudienceEligible() || window.__kayerForcedCheckoutGuardsInstalled) return;
     window.__kayerForcedCheckoutGuardsInstalled = true;
 
     ["pointerdown", "mousedown", "touchstart"].forEach(function (eventName) {
@@ -692,7 +692,7 @@
     var nativeRequestSubmit = window.HTMLFormElement.prototype.requestSubmit;
 
     window.HTMLFormElement.prototype.submit = function () {
-      if (isAudienceEligible() && isForcedCustomCheckout() && looksLikeCheckoutElement(this)) {
+      if (isAudienceEligible() && looksLikeCheckoutElement(this)) {
         redirectToCheckout().catch(function (err) {
           handleRedirectError(err, null);
         });
@@ -707,7 +707,6 @@
         var hasCheckoutTrigger = Boolean(this.querySelector(checkoutSelectors().join(", ")));
         if (
           isAudienceEligible() &&
-          isForcedCustomCheckout() &&
           (isCheckoutSubmitter || looksLikeCheckoutElement(this) || hasCheckoutTrigger)
         ) {
           redirectToCheckout().catch(function (err) {
