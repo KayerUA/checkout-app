@@ -11,6 +11,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { formatMoney } from "@/lib/checkout/pricing";
+import type { SavingsSummary } from "@/lib/checkout/savings-summary";
 import { cn } from "@/lib/utils";
 import {
   AlertCircle,
@@ -56,6 +57,7 @@ type CheckoutData = {
   subtotal: number;
   shippingAmount: number;
   totalAmount: number;
+  savingsSummary?: SavingsSummary | null;
   buyerEmail?: string | null;
   buyerPhone?: string | null;
   buyerFirstName?: string | null;
@@ -155,6 +157,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [cityQuery, setCityQuery] = useState("");
+  const [branchQuery, setBranchQuery] = useState("");
   const [cities, setCities] = useState<City[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [cityListOpen, setCityListOpen] = useState(false);
@@ -236,11 +239,28 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
 
   useEffect(() => {
     if (!selectedCityRef) return;
-    fetch(`/api/public/shipping/nova-poshta/branches?cityRef=${selectedCityRef}`)
-      .then((r) => r.json())
-      .then(setBranches)
-      .finally(() => setLoadingBranches(false));
-  }, [selectedCityRef]);
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      setLoadingBranches(true);
+      const params = new URLSearchParams({ cityRef: selectedCityRef });
+      if (branchQuery.trim()) params.set("q", branchQuery.trim());
+      fetch(`/api/public/shipping/nova-poshta/branches?${params}`, { signal: controller.signal })
+        .then(async (response) => {
+          if (!response.ok) throw new Error("Не вдалося знайти відділення");
+          return response.json() as Promise<Branch[]>;
+        })
+        .then(setBranches)
+        .catch((fetchError: unknown) => {
+          if (fetchError instanceof DOMException && fetchError.name === "AbortError") return;
+          setBranches([]);
+        })
+        .finally(() => setLoadingBranches(false));
+    }, branchQuery ? 250 : 0);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [branchQuery, selectedCityRef]);
 
   useEffect(() => {
     if (data.status === "PAYMENT_PENDING") {
@@ -384,11 +404,56 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
     }
   }
 
+  const submitHint = data.shippingPayload?.branchRef
+    ? buyerType === "fop_company"
+      ? "Після підтвердження підготуємо рахунок."
+      : "Після підтвердження відкриємо захищену оплату."
+    : "Оберіть відділення або поштомат, щоб продовжити.";
+
+  const submitBar = (formId?: string) => (
+    <>
+      <div className="mb-2.5 flex items-center justify-between gap-3 text-xs sm:mb-3">
+        <span className="inline-flex min-w-0 items-center gap-1.5 text-muted-foreground">
+          <ShieldCheck className="size-3.5 shrink-0" />
+          <span className="truncate">Безпечна оплата</span>
+        </span>
+        <span className="shrink-0 text-sm font-semibold sm:text-xs">
+          {formatMoney(data.totalAmount, data.currency)}
+        </span>
+      </div>
+      <Button
+        type="submit"
+        form={formId}
+        size="lg"
+        className="h-13 w-full rounded-full bg-black text-[15px] font-semibold text-white shadow-[0_16px_28px_rgba(0,0,0,0.2)] hover:bg-black/90 sm:h-14 sm:text-base"
+        disabled={loading || !data.shippingPayload?.branchRef}
+      >
+        {loading ? (
+          <>
+            <Loader2 className="size-4 animate-spin" />
+            {loadingText}
+          </>
+        ) : (
+          buttonText
+        )}
+      </Button>
+      <p className="mt-2 text-center text-[11px] leading-4 text-muted-foreground sm:mt-3 sm:text-xs">
+        {submitHint}
+      </p>
+      {!data.shippingPayload?.branchRef ? (
+        <p className="mt-1.5 text-center text-[11px] leading-4 text-amber-700 sm:mt-2 sm:text-xs">
+          Щоб продовжити, оберіть відділення або поштомат Нової Пошти.
+        </p>
+      ) : null}
+    </>
+  );
+
   return (
-    <div className="relative mx-auto max-w-[430px] px-2 pb-8 [font-family:var(--font-geist-sans),ui-sans-serif,system-ui,sans-serif] sm:max-w-6xl sm:px-6 sm:pb-12">
+    <div className="relative mx-auto max-w-[430px] px-2 pb-[calc(7.5rem+env(safe-area-inset-bottom,0px))] sm:max-w-6xl sm:px-6 sm:pb-12">
       <div className="pointer-events-none absolute inset-x-2 top-0 h-[460px] rounded-[2.75rem] bg-[radial-gradient(circle_at_50%_0%,rgba(255,255,255,0.98),rgba(238,226,218,0.82)_54%,rgba(248,247,245,0.24)_100%)] blur-0 lg:hidden" />
       <div className="relative grid gap-6 lg:grid-cols-[minmax(0,620px)_380px] lg:justify-center lg:gap-8">
         <form
+          id="kayer-checkout-form"
           onSubmit={handleSubmit}
           className="order-1 overflow-hidden rounded-[2.15rem] bg-white/62 p-2 pt-3 shadow-[0_28px_90px_rgba(18,18,18,0.16)] ring-1 ring-white/80 backdrop-blur-2xl sm:rounded-[2.5rem] sm:p-5 lg:order-1"
           aria-busy={loading}
@@ -400,7 +465,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
           </div>
 
           {firstLine ? (
-            <div className="mb-4 flex items-center gap-3 px-1 sm:mb-5 sm:gap-4">
+            <div className="mb-4 flex items-center gap-3 px-1 sm:mb-5 sm:gap-4 lg:hidden">
               <div className="flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-[1.35rem] bg-white shadow-sm ring-1 ring-black/[0.045] sm:size-20 sm:rounded-[1.5rem]">
                 {firstLine.imageUrl ? (
                   // Use a plain image here to avoid remote image domain config churn for Shopify CDN.
@@ -454,29 +519,6 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
               </div>
             </div>
           </details>
-
-          <div className="mb-4 rounded-[1.35rem] bg-white/92 p-3 shadow-[0_18px_42px_rgba(18,18,18,0.12)] ring-1 ring-black/[0.05] backdrop-blur-xl sm:hidden">
-            <Button
-              type="submit"
-              size="lg"
-              className="h-13 w-full rounded-full bg-black text-[15px] font-semibold text-white shadow-[0_18px_30px_rgba(0,0,0,0.22)] hover:bg-black/90"
-              disabled={loading || !data.shippingPayload?.branchRef}
-            >
-              {loading ? (
-                <>
-                  <Loader2 className="size-4 animate-spin" />
-                  {loadingText}
-                </>
-              ) : (
-                buttonText
-              )}
-            </Button>
-            <p className="mt-2 text-center text-[11px] leading-4 text-muted-foreground">
-              {data.shippingPayload?.branchRef
-                ? "Після підтвердження відкриємо захищену оплату."
-                : "Оберіть відділення або поштомат, щоб продовжити."}
-            </p>
-          </div>
 
           <div className="hidden sm:block">
             <CheckoutProgress currentStep={currentStep} />
@@ -611,6 +653,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
                             setSelectedCityRef(c.ref);
                             setCityQuery(c.name);
                             setCities([]);
+                            setBranchQuery("");
                             setCityListOpen(false);
                             setBranchListOpen(true);
                             setLoadingBranches(true);
@@ -643,6 +686,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
                       setCityQuery("");
                       setCities([]);
                       setBranches([]);
+                      setBranchQuery("");
                       setSelectedCityRef("");
                       setBranchListOpen(false);
                       void saveSession({ shippingPayload: {} }).then(setData);
@@ -666,11 +710,20 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
 
               {loadingBranches && selectedCityRef && <Skeleton className="h-14 w-full rounded-xl" />}
 
-              {branchListOpen && branches.length > 0 && (
+              {branchListOpen && selectedCityRef && !data.shippingPayload?.branchRef && (
                 <div className="space-y-2">
-                  <Label>Відділення</Label>
-                  <ScrollArea className="h-48 rounded-xl border bg-background">
-                    <div className="p-1">
+                  <Label htmlFor="branch">Відділення або поштомат</Label>
+                  <Input
+                    id="branch"
+                    value={branchQuery}
+                    onChange={(event) => setBranchQuery(event.target.value)}
+                    placeholder="Введіть номер або адресу"
+                    autoComplete="off"
+                    className="h-10"
+                  />
+                  {branches.length > 0 ? (
+                    <ScrollArea className="h-48 rounded-xl border bg-background">
+                      <div className="p-1">
                       {branches.map((b) => {
                         const selected = data.shippingPayload?.branchRef === b.ref;
                         return (
@@ -695,8 +748,13 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
                           </button>
                         );
                       })}
-                    </div>
-                  </ScrollArea>
+                      </div>
+                    </ScrollArea>
+                  ) : !loadingBranches ? (
+                    <p className="text-sm text-muted-foreground">
+                      Відділення не знайдено. Спробуйте номер або частину адреси.
+                    </p>
+                  ) : null}
                 </div>
               )}
 
@@ -787,43 +845,23 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
               <span className="inline-flex items-center gap-2"><ShieldCheck className="size-3.5" /> Захищена оплата</span>
               <span className="inline-flex items-center gap-2"><Headphones className="size-3.5" /> Підтримка після замовлення</span>
             </div>
-            <div className="mb-3 flex items-center justify-between text-xs sm:hidden">
-              <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-                <ShieldCheck className="size-3.5" />
-                Безпечна оплата
-              </span>
-              <span className="font-semibold">{formatMoney(data.totalAmount, data.currency)}</span>
-            </div>
-          <Button
-            type="submit"
-            size="lg"
-            className="h-14 w-full rounded-full bg-black text-base text-white shadow-[0_16px_28px_rgba(0,0,0,0.2)] hover:bg-black/90"
-            disabled={loading || !data.shippingPayload?.branchRef}
-          >
-            {loading ? (
-              <>
-                <Loader2 className="size-4 animate-spin" />
-                {loadingText}
-              </>
-            ) : (
-              buttonText
-            )}
-          </Button>
-
-          <p className="mt-3 text-center text-xs text-muted-foreground">
-            Натискаючи кнопку, ви погоджуєтесь з{" "}
-            <a href="https://kayer.ua" className="underline underline-offset-2 hover:text-foreground" target="_blank" rel="noreferrer">
-              умовами доставки та оплати
-            </a>
-          </p>
-          {!data.shippingPayload?.branchRef && (
-            <p className="mt-2 text-center text-xs text-amber-700">
-              Щоб продовжити, оберіть відділення або поштомат Нової Пошти.
+            {submitBar()}
+            <p className="mt-3 hidden text-center text-xs text-muted-foreground sm:block">
+              Натискаючи кнопку, ви погоджуєтесь з{" "}
+              <a href="https://kayer.ua" className="underline underline-offset-2 hover:text-foreground" target="_blank" rel="noreferrer">
+                умовами доставки та оплати
+              </a>
             </p>
-          )}
           </div>
           </div>
         </form>
+
+        <div
+          className="fixed inset-x-0 bottom-0 z-50 border-t border-black/[0.06] bg-white/96 px-3 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] shadow-[0_-12px_40px_rgba(18,18,18,0.14)] backdrop-blur-xl sm:hidden"
+          aria-label="Підтвердження замовлення"
+        >
+          {submitBar("kayer-checkout-form")}
+        </div>
 
         <div className="order-2 hidden self-start lg:sticky lg:top-6 lg:block lg:pb-2">
           <OrderSummary
@@ -832,6 +870,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
             subtotal={data.subtotal}
             shippingAmount={data.shippingAmount}
             totalAmount={data.totalAmount}
+            savingsSummary={data.savingsSummary}
             shippingLabel={data.shippingPayload?.branchName ? "Нова Пошта" : undefined}
             recommendations={data.recommendations}
             addingVariantGid={addingVariantGid}

@@ -36,6 +36,9 @@ export function mapCheckoutToOrderCreateInput(
   const shippingPayload = (session.shippingPayload ?? {}) as NovaPoshtaShippingPayload;
   const sessionAttrs = (session.customAttributes ?? {}) as Record<string, unknown>;
   const ab = (sessionAttrs.ab ?? {}) as Record<string, string>;
+  const shippingLineTitle = session.shippingMethodCode?.startsWith("nova_poshta")
+    ? "Нова Пошта"
+    : session.shippingMethodCode ?? "Нова Пошта";
 
   const customAttributes = [
     { key: "checkout_session_id", value: session.id },
@@ -134,15 +137,16 @@ export function mapCheckoutToOrderCreateInput(
     shippingAddress: {
       firstName: session.buyerFirstName ?? "",
       lastName: session.buyerLastName ?? "",
+      phone: session.buyerPhone ?? undefined,
       address1: shippingPayload.branchName ?? shippingPayload.address ?? "",
-      city: shippingPayload.cityName ?? "Kyiv",
+      city: shippingPayload.cityName ?? "",
       countryCode: "UA",
-      zip: shippingPayload.postalCode ?? "01001",
+      zip: shippingPayload.postalCode ?? undefined,
     },
-    shippingLines: options?.includeShippingLines === true && session.shippingAmount
+    shippingLines: options?.includeShippingLines === true
       ? [
           {
-            title: session.shippingMethodCode ?? "Nova Poshta",
+            title: shippingLineTitle,
             priceSet: {
               shopMoney: {
                 amount: session.shippingAmount / 100,

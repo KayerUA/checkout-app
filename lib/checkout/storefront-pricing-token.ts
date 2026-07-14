@@ -1,11 +1,11 @@
 import crypto from "node:crypto";
+import { getEnv } from "@/lib/env";
 
 const TOKEN_TTL_SEC = 15 * 60;
 
 function getPricingTokenSecret(): string {
   const secret = process.env.SESSION_SECRET;
   if (secret && secret.length >= 32) return secret;
-  const { getEnv } = require("@/lib/env") as typeof import("@/lib/env");
   return getEnv().SESSION_SECRET;
 }
 

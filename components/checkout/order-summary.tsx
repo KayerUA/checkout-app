@@ -1,5 +1,6 @@
 import { formatMoney } from "@/lib/checkout/pricing";
 import { buildCheckoutLineTitle } from "@/lib/checkout/line-display";
+import type { SavingsSummary } from "@/lib/checkout/savings-summary";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -11,7 +12,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { Loader2, Package, Plus } from "lucide-react";
+import { Loader2, Package, Plus, Tag } from "lucide-react";
 
 type Line = {
   id: string;
@@ -40,6 +41,7 @@ type Props = {
   subtotal: number;
   shippingAmount: number;
   totalAmount: number;
+  savingsSummary?: SavingsSummary | null;
   shippingLabel?: string;
   recommendations?: Recommendation[];
   addingVariantGid?: string | null;
@@ -52,6 +54,7 @@ export function OrderSummary({
   subtotal,
   shippingAmount,
   totalAmount,
+  savingsSummary = null,
   shippingLabel,
   recommendations = [],
   addingVariantGid,
@@ -74,6 +77,7 @@ export function OrderSummary({
             <div className="relative flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-xl border bg-secondary">
               {line.imageUrl ? (
                 // Use a plain image here to avoid remote image domain config churn for Shopify CDN.
+                // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={line.imageUrl}
                   alt={line.imageAlt ?? line.title}
@@ -116,6 +120,7 @@ export function OrderSummary({
                 <div key={item.variantGid} className="flex gap-2 rounded-xl bg-background p-2 ring-1 ring-border">
                   <div className="flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-lg border bg-secondary">
                     {item.imageUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
                       <img
                         src={item.imageUrl}
                         alt={item.imageAlt ?? item.title}
@@ -159,10 +164,40 @@ export function OrderSummary({
 
   const totalsBlock = (
     <>
-      <div className="flex justify-between text-sm text-muted-foreground">
-        <span>Підсумок</span>
-        <span>{formatMoney(subtotal, currency)}</span>
-      </div>
+      {savingsSummary ? (
+        <>
+          <div className="flex justify-between text-sm text-muted-foreground">
+            <span>Сума товарів</span>
+            <span>{formatMoney(savingsSummary.grossSubtotalCents, currency)}</span>
+          </div>
+          {savingsSummary.discountRows.map((row) => (
+            <div key={`${row.title}-${row.amountCents}`} className="flex justify-between gap-3 text-sm">
+              <span className="flex min-w-0 items-center gap-1.5 text-emerald-800">
+                <Tag className="size-3.5 shrink-0" aria-hidden="true" />
+                <span className="truncate">{row.title}</span>
+              </span>
+              <span className="shrink-0 font-semibold text-emerald-700">
+                −{formatMoney(row.amountCents, currency)}
+              </span>
+            </div>
+          ))}
+          <div className="rounded-2xl border border-emerald-200/80 bg-emerald-50/90 px-3 py-2.5 text-sm text-emerald-900">
+            Ви економите{" "}
+            <strong className="font-semibold">
+              {formatMoney(savingsSummary.totalSavingsCents, currency)}
+            </strong>
+          </div>
+          <div className="flex justify-between text-sm font-medium">
+            <span>До оплати</span>
+            <span>{formatMoney(savingsSummary.totalDueCents, currency)}</span>
+          </div>
+        </>
+      ) : (
+        <div className="flex justify-between text-sm text-muted-foreground">
+          <span>Підсумок</span>
+          <span>{formatMoney(subtotal, currency)}</span>
+        </div>
+      )}
       <div className="flex items-start justify-between gap-5 text-sm text-muted-foreground">
         <span className="shrink-0">Доставка</span>
         <span className="text-right leading-5">

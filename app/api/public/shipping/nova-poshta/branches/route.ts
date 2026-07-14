@@ -7,6 +7,6 @@ export async function GET(request: NextRequest) {
   if (!cityRef) {
     return NextResponse.json({ error: "cityRef required" }, { status: 400 });
   }
-  const branches = await searchBranches({ cityRef, query });
+  const branches = await searchBranches({ cityRef, query, limit: 100 });
   return NextResponse.json(branches);
 }

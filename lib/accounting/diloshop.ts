@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { prisma } from "@/lib/db";
 import { getEnv } from "@/lib/env";
 import { writeAutomationLog } from "@/lib/b2b/log";
 import type { ShopifyOrderPayload } from "@/lib/b2b/types";
@@ -48,6 +49,11 @@ export async function notifyDiloshopOrderReady(input: {
     return { skipped: true, reason: "missing_config" };
   }
 
+  const dispatchKey = `${input.order.id}:${input.transactionId}`;
+  const webhookId = `kayer-b2b-bank-paid-${dispatchKey}`;
+  const claimed = await claimBankPaidDispatch(dispatchKey);
+  if (!claimed) return { skipped: true, reason: "already_dispatched", webhookId };
+
   const payload: ShopifyOrderPayload & Record<string, unknown> = {
     ...input.order,
     financial_status: "paid",
@@ -65,22 +71,34 @@ export async function notifyDiloshopOrderReady(input: {
   };
 
   const rawBody = JSON.stringify(payload);
-  const webhookId = `kayer-b2b-bank-paid-${input.order.id}-${input.transactionId}`;
-  const response = await fetch(webhookUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Shopify-Hmac-Sha256": hmacBase64(secret, rawBody),
-      "X-Shopify-Topic": "orders/paid",
-      "X-Shopify-Shop-Domain": input.shopDomain ?? env.SHOPIFY_SHOP_DOMAIN ?? "",
-      "X-Shopify-Webhook-Id": webhookId,
-    },
-    body: rawBody,
-  });
+  try {
+    const response = await fetch(webhookUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Shopify-Hmac-Sha256": hmacBase64(secret, rawBody),
+        "X-Shopify-Topic": "orders/paid",
+        "X-Shopify-Shop-Domain": input.shopDomain ?? env.SHOPIFY_SHOP_DOMAIN ?? "",
+        "X-Shopify-Webhook-Id": webhookId,
+      },
+      body: rawBody,
+    });
 
-  if (!response.ok) {
-    throw new Error(`Diloshop webhook failed: ${response.status} ${await response.text()}`);
+    if (!response.ok) {
+      throw new Error(`Diloshop webhook failed: ${response.status} ${await response.text()}`);
+    }
+  } catch (error) {
+    await releaseBankPaidDispatch(dispatchKey);
+    throw error;
   }
+
+  await prisma.idempotencyKey.update({
+    where: { scope_key: { scope: "diloshop-bank-paid", key: dispatchKey } },
+    data: {
+      responseSnapshot: { status: "SENT", webhookId },
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    },
+  });
 
   await writeAutomationLog({
     shopifyOrderId: String(input.order.id),
@@ -92,4 +110,47 @@ export async function notifyDiloshopOrderReady(input: {
   });
 
   return { ok: true, webhookId };
+}
+
+const DISPATCH_LEASE_MS = 5 * 60 * 1000;
+
+async function claimBankPaidDispatch(key: string): Promise<boolean> {
+  const now = new Date();
+  const leaseExpiresAt = new Date(now.getTime() + DISPATCH_LEASE_MS);
+  try {
+    await prisma.idempotencyKey.create({
+      data: {
+        scope: "diloshop-bank-paid",
+        key,
+        responseSnapshot: { status: "PROCESSING" },
+        expiresAt: leaseExpiresAt,
+      },
+    });
+    return true;
+  } catch {
+    const existing = await prisma.idempotencyKey.findUnique({
+      where: { scope_key: { scope: "diloshop-bank-paid", key } },
+    });
+    if (!existing || (existing.responseSnapshot as { status?: string } | null)?.status === "SENT") {
+      return false;
+    }
+    const reclaimed = await prisma.idempotencyKey.updateMany({
+      where: {
+        id: existing.id,
+        expiresAt: { lt: now },
+      },
+      data: {
+        responseSnapshot: { status: "PROCESSING" },
+        expiresAt: leaseExpiresAt,
+      },
+    });
+    return reclaimed.count === 1;
+  }
+}
+
+async function releaseBankPaidDispatch(key: string) {
+  await prisma.idempotencyKey.updateMany({
+    where: { scope: "diloshop-bank-paid", key },
+    data: { responseSnapshot: { status: "FAILED" }, expiresAt: new Date(0) },
+  });
 }

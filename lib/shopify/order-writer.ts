@@ -8,7 +8,6 @@ import {
 import { ensureSessionLinePricing } from "@/lib/checkout/session-service";
 import { enqueueJob, QUEUE_NAMES } from "@/lib/queue";
 import { logWithCorrelation } from "@/lib/logger";
-import { withIdempotency } from "@/lib/idempotency";
 import { normalizeB2BAttributes, validateFopFields } from "@/lib/b2b/attributes";
 import {
   mergeCheckoutNoteAttributes,
@@ -74,7 +73,9 @@ type SessionForOrder = CheckoutSession & {
   merchant: Merchant;
 };
 
-async function acquireOrderLinkPlaceholder(session: SessionForOrder): Promise<OrderLink> {
+const ORDER_CREATION_LEASE_MS = 2 * 60 * 1000;
+
+async function claimOrderLink(session: SessionForOrder): Promise<OrderLink> {
   try {
     return await prisma.orderLink.create({
       data: {
@@ -91,13 +92,26 @@ async function acquireOrderLinkPlaceholder(session: SessionForOrder): Promise<Or
     if (!existing) throw error;
     if (existing.shopifyOrderGid) return existing;
 
-    const ageMs = Date.now() - existing.createdAt.getTime();
-    if (existing.orderStatus === "CREATING" && ageMs < 2 * 60 * 1000) {
+    const now = new Date();
+    const claimable = existing.orderStatus === "CREATING"
+      ? { orderStatus: "CREATING", updatedAt: { lt: new Date(now.getTime() - ORDER_CREATION_LEASE_MS) } }
+      : { orderStatus: { not: "CREATING" } };
+    const claimed = await prisma.orderLink.updateMany({
+      where: { id: existing.id, shopifyOrderGid: null, ...claimable },
+      data: { orderStatus: "CREATING" },
+    });
+    if (claimed.count !== 1) {
       throw new Error("Shopify order creation already in progress");
     }
-
-    return existing;
+    return prisma.orderLink.findUniqueOrThrow({ where: { id: existing.id } });
   }
+}
+
+async function markOrderLinkCreationFailed(orderLinkId: string) {
+  await prisma.orderLink.updateMany({
+    where: { id: orderLinkId, shopifyOrderGid: null },
+    data: { orderStatus: "CREATION_FAILED" },
+  });
 }
 
 async function finalizeOrderLink(params: {
@@ -152,46 +166,44 @@ function buildBaseCheckoutNoteAttributes(
   );
 }
 
-async function forwardPaidOrderToDiloshop(
+async function dispatchNovaPoshtaFallback(
   shopifySession: NonNullable<Awaited<ReturnType<typeof getMerchantShopifySession>>>,
-  orderId: string,
-  checkoutSessionId: string
+  input: {
+    checkoutSessionId: string;
+    shopifyOrderGid: string;
+  }
 ) {
+  const orderId = input.shopifyOrderGid.replace("gid://shopify/Order/", "");
+
   try {
+    const {
+      isDiloshopNovaPoshtaFallbackConfigured,
+      notifyDiloshopNovaPoshtaFallback,
+    } = await import("@/lib/shipping/diloshop-np-fallback");
+    if (!isDiloshopNovaPoshtaFallbackConfigured()) return;
+
     const response = (await shopifyAdminREST(shopifySession, `orders/${orderId}.json`)) as {
       order: import("@/lib/b2b/types").ShopifyOrderPayload;
     };
-    const { forwardExternalCheckoutOrderToDiloshop } = await import(
-      "@/lib/accounting/diloshop-forward"
-    );
-    await forwardExternalCheckoutOrderToDiloshop({
+    await notifyDiloshopNovaPoshtaFallback({
       order: response.order,
       shopDomain: shopifySession.shop,
-      checkoutSessionId,
+      checkoutSessionId: input.checkoutSessionId,
     });
   } catch (error) {
     logWithCorrelation(
       "warn",
-      "Diloshop forward failed after Shopify order create",
-      { checkoutSessionId },
+      "Diloshop Nova Poshta fallback failed after Shopify order create",
+      {
+        checkoutSessionId: input.checkoutSessionId,
+        shopifyOrderGid: input.shopifyOrderGid,
+      },
       { orderId, error: error instanceof Error ? error.message : String(error) }
     );
   }
 }
 
 export async function createShopifyOrderIdempotent(checkoutSessionId: string) {
-  return withIdempotency("shopify-order", checkoutSessionId, async () => {
-    const existing = await prisma.orderLink.findUnique({
-      where: { checkoutSessionId },
-    });
-    if (existing?.shopifyOrderGid) return existing;
-    if (existing?.orderStatus === "CREATING") {
-      const ageMs = Date.now() - existing.createdAt.getTime();
-      if (ageMs < 2 * 60 * 1000) {
-        throw new Error("Shopify order creation already in progress");
-      }
-    }
-
     const session = await prisma.checkoutSession.findUniqueOrThrow({
       where: { id: checkoutSessionId },
       include: {
@@ -217,8 +229,14 @@ export async function createShopifyOrderIdempotent(checkoutSessionId: string) {
     const shopifySession = await getMerchantShopifySession(session.merchantId);
     if (!shopifySession) throw new Error("Shopify session not found");
 
-    const placeholder = existing ?? (await acquireOrderLinkPlaceholder(session));
-    if (placeholder.shopifyOrderGid) return placeholder;
+    const placeholder = await claimOrderLink(session);
+    if (placeholder.shopifyOrderGid) {
+      await dispatchNovaPoshtaFallback(shopifySession, {
+        checkoutSessionId: session.id,
+        shopifyOrderGid: placeholder.shopifyOrderGid,
+      });
+      return placeholder;
+    }
 
     const sourceIdentifier = session.sourceIdentifier ?? session.id;
     const existingShopifyOrder = await findExistingOrderBySourceIdentifier(
@@ -231,34 +249,57 @@ export async function createShopifyOrderIdempotent(checkoutSessionId: string) {
     );
 
     if (existingShopifyOrder) {
-      return finalizeOrderLink({
+      const orderLink = await finalizeOrderLink({
         orderLinkId: placeholder.id,
         checkoutSessionId: session.id,
         shopifyOrderGid: existingShopifyOrder.id,
         shopifyOrderName: existingShopifyOrder.name,
         orderStatus: "CREATED",
       });
+      await dispatchNovaPoshtaFallback(shopifySession, {
+        checkoutSessionId: session.id,
+        shopifyOrderGid: existingShopifyOrder.id,
+      });
+      return orderLink;
     }
 
-    const orderInput = mapCheckoutToOrderCreateInput(pricedSession, paidAttempt);
-    const response = await shopifyAdminGraphQL<{
+    const orderInput = mapCheckoutToOrderCreateInput(pricedSession, paidAttempt, {
+      includeShippingLines: true,
+    });
+    let response: Awaited<ReturnType<typeof shopifyAdminGraphQL<{
       data: {
         orderCreate: {
           userErrors: Array<{ field: string; message: string }>;
           order: { id: string; name: string };
         };
       };
-    }>(shopifySession, ORDER_CREATE_MUTATION, {
-      order: orderInput,
-      options: {
-        inventoryBehaviour: "BYPASS",
-        sendReceipt: false,
-        sendFulfillmentReceipt: false,
-      },
-    });
+    }>>>;
+    try {
+      response = await shopifyAdminGraphQL<{
+        data: {
+          orderCreate: {
+            userErrors: Array<{ field: string; message: string }>;
+            order: { id: string; name: string };
+          };
+        };
+      }>(shopifySession, ORDER_CREATE_MUTATION, {
+        order: orderInput,
+        options: {
+          inventoryBehaviour: "BYPASS",
+          sendReceipt: false,
+          sendFulfillmentReceipt: false,
+        },
+      });
+    } catch (error) {
+      await markOrderLinkCreationFailed(placeholder.id);
+      throw error;
+    }
 
     const errors = response.data?.orderCreate?.userErrors;
-    if (errors?.length) throw new Error(JSON.stringify(errors));
+    if (errors?.length) {
+      await markOrderLinkCreationFailed(placeholder.id);
+      throw new Error(JSON.stringify(errors));
+    }
 
     const created = response.data.orderCreate.order;
     const orderId = created.id.replace("gid://shopify/Order/", "");
@@ -283,23 +324,17 @@ export async function createShopifyOrderIdempotent(checkoutSessionId: string) {
       );
     }
 
-    try {
-      await forwardPaidOrderToDiloshop(shopifySession, orderId, session.id);
-    } catch (error) {
-      logWithCorrelation(
-        "error",
-        "Diloshop forward failed after Shopify order create",
-        { checkoutSessionId, shopifyOrderGid: created.id },
-        { orderId, error: error instanceof Error ? error.message : String(error) }
-      );
-    }
-
     const orderLink = await finalizeOrderLink({
       orderLinkId: placeholder.id,
       checkoutSessionId: session.id,
       shopifyOrderGid: created.id,
       shopifyOrderName: created.name,
       orderStatus: "CREATED",
+    });
+
+    await dispatchNovaPoshtaFallback(shopifySession, {
+      checkoutSessionId: session.id,
+      shopifyOrderGid: created.id,
     });
 
     await prisma.merchant.update({
@@ -370,135 +405,107 @@ export async function createShopifyOrderIdempotent(checkoutSessionId: string) {
     }
 
     return orderLink;
-  });
 }
 
 export async function createBankInvoiceShopifyOrderIdempotent(publicToken: string) {
-  return withIdempotency("shopify-bank-invoice-order", publicToken, async () => {
-    await ensureSessionLinePricing(publicToken);
-    return prisma.$transaction(async (tx) => {
-      const session = await tx.checkoutSession.findUniqueOrThrow({
-        where: { publicToken },
-        include: {
-          lines: true,
-          paymentAttempts: true,
-          merchant: true,
-          orderLink: true,
-        },
-      });
-      if (session.orderLink?.shopifyOrderGid) return session.orderLink;
-
-      const attrs = normalizeB2BAttributes((session.customAttributes ?? {}) as Record<string, unknown>);
-      if (attrs.buyer_type !== "fop_company" || attrs.payment_preference !== "bank_invoice") {
-        throw new Error("Bank invoice order requires B2B/ФОП attributes");
-      }
-      validateFopFields(attrs);
-
-      const shopifySession = await getMerchantShopifySession(session.merchantId);
-      if (!shopifySession) throw new Error("Shopify session not found");
-
-      const orderInput = mapCheckoutToOrderCreateInput(session, null, {
-        financialStatus: "PENDING",
-        sourceName: "ua_b2b_bank_invoice",
-        includeShippingLines: false,
-      });
-
-      const response = await shopifyAdminGraphQL<{
-        data: {
-          orderCreate: {
-            userErrors: Array<{ field: string; message: string }>;
-            order: { id: string; name: string };
-          };
-        };
-      }>(shopifySession, ORDER_CREATE_MUTATION, {
-        order: orderInput,
-        options: {
-          inventoryBehaviour: "BYPASS",
-          sendReceipt: false,
-          sendFulfillmentReceipt: false,
-        },
-      });
-
-      const errors = response.data?.orderCreate?.userErrors;
-      if (errors?.length) throw new Error(JSON.stringify(errors));
-      const created = response.data.orderCreate.order;
-      const orderId = created.id.replace("gid://shopify/Order/", "");
-
-      try {
-        await shopifyAdminREST(shopifySession, `orders/${orderId}.json`, {
-          method: "PUT",
-          body: {
-            order: {
-              id: Number(orderId),
-              note_attributes: mergeCheckoutNoteAttributes(
-                [
-                  { name: "checkout_session_id", value: session.id },
-                  { name: "payment_provider", value: "BANK_INVOICE" },
-                  { name: "buyer_type", value: "fop_company" },
-                  { name: "payment_preference", value: "bank_invoice" },
-                  { name: "fop_name", value: String(attrs.fop_name ?? "") },
-                  { name: "fop_tax_id", value: String(attrs.fop_tax_id ?? "") },
-                  { name: "fop_legal_address", value: String(attrs.fop_legal_address ?? "") },
-                  { name: "docs_email", value: String(attrs.docs_email ?? session.buyerEmail ?? "") },
-                  { name: "docs_phone", value: String(attrs.docs_phone ?? session.buyerPhone ?? "") },
-                  { name: "accounting_comment", value: String(attrs.accounting_comment ?? "") },
-                ],
-                (session.shippingPayload ?? {}) as NovaPoshtaShippingPayload
-              ),
-            },
-          },
-        });
-      } catch {
-        logWithCorrelation("warn", "B2B note_attributes REST update failed", {
-          checkoutSessionId: session.id,
-          shopifyOrderGid: created.id,
-        });
-      }
-
-      const orderLink = await tx.orderLink.create({
-        data: {
-          checkoutSessionId: session.id,
-          shopifyOrderGid: created.id,
-          shopifyOrderName: created.name,
-          sourceIdentifier: session.sourceIdentifier,
-          orderStatus: "WAITING_BANK_PAYMENT",
-        },
-      });
-
-      await tx.checkoutSession.update({
-        where: { id: session.id },
-        data: { status: "COMPLETED", paymentProvider: "BANK_INVOICE" },
-      });
-
-      logWithCorrelation("info", "Shopify B2B bank invoice order created", {
-        checkoutSessionId: session.id,
-        shopifyOrderGid: created.id,
-        merchantId: session.merchantId,
-      });
-
-      try {
-        const orderResponse = (await shopifyAdminREST(shopifySession, `orders/${orderId}.json`)) as {
-          order: import("@/lib/b2b/types").ShopifyOrderPayload;
-        };
-        const { forwardExternalCheckoutOrderToDiloshop } = await import(
-          "@/lib/accounting/diloshop-forward"
-        );
-        await forwardExternalCheckoutOrderToDiloshop({
-          order: orderResponse.order,
-          shopDomain: shopifySession.shop,
-          checkoutSessionId: session.id,
-          targets: { orders: true, novaPoshta: true },
-        });
-      } catch (error) {
-        logWithCorrelation(
-          "warn",
-          "Diloshop forward failed after B2B bank invoice order create",
-          { checkoutSessionId: session.id, shopifyOrderGid: created.id },
-          { error: error instanceof Error ? error.message : String(error) }
-        );
-      }
-
-      return orderLink;
-    });
+  await ensureSessionLinePricing(publicToken);
+  const session = await prisma.checkoutSession.findUniqueOrThrow({
+    where: { publicToken },
+    include: { lines: true, paymentAttempts: true, merchant: true },
   });
+  const attrs = normalizeB2BAttributes((session.customAttributes ?? {}) as Record<string, unknown>);
+  if (attrs.buyer_type !== "fop_company" || attrs.payment_preference !== "bank_invoice") {
+    throw new Error("Bank invoice order requires B2B/ФОП attributes");
+  }
+  validateFopFields(attrs);
+
+  const shopifySession = await getMerchantShopifySession(session.merchantId);
+  if (!shopifySession) throw new Error("Shopify session not found");
+
+  const placeholder = await claimOrderLink(session);
+  if (placeholder.shopifyOrderGid) return placeholder;
+
+  const existingShopifyOrder = await findExistingOrderBySourceIdentifier(shopifySession, {
+    sourceIdentifier: session.sourceIdentifier ?? session.id,
+    checkoutSessionId: session.id,
+    publicToken: session.publicToken,
+  });
+  if (existingShopifyOrder) {
+    return finalizeOrderLink({
+      orderLinkId: placeholder.id,
+      checkoutSessionId: session.id,
+      shopifyOrderGid: existingShopifyOrder.id,
+      shopifyOrderName: existingShopifyOrder.name,
+      orderStatus: "WAITING_BANK_PAYMENT",
+    });
+  }
+
+  const orderInput = mapCheckoutToOrderCreateInput(session, null, {
+    financialStatus: "PENDING",
+    sourceName: "ua_b2b_bank_invoice",
+    includeShippingLines: true,
+  });
+  let response: { data?: { orderCreate?: { userErrors: Array<{ field: string; message: string }>; order: { id: string; name: string } } } };
+  try {
+    response = await shopifyAdminGraphQL<typeof response>(shopifySession, ORDER_CREATE_MUTATION, {
+      order: orderInput,
+      options: { inventoryBehaviour: "BYPASS", sendReceipt: false, sendFulfillmentReceipt: false },
+    });
+  } catch (error) {
+    await markOrderLinkCreationFailed(placeholder.id);
+    throw error;
+  }
+
+  const errors = response.data?.orderCreate?.userErrors;
+  if (errors?.length || !response.data?.orderCreate?.order) {
+    await markOrderLinkCreationFailed(placeholder.id);
+    throw new Error(errors?.map((error) => error.message).join("; ") || "Shopify order creation failed");
+  }
+  const created = response.data.orderCreate.order;
+  const orderLink = await finalizeOrderLink({
+    orderLinkId: placeholder.id,
+    checkoutSessionId: session.id,
+    shopifyOrderGid: created.id,
+    shopifyOrderName: created.name,
+    orderStatus: "WAITING_BANK_PAYMENT",
+  });
+  const orderId = created.id.replace("gid://shopify/Order/", "");
+
+  try {
+    await shopifyAdminREST(shopifySession, `orders/${orderId}.json`, {
+      method: "PUT",
+      body: {
+        order: {
+          id: Number(orderId),
+          note_attributes: mergeCheckoutNoteAttributes(
+            [
+              { name: "checkout_session_id", value: session.id },
+              { name: "payment_provider", value: "BANK_INVOICE" },
+              { name: "buyer_type", value: "fop_company" },
+              { name: "payment_preference", value: "bank_invoice" },
+              { name: "fop_name", value: String(attrs.fop_name ?? "") },
+              { name: "fop_tax_id", value: String(attrs.fop_tax_id ?? "") },
+              { name: "fop_legal_address", value: String(attrs.fop_legal_address ?? "") },
+              { name: "docs_email", value: String(attrs.docs_email ?? session.buyerEmail ?? "") },
+              { name: "docs_phone", value: String(attrs.docs_phone ?? session.buyerPhone ?? "") },
+              { name: "accounting_comment", value: String(attrs.accounting_comment ?? "") },
+            ],
+            (session.shippingPayload ?? {}) as NovaPoshtaShippingPayload
+          ),
+        },
+      },
+    });
+  } catch {
+    logWithCorrelation("warn", "B2B note_attributes REST update failed", {
+      checkoutSessionId: session.id,
+      shopifyOrderGid: created.id,
+    });
+  }
+
+  logWithCorrelation("info", "Shopify B2B bank invoice order created", {
+    checkoutSessionId: session.id,
+    shopifyOrderGid: created.id,
+    merchantId: session.merchantId,
+  });
+  return orderLink;
 }

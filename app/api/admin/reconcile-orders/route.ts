@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireMerchantSession } from "@/lib/session";
 import { createShopifyOrderIdempotent } from "@/lib/shopify/order-writer";
-import { retryMissingDiloshopForRecentPaidOrders } from "@/lib/accounting/diloshop-retry";
 
 export const runtime = "nodejs";
 
@@ -42,7 +41,5 @@ export async function POST() {
     }
   }
 
-  const diloshopForward = await retryMissingDiloshopForRecentPaidOrders({ take: 20 });
-
-  return NextResponse.json({ checked: pending.length, results, diloshopForward });
+  return NextResponse.json({ checked: pending.length, results });
 }

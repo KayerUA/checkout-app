@@ -52,9 +52,9 @@ describe("Nova Poshta note attributes", () => {
         sourceIdentifier: "chk_1",
         currency: "UAH",
         subtotal: 10000,
-        shippingAmount: 9000,
+        shippingAmount: 0,
         discountAmount: 0,
-        totalAmount: 19000,
+        totalAmount: 10000,
         buyerEmail: "buyer@example.com",
         buyerPhone: "+380501111111",
         buyerFirstName: "Test",
@@ -119,7 +119,8 @@ describe("Nova Poshta note attributes", () => {
         modifiedAtProvider: null,
         createdAt: new Date(),
         updatedAt: new Date(),
-      }
+      },
+      { includeShippingLines: true }
     );
 
     const attrs = Object.fromEntries(
@@ -127,5 +128,12 @@ describe("Nova Poshta note attributes", () => {
     );
     expect(attrs["_delivery_warehouse_Ref"]).toBe("wh-ref-1");
     expect(attrs["_delivery_city_Ref"]).toBe("city-ref-1");
+    expect(order.shippingAddress.phone).toBe("+380501111111");
+    expect(order.shippingLines).toEqual([
+      {
+        title: "Нова Пошта",
+        priceSet: { shopMoney: { amount: 0, currencyCode: "UAH" } },
+      },
+    ]);
   });
 });

@@ -9,8 +9,8 @@ const BRAND = {
   logoUrl: "https://kayer.ua/cdn/shop/t/2/assets/kayer-wordmark.png",
   tagline: "Професійні матеріали для нігтів",
   supportEmail: "office@kayer.ua",
-  supportPhone: "+38 (050) 777 66 56",
-  supportPhoneHref: "tel:+380507776656",
+  supportPhone: "+380 (73) 498 01 23",
+  supportPhoneHref: "tel:+380734980123",
 };
 
 type Props = {

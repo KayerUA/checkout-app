@@ -12,7 +12,6 @@ import {
   type ResolvedCartLinePricing,
 } from "@/lib/checkout/cart-pricing";
 import {
-  fetchPartnerPricingContext,
   fetchPartnerPricingContextByGid,
   normalizeCheckoutEmail,
   partnerUnitPriceFromCatalog,
@@ -20,6 +19,7 @@ import {
 } from "@/lib/checkout/partner-pricing";
 import { verifyStorefrontPricingToken } from "@/lib/checkout/storefront-pricing-token";
 import { buildCheckoutLineTitle } from "@/lib/checkout/line-display";
+import { buildSavingsSummary } from "@/lib/checkout/savings-summary";
 import { calcTotals } from "@/lib/checkout/pricing";
 import { assertTransition } from "@/lib/checkout/state-machine";
 import type { CheckoutStatus, PaymentProvider, Prisma } from "@prisma/client";
@@ -265,11 +265,7 @@ async function resolvePartnerContextForMerchant(input: {
   merchantId: string;
   shopDomain?: string;
   storefrontPricingToken?: string;
-  storefrontCustomerEmail?: string;
-  storefrontCustomerId?: string;
-  verifiedPartnerEmail?: string | null;
   verifiedPartnerGid?: string | null;
-  buyerEmail?: string | null;
 }): Promise<PartnerPricingContext | null> {
   const shopifySession = await getMerchantShopifySession(input.merchantId);
   if (!shopifySession) return null;
@@ -284,33 +280,9 @@ async function resolvePartnerContextForMerchant(input: {
     }
   }
 
-  const storefrontCustomerId = input.storefrontCustomerId?.trim();
-  if (storefrontCustomerId) {
-    const customerGid = storefrontCustomerId.startsWith("gid://")
-      ? storefrontCustomerId
-      : `gid://shopify/Customer/${storefrontCustomerId}`;
-    const byStorefrontId = await fetchPartnerPricingContextByGid(shopifySession, customerGid);
-    if (byStorefrontId) return byStorefrontId;
-  }
-
   const verifiedGid = input.verifiedPartnerGid?.trim();
   if (verifiedGid) {
     return fetchPartnerPricingContextByGid(shopifySession, verifiedGid);
-  }
-
-  const verified = normalizeCheckoutEmail(input.verifiedPartnerEmail);
-  if (verified) {
-    return fetchPartnerPricingContext(shopifySession, verified);
-  }
-
-  const storefront = normalizeCheckoutEmail(input.storefrontCustomerEmail);
-  if (storefront) {
-    return fetchPartnerPricingContext(shopifySession, storefront);
-  }
-
-  const buyer = normalizeCheckoutEmail(input.buyerEmail);
-  if (buyer) {
-    return fetchPartnerPricingContext(shopifySession, buyer);
   }
 
   return null;
@@ -318,15 +290,11 @@ async function resolvePartnerContextForMerchant(input: {
 
 async function resolvePartnerContextForSession(input: {
   merchantId: string;
-  verifiedPartnerEmail?: string | null;
   verifiedPartnerGid?: string | null;
-  buyerEmail?: string | null;
 }): Promise<PartnerPricingContext | null> {
   return resolvePartnerContextForMerchant({
     merchantId: input.merchantId,
-    verifiedPartnerEmail: input.verifiedPartnerEmail,
     verifiedPartnerGid: input.verifiedPartnerGid,
-    buyerEmail: input.buyerEmail,
   });
 }
 
@@ -354,16 +322,12 @@ export async function ensureSessionLinePricing(publicToken: string) {
   if (!session.lines.length) return;
 
   const attrs = (session.customAttributes ?? {}) as Record<string, unknown>;
-  const verifiedPartnerEmail =
-    typeof attrs.verifiedPartnerEmail === "string" ? attrs.verifiedPartnerEmail : null;
   const verifiedPartnerGid =
     typeof attrs.partnerCustomerGid === "string" ? attrs.partnerCustomerGid : null;
 
   const partnerContext = await resolvePartnerContextForSession({
     merchantId: session.merchantId,
-    verifiedPartnerEmail,
     verifiedPartnerGid,
-    buyerEmail: session.buyerEmail,
   });
 
   const repricedLines = await resolveAndPriceLines(
@@ -439,12 +403,10 @@ export async function createCheckoutSession(input: CreateCheckoutSessionInput) {
     shopDomain,
   });
 
-  let partnerContext = await resolvePartnerContextForMerchant({
+  const partnerContext = await resolvePartnerContextForMerchant({
     merchantId: input.merchantId,
     shopDomain,
     storefrontPricingToken: input.storefrontPricingToken,
-    storefrontCustomerEmail: input.storefrontCustomerEmail,
-    storefrontCustomerId: input.storefrontCustomerId,
   });
 
   let pricedLines = await resolveAndPriceLines(input.merchantId, input.cartLines, {
@@ -491,6 +453,15 @@ export async function createCheckoutSession(input: CreateCheckoutSessionInput) {
       pricedLines = snapshotLines;
       linesSubtotal = snapshotSubtotal;
       discountAmount = snapshotDiscount;
+    } else if (
+      typeof input.cartTotalCents === "number" &&
+      input.cartLines.every(
+        (line) => typeof line.unitPriceCents === "number" && line.unitPriceCents > 0
+      )
+    ) {
+      pricedLines = snapshotLines;
+      linesSubtotal = snapshotSubtotal;
+      discountAmount = computeCartLevelDiscountCents(linesSubtotal, input.cartTotalCents);
     } else {
       throw new Error("Cart total mismatch — refresh cart and try again");
     }
@@ -521,12 +492,30 @@ export async function createCheckoutSession(input: CreateCheckoutSessionInput) {
     discountAmount
   );
 
-  const session = await prisma.checkoutSession.create({
-    data: {
+  const cartToken = input.cartToken ?? input.ab?.cartToken;
+  const sourceIdentifier = cartToken
+    ? `chk_cart_${crypto
+        .createHash("sha256")
+        .update(
+          JSON.stringify({
+            merchantId: input.merchantId,
+            cartToken,
+            cartLines: input.cartLines.map((line) => ({
+              variantGid: line.variantGid,
+              quantity: line.quantity,
+            })),
+            cartTotalCents: input.cartTotalCents ?? null,
+          })
+        )
+        .digest("hex")
+        .slice(0, 32)}`
+    : `chk_${crypto.randomUUID()}`;
+
+  const data: Prisma.CheckoutSessionUncheckedCreateInput = {
       merchantId: input.merchantId,
       publicToken: crypto.randomUUID(),
       status: "DRAFT",
-      sourceIdentifier: `chk_${crypto.randomUUID()}`,
+      sourceIdentifier,
       subtotal: totals.subtotal,
       discountAmount: totals.discountAmount,
       totalAmount: totals.totalAmount,
@@ -545,6 +534,7 @@ export async function createCheckoutSession(input: CreateCheckoutSessionInput) {
         verifiedPartnerEmail,
         partnerCustomerGid: verifiedPartnerGid,
         pricingMode: partnerContext ? "partner_rules" : "shopify_cart",
+        cartDiscountSnapshot: input.customAttributes?.cartDiscountSnapshot ?? null,
       },
       lines: {
         create: pricedLines.map((line) => ({
@@ -559,11 +549,28 @@ export async function createCheckoutSession(input: CreateCheckoutSessionInput) {
           metadata: line.metadata,
         })),
       },
-    },
-    include: { lines: true, merchant: true },
-  });
+    };
 
-  return session;
+  try {
+    return await prisma.checkoutSession.create({
+      data,
+      include: { lines: true, merchant: true },
+    });
+  } catch (error) {
+    const isUniqueConflict =
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "P2002";
+    if (!isUniqueConflict) throw error;
+
+    const existing = await prisma.checkoutSession.findUnique({
+      where: { sourceIdentifier },
+      include: { lines: true, merchant: true },
+    });
+    if (!existing) throw error;
+    return existing;
+  }
 }
 
 export async function addCheckoutSessionLine(
@@ -583,11 +590,8 @@ export async function addCheckoutSessionLine(
   const attrs = (session.customAttributes ?? {}) as Record<string, unknown>;
   const partnerContext = await resolvePartnerContextForSession({
     merchantId: session.merchantId,
-    verifiedPartnerEmail:
-      typeof attrs.verifiedPartnerEmail === "string" ? attrs.verifiedPartnerEmail : null,
     verifiedPartnerGid:
       typeof attrs.partnerCustomerGid === "string" ? attrs.partnerCustomerGid : null,
-    buyerEmail: session.buyerEmail,
   });
   const [pricedLine] = await resolveAndPriceLines(
     session.merchantId,
@@ -711,6 +715,7 @@ export function serializePublicSession(
   const theme = (session.merchant.themeConfig ?? {}) as Record<string, string>;
   const attrs = (session.customAttributes ?? {}) as Record<string, unknown>;
   const ab = (attrs.ab ?? null) as Record<string, string> | null;
+  const savingsSummary = buildSavingsSummary(session, attrs);
   return {
     publicToken: session.publicToken,
     status: session.status,
@@ -719,6 +724,7 @@ export function serializePublicSession(
     shippingAmount: session.shippingAmount,
     discountAmount: session.discountAmount,
     totalAmount: session.totalAmount,
+    savingsSummary,
     buyerEmail: session.buyerEmail,
     buyerPhone: session.buyerPhone,
     buyerFirstName: session.buyerFirstName,

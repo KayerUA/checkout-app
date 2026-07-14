@@ -35,6 +35,7 @@ export type BranchSearchInput = {
   cityRef: string;
   query?: string;
   includePostomats?: boolean;
+  limit?: number;
 };
 
 export type BranchSearchResult = {
@@ -103,6 +104,7 @@ export async function searchCities(query: string, apiKey?: string) {
 }
 
 export async function searchBranches(input: BranchSearchInput, apiKey?: string) {
+  const limit = Math.min(Math.max(input.limit ?? 100, 1), 100);
   const local = await prisma.novaPoshtaBranch.findMany({
     where: {
       cityRef: input.cityRef,
@@ -115,7 +117,7 @@ export async function searchBranches(input: BranchSearchInput, apiKey?: string) 
           }
         : {}),
     },
-    take: 30,
+    take: limit,
   });
 
   if (local.length > 0) {
@@ -139,7 +141,7 @@ export async function searchBranches(input: BranchSearchInput, apiKey?: string) 
   >(key, "Address", "getWarehouses", {
     CityRef: input.cityRef,
     FindByString: input.query ?? "",
-    Limit: "30",
+    Limit: String(limit),
   });
 
   return warehouses.map((w) => ({
