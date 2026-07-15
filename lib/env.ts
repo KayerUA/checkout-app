@@ -51,6 +51,9 @@ const envSchema = z.object({
   DILOSHOP_WEBHOOK_SECRET: z.string().optional(),
   DILOVOD_API_URL: z.string().url().optional(),
   DILOVOD_API_KEY: z.string().optional(),
+  TG_BOT_TOKEN: z.string().optional(),
+  TG_WEBHOOK_SECRET: z.string().regex(/^[A-Za-z0-9_-]{16,256}$/).optional(),
+  TG_ALLOWED_CHAT_IDS: z.string().optional(),
   CRON_SECRET: z.string().optional(),
 });
 
@@ -113,6 +116,9 @@ export function getEnv(): Env {
     DILOSHOP_WEBHOOK_SECRET: process.env.DILOSHOP_WEBHOOK_SECRET,
     DILOVOD_API_URL: process.env.DILOVOD_API_URL,
     DILOVOD_API_KEY: process.env.DILOVOD_API_KEY,
+    TG_BOT_TOKEN: process.env.TG_BOT_TOKEN,
+    TG_WEBHOOK_SECRET: process.env.TG_WEBHOOK_SECRET,
+    TG_ALLOWED_CHAT_IDS: process.env.TG_ALLOWED_CHAT_IDS,
     CRON_SECRET: process.env.CRON_SECRET,
   });
   return cached;
