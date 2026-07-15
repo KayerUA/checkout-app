@@ -11,8 +11,9 @@ export async function POST(request: NextRequest) {
     );
     return NextResponse.json(result);
   } catch (error) {
+    console.error("Monobank callback rejected", error instanceof Error ? error.message : error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Callback failed" },
+      { error: "Invalid callback" },
       { status: 400 }
     );
   }

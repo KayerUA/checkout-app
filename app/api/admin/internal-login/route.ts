@@ -2,6 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getEnv } from "@/lib/env";
 import { getMerchantSession } from "@/lib/session";
+import crypto from "node:crypto";
+import { checkRateLimit, rateLimitHeaders } from "@/lib/rate-limit";
+
+function passwordsMatch(actual: string, expected: string) {
+  const actualDigest = crypto.createHash("sha256").update(actual).digest();
+  const expectedDigest = crypto.createHash("sha256").update(expected).digest();
+  return crypto.timingSafeEqual(actualDigest, expectedDigest);
+}
 
 function safeNextPath(value: FormDataEntryValue | null) {
   const next = typeof value === "string" ? value : "/admin";
@@ -10,12 +18,27 @@ function safeNextPath(value: FormDataEntryValue | null) {
 
 export async function POST(request: NextRequest) {
   const env = getEnv();
+  const rate = await checkRateLimit(request, {
+    name: "admin-login",
+    limit: 5,
+    windowSeconds: 15 * 60,
+  });
+  if (!rate.allowed) {
+    return NextResponse.json(
+      { error: "Too many login attempts" },
+      { status: 429, headers: rateLimitHeaders(rate) }
+    );
+  }
   const formData = await request.formData();
   const password = String(formData.get("password") ?? "");
-  const expected = env.ADMIN_PASSWORD || env.INTERNAL_JOBS_SECRET;
+  const expected = env.ADMIN_PASSWORD;
   const nextPath = safeNextPath(formData.get("next"));
 
-  if (!expected || password !== expected) {
+  if (!expected) {
+    return NextResponse.json({ error: "Internal login is not configured" }, { status: 503 });
+  }
+
+  if (!passwordsMatch(password, expected)) {
     const url = new URL("/admin", env.APP_URL);
     url.searchParams.set("error", "invalid_admin_password");
     url.searchParams.set("next", nextPath);

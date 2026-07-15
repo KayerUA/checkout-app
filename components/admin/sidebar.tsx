@@ -19,18 +19,18 @@ import {
 import { cn } from "@/lib/utils";
 
 const navItems = [
-  { href: "/admin", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/admin/payments", label: "Payments", icon: CreditCard },
-  { href: "/admin/bank", label: "Bank", icon: Landmark },
-  { href: "/admin/shipping", label: "Shipping", icon: Truck },
-  { href: "/admin/fiscal", label: "Fiscal", icon: Receipt },
-  { href: "/admin/analytics", label: "Analytics", icon: BarChart3 },
-  { href: "/admin/ab-test", label: "A/B Checkout", icon: FlaskConical },
-  { href: "/admin/abandoned", label: "Abandoned", icon: ShoppingCart },
-  { href: "/admin/orders", label: "Orders", icon: Package },
-  { href: "/admin/b2b-orders", label: "B2B Orders", icon: Landmark },
-  { href: "/admin/ops", label: "Operations", icon: Wrench },
-  { href: "/admin/settings", label: "Settings", icon: Settings },
+  { href: "/admin", label: "Огляд", icon: LayoutDashboard },
+  { href: "/admin/payments", label: "Платежі", icon: CreditCard },
+  { href: "/admin/bank", label: "Банк", icon: Landmark },
+  { href: "/admin/shipping", label: "Доставка", icon: Truck },
+  { href: "/admin/fiscal", label: "Фіскалізація", icon: Receipt },
+  { href: "/admin/analytics", label: "Аналітика", icon: BarChart3 },
+  { href: "/admin/ab-test", label: "A/B checkout", icon: FlaskConical },
+  { href: "/admin/abandoned", label: "Покинуті", icon: ShoppingCart },
+  { href: "/admin/orders", label: "Замовлення", icon: Package },
+  { href: "/admin/b2b-orders", label: "B2B-замовлення", icon: Landmark },
+  { href: "/admin/ops", label: "Операції", icon: Wrench },
+  { href: "/admin/settings", label: "Налаштування", icon: Settings },
 ];
 
 export function AdminSidebar() {
@@ -73,16 +73,16 @@ export function AdminSidebar() {
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
             KAYER Checkout
           </p>
-          <h1 className="mt-1 text-lg font-semibold tracking-[-0.02em]">Merchant Admin</h1>
+          <p className="mt-1 text-lg font-semibold tracking-[-0.02em]">Адмінпанель магазину</p>
           <p className="mt-2 text-xs leading-5 text-muted-foreground">
-            Payments, shipping, invoices and operations in one place.
+            Платежі, доставка, рахунки й операції в одному місці.
           </p>
           <div className="mt-4 rounded-2xl border bg-white/64 p-3 shadow-sm">
             <div className="flex items-center justify-between gap-3">
-              <span className="text-xs font-medium text-muted-foreground">Production</span>
+              <span className="text-xs font-medium text-muted-foreground">Продакшн</span>
               <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-200">
                 <span className="size-1.5 rounded-full bg-emerald-500" />
-                Live
+                Працює
               </span>
             </div>
           </div>

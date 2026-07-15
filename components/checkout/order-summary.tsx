@@ -1,8 +1,13 @@
+"use client";
+
+import { useState } from "react";
 import { formatMoney } from "@/lib/checkout/pricing";
 import { buildCheckoutLineTitle } from "@/lib/checkout/line-display";
 import type { SavingsSummary } from "@/lib/checkout/savings-summary";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Card,
   CardContent,
@@ -46,6 +51,10 @@ type Props = {
   recommendations?: Recommendation[];
   addingVariantGid?: string | null;
   onAddRecommendation?: (recommendation: Recommendation) => void;
+  publicToken?: string;
+  pricingMode?: string;
+  appliedDiscountCode?: string | null;
+  onSessionUpdate?: (session: Record<string, unknown>) => void;
 };
 
 export function OrderSummary({
@@ -59,7 +68,91 @@ export function OrderSummary({
   recommendations = [],
   addingVariantGid,
   onAddRecommendation,
+  publicToken,
+  pricingMode = "shopify_cart",
+  appliedDiscountCode = null,
+  onSessionUpdate,
 }: Props) {
+  const [promoCode, setPromoCode] = useState(appliedDiscountCode ?? "");
+  const [promoEditing, setPromoEditing] = useState(!appliedDiscountCode);
+  const [promoLoading, setPromoLoading] = useState(false);
+  const [promoError, setPromoError] = useState<string | null>(null);
+  const showPromoField = pricingMode !== "partner_rules" && Boolean(publicToken && onSessionUpdate);
+
+  async function applyPromoCode() {
+    if (!publicToken || !onSessionUpdate) return;
+    const code = promoCode.trim();
+    if (!code) {
+      setPromoError("Введіть промокод");
+      return;
+    }
+
+    setPromoLoading(true);
+    setPromoError(null);
+    try {
+      const res = await fetch(`/api/public/checkout-sessions/${publicToken}/discount`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Не вдалося застосувати промокод");
+      onSessionUpdate(data);
+      setPromoCode(typeof data.appliedDiscountCode === "string" ? data.appliedDiscountCode : code);
+      setPromoEditing(false);
+    } catch (err) {
+      setPromoError(err instanceof Error ? err.message : "Не вдалося застосувати промокод");
+    } finally {
+      setPromoLoading(false);
+    }
+  }
+
+  const promoBlock = showPromoField ? (
+    <div className="space-y-2 rounded-2xl border bg-secondary/30 p-3">
+      <Label htmlFor="checkout-promo-code" className="text-sm font-medium">
+        Промокод
+      </Label>
+      {appliedDiscountCode && !promoEditing ? (
+        <div className="flex items-center justify-between gap-3 text-sm">
+          <span className="font-medium text-emerald-800">
+            Застосовано: <span className="uppercase">{appliedDiscountCode}</span>
+          </span>
+          <button
+            type="button"
+            className="shrink-0 text-xs font-semibold underline underline-offset-4"
+            onClick={() => {
+              setPromoEditing(true);
+              setPromoError(null);
+            }}
+          >
+            Змінити
+          </button>
+        </div>
+      ) : (
+        <div className="flex gap-2">
+          <Input
+            id="checkout-promo-code"
+            value={promoCode}
+            onChange={(event) => setPromoCode(event.target.value.toUpperCase())}
+            placeholder="Наприклад, KAYERUA5"
+            autoComplete="off"
+            disabled={promoLoading}
+            className="h-10 uppercase"
+          />
+          <Button
+            type="button"
+            variant="outline"
+            className="h-10 shrink-0"
+            onClick={() => void applyPromoCode()}
+            disabled={promoLoading}
+          >
+            {promoLoading ? <Loader2 className="size-4 animate-spin" /> : "Застосувати"}
+          </Button>
+        </div>
+      )}
+      {promoError ? <p className="text-xs text-destructive">{promoError}</p> : null}
+    </div>
+  ) : null;
   const lineVariantTitles = new Set(lines.map((line) => line.title));
   const visibleRecommendations = recommendations
     .filter((item) => !lineVariantTitles.has(`${item.title} — ${item.variantTitle}`))
@@ -142,17 +235,15 @@ export function OrderSummary({
                       {formatMoney(item.unitPrice, currency)}
                     </p>
                   </div>
-                  <Button
+                  <button
                     type="button"
-                    size="sm"
-                    variant="outline"
-                    className="h-8 shrink-0 px-2"
+                    className="inline-flex h-8 shrink-0 items-center justify-center rounded-lg border border-border bg-background px-2 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50"
                     onClick={() => onAddRecommendation(item)}
                     disabled={loading}
                     aria-label={`Додати ${item.title}`}
                   >
                     {loading ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
-                  </Button>
+                  </button>
                 </div>
               );
             })}
@@ -216,6 +307,7 @@ export function OrderSummary({
 
   return (
     <>
+      {promoBlock ? <div className="lg:hidden">{promoBlock}</div> : null}
       <details className="rounded-2xl border bg-card/90 p-4 shadow-[0_18px_45px_rgba(28,20,16,0.07)] ring-1 ring-white/70 backdrop-blur-xl lg:hidden">
         <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
           <span className="flex items-center gap-2 font-medium">
@@ -250,6 +342,7 @@ export function OrderSummary({
       </CardContent>
 
       <CardFooter className="shrink-0 flex-col items-stretch gap-3 border-t">
+        {promoBlock}
         {totalsBlock}
       </CardFooter>
     </Card>

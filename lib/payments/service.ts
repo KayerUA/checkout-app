@@ -7,6 +7,9 @@ import { getEnv } from "@/lib/env";
 import { enqueueJob, QUEUE_NAMES } from "@/lib/queue";
 import { logWithCorrelation } from "@/lib/logger";
 import type { PaymentProvider, PaymentStatus, Prisma } from "@prisma/client";
+import { repriceCheckoutSession } from "@/lib/checkout/session-service";
+import { assertPaymentIntegrity } from "@/lib/payments/integrity";
+import { decryptPaymentConfig } from "@/lib/payments/config-secrets";
 
 function getCallbackUrl(provider: PaymentProvider) {
   if (provider === "LIQPAY") return getLiqPayCallbackUrl();
@@ -78,12 +81,14 @@ export function buildPaymentDescription(input: {
 }
 
 export async function initPaymentForSession(publicToken: string, provider: PaymentProvider) {
+  await repriceCheckoutSession(publicToken);
   const session = await prisma.checkoutSession.findUnique({
     where: { publicToken },
     include: { merchant: { include: { paymentConfigs: true } } },
   });
   if (!session) throw new Error("Session not found");
   if (session.totalAmount <= 0) throw new Error("Invalid amount");
+  if (session.status !== "READY") throw new Error("Checkout is not ready for payment");
 
   const config = session.merchant.paymentConfigs.find(
     (c) => c.provider === provider && c.isEnabled
@@ -105,7 +110,7 @@ export async function initPaymentForSession(publicToken: string, provider: Payme
     }),
     returnUrl,
     callbackUrl,
-    config: config.config as Record<string, string>,
+    config: decryptPaymentConfig(config.config as Record<string, string>),
   });
 
   const attempt = await prisma.paymentAttempt.create({
@@ -177,25 +182,18 @@ export async function handlePaymentCallback(
   });
   if (!paymentAttempt) throw new Error("Payment attempt not found");
 
-  const { recordWebhookDelivery } = await import("@/lib/idempotency");
-  const isNew = await recordWebhookDelivery({
-    source: webhookSource,
-    deliveryId,
-    merchantId: paymentAttempt.checkoutSession.merchantId,
-    payload: rawBody.toString(),
-    verified: false,
-  });
-  if (!isNew) return { duplicate: true };
-
   const configRecord = paymentAttempt.checkoutSession.merchant.paymentConfigs.find(
     (config) => config.provider === provider && config.isEnabled
   );
   if (!configRecord) throw new Error("Payment config not enabled for merchant");
 
+  const decryptedConfig = decryptPaymentConfig(
+    configRecord.config as Record<string, string>
+  );
   const parsed = adapter.verifyCallback(
     rawBody,
     headers,
-    configRecord.config as Record<string, string>
+    decryptedConfig
   );
 
   if (!parsed) throw new Error("Invalid callback");
@@ -209,10 +207,27 @@ export async function handlePaymentCallback(
     const valid = await verifyMonobankCallback(
       bodyBuf,
       headers["x-sign"] ?? "",
-      (configRecord.config as Record<string, string>).token
+      decryptedConfig.token
     );
     if (!valid) throw new Error("Invalid Monobank signature");
   }
+
+  assertPaymentIntegrity({
+    expectedAmount: paymentAttempt.amount,
+    actualAmount: parsed.amount,
+    expectedCurrency: paymentAttempt.checkoutSession.currency,
+    actualCurrency: parsed.currency,
+  });
+
+  const { recordWebhookDelivery } = await import("@/lib/idempotency");
+  const isNew = await recordWebhookDelivery({
+    source: webhookSource,
+    deliveryId,
+    merchantId: paymentAttempt.checkoutSession.merchantId,
+    payload: rawBody.toString(),
+    verified: true,
+  });
+  if (!isNew) return { duplicate: true };
 
   await prisma.webhookDelivery.update({
     where: { source_deliveryId: { source: webhookSource, deliveryId } },

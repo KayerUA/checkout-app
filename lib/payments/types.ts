@@ -12,6 +12,7 @@ export type PaymentCallbackResult = {
   providerReference: string;
   status: "PAID" | "FAILED" | "PENDING";
   amount: number;
+  currency?: string;
   modifiedAt?: Date;
   rawPayload: Record<string, unknown>;
 };

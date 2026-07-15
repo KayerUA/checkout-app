@@ -3,6 +3,11 @@ import { requireMerchantSession } from "@/lib/session";
 import { prisma } from "@/lib/db";
 import { createAuditLog } from "@/lib/audit";
 import { z } from "zod";
+import { apiErrorResponse } from "@/lib/api/errors";
+import {
+  decryptPaymentConfig,
+  encryptPaymentConfig,
+} from "@/lib/payments/config-secrets";
 
 const schema = z.object({
   provider: z.enum(["MONOBANK", "LIQPAY"]),
@@ -12,70 +17,81 @@ const schema = z.object({
 });
 
 export async function GET() {
-  const session = await requireMerchantSession();
-  const configs = await prisma.paymentProviderConfig.findMany({
-    where: { merchantId: session.merchantId },
-  });
-  return NextResponse.json(configs.map((c) => ({
-    ...c,
-    config: { ...c.config as object, privateKey: "[redacted]", token: "[redacted]" },
-  })));
+  try {
+    const session = await requireMerchantSession();
+    const configs = await prisma.paymentProviderConfig.findMany({
+      where: { merchantId: session.merchantId },
+    });
+    return NextResponse.json(configs.map((c) => ({
+      ...c,
+      config: { ...c.config as object, privateKey: "[redacted]", token: "[redacted]" },
+    })));
+  } catch (error) {
+    return apiErrorResponse(error, "Failed to load payment settings");
+  }
 }
 
 export async function PATCH(request: NextRequest) {
-  const session = await requireMerchantSession();
-  const body = schema.parse(await request.json());
-  const existing = await prisma.paymentProviderConfig.findUnique({
-    where: {
-      merchantId_provider: {
-        merchantId: session.merchantId,
-        provider: body.provider,
+  try {
+    const session = await requireMerchantSession();
+    const body = schema.parse(await request.json());
+    const existing = await prisma.paymentProviderConfig.findUnique({
+      where: {
+        merchantId_provider: {
+          merchantId: session.merchantId,
+          provider: body.provider,
+        },
       },
-    },
-  });
+    });
 
-  const existingConfig = (existing?.config ?? {}) as Record<string, string>;
-  const cleanConfig = Object.fromEntries(
-    Object.entries(body.config).filter(([, value]) => typeof value === "string" && value.trim())
-  ) as Record<string, string>;
-  const mergedConfig = { ...existingConfig, ...cleanConfig };
+    const existingConfig = decryptPaymentConfig(
+      (existing?.config ?? {}) as Record<string, string>
+    );
+    const cleanConfig = Object.fromEntries(
+      Object.entries(body.config).filter(([, value]) => typeof value === "string" && value.trim())
+    ) as Record<string, string>;
+    const mergedConfig = { ...existingConfig, ...cleanConfig };
 
-  if (body.provider === "LIQPAY" && body.isEnabled) {
-    if (!mergedConfig.publicKey || !mergedConfig.privateKey) {
-      return NextResponse.json(
-        { error: "LiqPay publicKey and privateKey are required when provider is enabled" },
-        { status: 400 }
-      );
+    if (body.provider === "LIQPAY" && body.isEnabled) {
+      if (!mergedConfig.publicKey || !mergedConfig.privateKey) {
+        return NextResponse.json(
+          { error: "LiqPay publicKey and privateKey are required when provider is enabled" },
+          { status: 400 }
+        );
+      }
     }
-  }
 
-  const config = await prisma.paymentProviderConfig.upsert({
-    where: {
-      merchantId_provider: {
+    const encryptedConfig = encryptPaymentConfig(mergedConfig);
+    const config = await prisma.paymentProviderConfig.upsert({
+      where: {
+        merchantId_provider: {
+          merchantId: session.merchantId,
+          provider: body.provider,
+        },
+      },
+      create: {
         merchantId: session.merchantId,
         provider: body.provider,
+        isEnabled: body.isEnabled,
+        isSandbox: body.isSandbox ?? true,
+        config: encryptedConfig,
       },
-    },
-    create: {
+      update: {
+        isEnabled: body.isEnabled,
+        isSandbox: body.isSandbox,
+        config: encryptedConfig,
+      },
+    });
+
+    await createAuditLog({
       merchantId: session.merchantId,
-      provider: body.provider,
-      isEnabled: body.isEnabled,
-      isSandbox: body.isSandbox ?? true,
-      config: mergedConfig,
-    },
-    update: {
-      isEnabled: body.isEnabled,
-      isSandbox: body.isSandbox,
-      config: mergedConfig,
-    },
-  });
+      action: "payments.updated",
+      entityType: "PaymentProviderConfig",
+      entityId: config.id,
+    });
 
-  await createAuditLog({
-    merchantId: session.merchantId,
-    action: "payments.updated",
-    entityType: "PaymentProviderConfig",
-    entityId: config.id,
-  });
-
-  return NextResponse.json({ ok: true, id: config.id });
+    return NextResponse.json({ ok: true, id: config.id });
+  } catch (error) {
+    return apiErrorResponse(error, "Failed to save payment settings");
+  }
 }

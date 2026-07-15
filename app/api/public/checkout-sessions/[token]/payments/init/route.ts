@@ -3,6 +3,13 @@ import { initPaymentForSession } from "@/lib/payments/service";
 import { createBankInvoiceShopifyOrderIdempotent } from "@/lib/shopify/order-writer";
 import { ensureB2BInvoiceForCheckoutSession } from "@/lib/b2b/checkout";
 import { prisma } from "@/lib/db";
+import { z } from "zod";
+import { checkRateLimit, rateLimitHeaders } from "@/lib/rate-limit";
+import { apiErrorResponse } from "@/lib/api/errors";
+
+const bodySchema = z.object({
+  provider: z.enum(["LIQPAY", "BANK_INVOICE"]),
+}).strict();
 
 export async function POST(
   request: NextRequest,
@@ -10,7 +17,18 @@ export async function POST(
 ) {
   const { token } = await params;
   try {
-    const body = await request.json().catch(() => ({}));
+    const rate = await checkRateLimit(
+      request,
+      { name: "payment-init", limit: 10, windowSeconds: 15 * 60 },
+      token
+    );
+    if (!rate.allowed) {
+      return NextResponse.json(
+        { error: "Too many payment attempts" },
+        { status: 429, headers: rateLimitHeaders(rate) }
+      );
+    }
+    const body = bodySchema.parse(await request.json());
     if (body.provider === "BANK_INVOICE") {
       const order = await createBankInvoiceShopifyOrderIdempotent(token);
       await ensureB2BInvoiceForCheckoutSession(token);
@@ -28,17 +46,13 @@ export async function POST(
         { status: 400 }
       );
     }
-    const provider = body.provider === "LIQPAY" ? "LIQPAY" : "LIQPAY";
-    const result = await initPaymentForSession(token, provider);
+    const result = await initPaymentForSession(token, "LIQPAY");
     return NextResponse.json({
       redirectUrl: result.redirectUrl,
       widgetData: result.widgetData,
       paymentAttemptId: result.attempt.id,
     });
   } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Payment init failed" },
-      { status: 400 }
-    );
+    return apiErrorResponse(error, "Payment initialization failed");
   }
 }

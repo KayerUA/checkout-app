@@ -52,7 +52,7 @@ vi.mock("@/lib/db", () => ({
 }));
 
 vi.mock("@/lib/checkout/session-service", () => ({
-  ensureSessionLinePricing: vi.fn(async () => {}),
+  repriceCheckoutSession: vi.fn(async () => session),
 }));
 vi.mock("@/lib/shopify/session-store", () => ({
   getMerchantShopifySession: vi.fn(async () => ({ shop: "kayer.myshopify.com" })),

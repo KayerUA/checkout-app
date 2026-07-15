@@ -7,6 +7,7 @@ type Check =
   | { status: "ok"; detail?: string }
   | { status: "not_configured"; detail?: string }
   | { status: "disabled"; detail?: string }
+  | { status: "optional"; detail?: string }
   | { status: "stale"; detail?: string }
   | { status: "unavailable"; detail?: string };
 
@@ -22,7 +23,7 @@ async function checkRedisAndWorker(): Promise<{ redis: Check; worker: Check }> {
       redis: { status: "not_configured", detail: "REDIS_URL is not set" },
       worker: workerRequired
         ? { status: "not_configured", detail: "worker heartbeat requires Redis" }
-        : { status: "disabled", detail: "worker heartbeat is not required" },
+        : { status: "optional", detail: "worker is optional; recovery crons are enabled" },
     };
   }
 
@@ -42,7 +43,7 @@ async function checkRedisAndWorker(): Promise<{ redis: Check; worker: Check }> {
         redis: { status: "ok" },
         worker: workerRequired
           ? { status: "stale", detail: "worker heartbeat key is missing" }
-          : { status: "disabled", detail: "worker heartbeat is not required" },
+          : { status: "optional", detail: "worker heartbeat is absent; recovery crons are enabled" },
       };
     }
 
@@ -50,11 +51,11 @@ async function checkRedisAndWorker(): Promise<{ redis: Check; worker: Check }> {
       redis: { status: "ok" },
       worker: { status: "ok", detail: heartbeat },
     };
-  } catch (error) {
+  } catch {
     return {
       redis: {
         status: "unavailable",
-        detail: error instanceof Error ? error.message : "Redis check failed",
+        detail: "Redis check failed",
       },
       worker: { status: "unavailable", detail: "worker heartbeat check skipped" },
     };
@@ -80,7 +81,7 @@ export async function GET() {
       },
       timestamp: new Date().toISOString(),
     });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       {
         status: "degraded",
@@ -88,7 +89,7 @@ export async function GET() {
         checks: {
           database: {
             status: "unavailable",
-            detail: error instanceof Error ? error.message : "Database check failed",
+            detail: "Database check failed",
           },
         },
         timestamp: new Date().toISOString(),

@@ -5,7 +5,23 @@
   "crons": [
     {
       "path": "/api/cron/reconcile-payments",
-      "schedule": "0 0 * * *"
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/reconcile-orders",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/reconcile-fiscal",
+      "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/cron/maintenance?job=abandoned",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/maintenance?job=nova-poshta",
+      "schedule": "0 3 * * *"
     },
     {
       "path": "/api/cron/reconcile-bank-payments",

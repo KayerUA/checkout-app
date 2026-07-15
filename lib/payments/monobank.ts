@@ -65,6 +65,7 @@ export const monobankAdapter: PaymentAdapter = {
       providerReference: parsed.invoiceId as string,
       status,
       amount: parsed.amount as number,
+      currency: Number(parsed.ccy) === 980 ? "UAH" : undefined,
       modifiedAt: parsed.modifiedDate ? new Date(parsed.modifiedDate) : undefined,
       rawPayload: parsed,
     };
@@ -83,6 +84,7 @@ export const monobankAdapter: PaymentAdapter = {
       providerReference,
       status,
       amount: data.amount as number,
+      currency: Number(data.ccy) === 980 ? "UAH" : undefined,
       modifiedAt: data.modifiedDate ? new Date(data.modifiedDate) : undefined,
       rawPayload: data,
     };

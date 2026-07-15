@@ -68,7 +68,7 @@ export async function handleCheckoutAbRouter(request: NextRequest) {
 
   const isProxyRequest = searchParams.has("signature") && searchParams.has("shop");
 
-  if (isProxyRequest && !verifyShopifyAppProxy(searchParams)) {
+  if (!isProxyRequest || !verifyShopifyAppProxy(searchParams)) {
     return NextResponse.json({ error: "Invalid app proxy signature" }, { status: 401 });
   }
 

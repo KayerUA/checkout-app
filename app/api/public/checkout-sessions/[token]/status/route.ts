@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCheckoutSessionByToken } from "@/lib/checkout/session-service";
-import { reconcilePendingPayments } from "@/lib/payments/reconciliation";
-import { createShopifyOrderIdempotent } from "@/lib/shopify/order-writer";
 import { handleCorsPreflight, withCors } from "@/lib/cors";
+import { checkRateLimit, rateLimitHeaders } from "@/lib/rate-limit";
 
 export async function OPTIONS(request: NextRequest) {
   return handleCorsPreflight(request) ?? new NextResponse(null, { status: 204 });
@@ -14,39 +13,37 @@ export async function GET(
 ) {
   const origin = request.headers.get("origin");
   const { token } = await params;
+  const rate = await checkRateLimit(
+    request,
+    { name: "checkout-status", limit: 60, windowSeconds: 60 },
+    token
+  );
+  if (!rate.allowed) {
+    return withCors(
+      NextResponse.json(
+        { error: "Too many status requests" },
+        { status: 429, headers: rateLimitHeaders(rate) }
+      ),
+      origin
+    );
+  }
   const session = await getCheckoutSessionByToken(token);
   if (!session) {
     return withCors(NextResponse.json({ error: "Not found" }, { status: 404 }), origin);
   }
 
-  if (session.status === "PAYMENT_PENDING" && session.paymentAttempts[0]?.status === "PENDING") {
-    await reconcilePendingPayments({ checkoutSessionId: session.id, take: 1 });
-  }
-
-  const refreshed = await getCheckoutSessionByToken(token);
-  if (!refreshed) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
-
-  let finalSession = refreshed;
-  if (refreshed.status === "PAID" && !refreshed.orderLink) {
-    await createShopifyOrderIdempotent(refreshed.id);
-    const withOrder = await getCheckoutSessionByToken(token);
-    if (withOrder) finalSession = withOrder;
-  }
-
-  const latestPayment = finalSession.paymentAttempts[0];
+  const latestPayment = session.paymentAttempts[0];
   return withCors(
     NextResponse.json({
-      status: finalSession.status,
+      status: session.status,
       paymentStatus: latestPayment?.status ?? null,
-      orderLink: finalSession.orderLink
+      orderLink: session.orderLink
         ? {
-            shopifyOrderName: finalSession.orderLink.shopifyOrderName,
-            shopifyOrderGid: finalSession.orderLink.shopifyOrderGid,
+            shopifyOrderName: session.orderLink.shopifyOrderName,
+            shopifyOrderGid: session.orderLink.shopifyOrderGid,
           }
         : null,
-      fiscalReceipt: finalSession.orderLink?.fiscalReceipt ?? null,
+      fiscalReceipt: session.orderLink?.fiscalReceipt ?? null,
     }),
     origin
   );

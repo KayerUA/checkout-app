@@ -2,12 +2,15 @@ import type { PaymentAttempt, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { getPaymentAdapter } from "@/lib/payments";
 import { createShopifyOrderIdempotent } from "@/lib/shopify/order-writer";
+import { assertPaymentIntegrity } from "@/lib/payments/integrity";
+import { decryptPaymentConfig } from "@/lib/payments/config-secrets";
 
 type PendingAttempt = PaymentAttempt & {
   checkoutSession: {
     id: string;
     publicToken: string;
     merchantId: string;
+    currency: string;
     sourceIdentifier: string | null;
     orderLink: { shopifyOrderName: string | null; shopifyOrderGid: string | null } | null;
     merchant: {
@@ -46,7 +49,7 @@ export async function reconcilePendingPaymentAttempt(attempt: PendingAttempt) {
 
   const finalStatus = await adapter.getFinalStatus(
     attempt.providerReference,
-    config.config as Record<string, string>
+    decryptPaymentConfig(config.config as Record<string, string>)
   );
   if (!finalStatus) {
     return {
@@ -56,6 +59,13 @@ export async function reconcilePendingPaymentAttempt(attempt: PendingAttempt) {
       status: "pending",
     };
   }
+
+  assertPaymentIntegrity({
+    expectedAmount: attempt.amount,
+    actualAmount: finalStatus.amount,
+    expectedCurrency: attempt.checkoutSession.currency,
+    actualCurrency: finalStatus.currency,
+  });
 
   await prisma.paymentAttempt.update({
     where: { id: attempt.id },

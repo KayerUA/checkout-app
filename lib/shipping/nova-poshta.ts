@@ -45,6 +45,7 @@ export type BranchSearchResult = {
   type: "branch" | "locker" | "courier";
   cityRef: string;
   cityName: string;
+  postalCode?: string;
   weightLimitKg?: number;
   codAllowed?: boolean;
 };
@@ -121,6 +122,26 @@ export async function searchBranches(input: BranchSearchInput, apiKey?: string) 
   });
 
   if (local.length > 0) {
+    const key = apiKey ?? (await getConfiguredNovaPoshtaApiKey());
+    let postalByRef: Record<string, string> = {};
+    if (key) {
+      try {
+        const warehouses = await novaPoshtaRequest<
+          Array<{ Ref: string; PostalCodeUA?: string }>
+        >(key, "Address", "getWarehouses", {
+          CityRef: input.cityRef,
+          FindByString: input.query ?? "",
+          Limit: String(limit),
+        });
+        postalByRef = Object.fromEntries(
+          warehouses
+            .map((w) => [w.Ref, (w.PostalCodeUA ?? "").trim()] as const)
+            .filter(([, zip]) => zip)
+        );
+      } catch {
+        postalByRef = {};
+      }
+    }
     return local.map((b) => ({
       ref: b.ref,
       number: b.number,
@@ -128,6 +149,7 @@ export async function searchBranches(input: BranchSearchInput, apiKey?: string) 
       type: b.type as BranchSearchResult["type"],
       cityRef: b.cityRef,
       cityName: b.cityName ?? "",
+      postalCode: postalByRef[b.ref],
       weightLimitKg: b.weightLimit ?? undefined,
       codAllowed: b.codAllowed,
     }));
@@ -137,7 +159,14 @@ export async function searchBranches(input: BranchSearchInput, apiKey?: string) 
   if (!key) return [];
 
   const warehouses = await novaPoshtaRequest<
-    Array<{ Ref: string; Number: string; ShortAddress: string; CityRef: string; CityDescription: string }>
+    Array<{
+      Ref: string;
+      Number: string;
+      ShortAddress: string;
+      CityRef: string;
+      CityDescription: string;
+      PostalCodeUA?: string;
+    }>
   >(key, "Address", "getWarehouses", {
     CityRef: input.cityRef,
     FindByString: input.query ?? "",
@@ -151,6 +180,7 @@ export async function searchBranches(input: BranchSearchInput, apiKey?: string) 
     type: "branch" as const,
     cityRef: w.CityRef,
     cityName: w.CityDescription,
+    postalCode: (w.PostalCodeUA ?? "").trim() || undefined,
     codAllowed: true,
   }));
 }

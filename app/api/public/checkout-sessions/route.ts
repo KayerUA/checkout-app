@@ -1,48 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { createCheckoutSession } from "@/lib/checkout/session-service";
 import { prisma } from "@/lib/db";
 import { handleCorsPreflight, withCors } from "@/lib/cors";
 import { getEnv } from "@/lib/env";
-
-const bodySchema = z.object({
-  merchantId: z.string().optional(),
-  shopDomain: z.string().optional(),
-  cartLines: z.array(
-    z.object({
-      variantGid: z.string(),
-      quantity: z.number().int().positive(),
-      unitPriceCents: z.number().int().nonnegative().optional(),
-      originalUnitPriceCents: z.number().int().nonnegative().optional(),
-    })
-  ).min(1),
-  storefrontCustomerEmail: z.string().email().optional(),
-  storefrontCustomerId: z.preprocess(
-    (value) => (value == null || value === "" ? undefined : String(value)),
-    z.string().optional()
-  ),
-  storefrontCustomerFirstName: z.string().optional(),
-  storefrontCustomerLastName: z.string().optional(),
-  storefrontCustomerPhone: z.string().optional(),
-  storefrontPricingToken: z.preprocess(
-    (value) => (value == null || value === "" ? undefined : value),
-    z.string().min(10).optional()
-  ),
-  cartToken: z.string().optional(),
-  cartItemsSubtotalCents: z.number().int().nonnegative().optional(),
-  cartTotalCents: z.number().int().nonnegative().optional(),
-  utm: z.record(z.string(), z.string()).optional(),
-  sourceUrl: z.string().optional(),
-  customAttributes: z.record(z.string(), z.unknown()).optional(),
-  ab: z
-    .object({
-      experimentId: z.string(),
-      visitorId: z.string(),
-      variant: z.string(),
-      cartToken: z.string().optional(),
-    })
-    .optional(),
-});
+import { publicCheckoutSessionCreateSchema } from "@/lib/checkout/public-input";
+import { checkRateLimit, rateLimitHeaders } from "@/lib/rate-limit";
+import { apiErrorResponse } from "@/lib/api/errors";
 
 export async function OPTIONS(request: NextRequest) {
   return handleCorsPreflight(request) ?? new NextResponse(null, { status: 204 });
@@ -52,7 +15,22 @@ export async function POST(request: NextRequest) {
   const origin = request.headers.get("origin");
 
   try {
-    const body = bodySchema.parse(await request.json());
+    const rate = await checkRateLimit(request, {
+      name: "checkout-create",
+      limit: 20,
+      windowSeconds: 60,
+    });
+    if (!rate.allowed) {
+      return withCors(
+        NextResponse.json(
+          { error: "Too many checkout attempts" },
+          { status: 429, headers: rateLimitHeaders(rate) }
+        ),
+        origin
+      );
+    }
+
+    const body = publicCheckoutSessionCreateSchema.parse(await request.json());
 
     let merchantId = body.merchantId;
     if (!merchantId && body.shopDomain) {
@@ -128,12 +106,6 @@ export async function POST(request: NextRequest) {
       origin
     );
   } catch (error) {
-    return withCors(
-      NextResponse.json(
-        { error: error instanceof Error ? error.message : "Failed to create session" },
-        { status: 500 }
-      ),
-      origin
-    );
+    return withCors(apiErrorResponse(error, "Failed to create checkout session"), origin);
   }
 }

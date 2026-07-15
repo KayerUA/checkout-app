@@ -6,6 +6,13 @@ export type MerchantSession = {
   shopDomain: string;
 };
 
+export class UnauthorizedError extends Error {
+  constructor() {
+    super("UNAUTHORIZED");
+    this.name = "UnauthorizedError";
+  }
+}
+
 export function getSessionOptions(): SessionOptions {
   return {
     password: process.env.SESSION_SECRET!,
@@ -26,7 +33,7 @@ export async function getMerchantSession() {
 export async function requireMerchantSession() {
   const session = await getMerchantSession();
   if (!session.merchantId) {
-    throw new Error("UNAUTHORIZED");
+    throw new UnauthorizedError();
   }
   return session;
 }

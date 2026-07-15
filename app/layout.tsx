@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "UA Checkout — External Shopify Checkout",
-  description: "Ukrainian external checkout for Shopify stores",
+  title: "KAYER — оформлення замовлення",
+  description: "Безпечне оформлення замовлення KAYER",
 };
 
 export default function RootLayout({

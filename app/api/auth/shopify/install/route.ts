@@ -3,12 +3,12 @@ import { getShopify } from "@/lib/shopify/client";
 import { getEnv } from "@/lib/env";
 
 export async function GET(request: NextRequest) {
-  const shop = request.nextUrl.searchParams.get("shop");
+  const env = getEnv();
+  const shop = request.nextUrl.searchParams.get("shop") || env.SHOPIFY_SHOP_DOMAIN;
   if (!shop) {
-    return NextResponse.json({ error: "Missing shop parameter" }, { status: 400 });
+    return NextResponse.json({ error: "Shopify shop is not configured" }, { status: 503 });
   }
 
-  const env = getEnv();
   const shopify = getShopify();
   const sanitizedShop = shopify.utils.sanitizeShop(shop, true);
   if (!sanitizedShop) {

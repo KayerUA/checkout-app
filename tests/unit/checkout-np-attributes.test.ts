@@ -14,12 +14,14 @@ describe("Nova Poshta note attributes", () => {
       branchName: "Київ, Пирогівський шлях, 135",
       branchNumber: "135",
       branchType: "branch",
+      postalCode: "01001",
     });
 
     const map = Object.fromEntries(rows.map((row) => [row.name, row.value]));
     expect(map["_delivery_city_Ref"]).toBe("city-ref-1");
     expect(map["_delivery_warehouse_Ref"]).toBe("wh-ref-1");
     expect(map["_delivery_warehouse_Number"]).toBe("135");
+    expect(map["_delivery_warehouse_zip"]).toBe("01001");
     expect(map["Delivery Method"]).toBe("Нова пошта");
   });
 
@@ -67,6 +69,7 @@ describe("Nova Poshta note attributes", () => {
           branchRef: "wh-ref-1",
           branchName: "Київ, Богатирська, 11",
           branchNumber: "11",
+          postalCode: "01001",
         },
         billingPayload: null,
         paymentProvider: "LIQPAY",
@@ -128,6 +131,8 @@ describe("Nova Poshta note attributes", () => {
     );
     expect(attrs["_delivery_warehouse_Ref"]).toBe("wh-ref-1");
     expect(attrs["_delivery_city_Ref"]).toBe("city-ref-1");
+    expect(attrs["_delivery_warehouse_zip"]).toBe("01001");
+    expect(order.shippingAddress.zip).toBe("01001");
     expect(order.shippingAddress.phone).toBe("+380501111111");
     expect(order.shippingLines).toEqual([
       {

@@ -4,10 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { CheckoutProgress } from "@/components/checkout/checkout-progress";
 import { OrderSummary } from "@/components/checkout/order-summary";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { formatMoney } from "@/lib/checkout/pricing";
@@ -56,8 +54,11 @@ type CheckoutData = {
   currency: string;
   subtotal: number;
   shippingAmount: number;
+  discountAmount: number;
   totalAmount: number;
   savingsSummary?: SavingsSummary | null;
+  appliedDiscountCode?: string | null;
+  pricingMode?: string;
   buyerEmail?: string | null;
   buyerPhone?: string | null;
   buyerFirstName?: string | null;
@@ -78,6 +79,7 @@ type Branch = {
   shortAddress: string;
   cityName: string;
   cityRef?: string;
+  postalCode?: string;
   type?: "branch" | "locker" | "courier";
 };
 type BuyerType = "individual" | "fop_company";
@@ -345,7 +347,14 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
   }
 
   async function selectBranch(branch: Branch) {
+    if (!/^\d{5}$/.test(branch.postalCode ?? "")) {
+      setError(
+        "Нова Пошта не повернула поштовий індекс цього відділення. Оновіть пошук або оберіть інше відділення."
+      );
+      return;
+    }
     setSelectingBranchRef(branch.ref);
+    setError(null);
     setBranchListOpen(false);
     setError(null);
     try {
@@ -357,6 +366,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
           branchName: branch.shortAddress,
           branchNumber: branch.number,
           branchType: branch.type ?? "branch",
+          postalCode: branch.postalCode,
         },
       });
       setData(updated);
@@ -404,15 +414,19 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
     }
   }
 
+  const handleSessionUpdate = useCallback((session: Record<string, unknown>) => {
+    setData((current) => ({ ...current, ...(session as Partial<CheckoutData>) }));
+  }, []);
+
   const submitHint = data.shippingPayload?.branchRef
     ? buyerType === "fop_company"
       ? "Після підтвердження підготуємо рахунок."
       : "Після підтвердження відкриємо захищену оплату."
     : "Оберіть відділення або поштомат, щоб продовжити.";
 
-  const submitBar = (formId?: string) => (
+  const submitBar = (formId?: string, compact = false) => (
     <>
-      <div className="mb-2.5 flex items-center justify-between gap-3 text-xs sm:mb-3">
+      <div className={cn("flex items-center justify-between gap-3 text-xs", compact ? "mb-2" : "mb-2.5 sm:mb-3")}>
         <span className="inline-flex min-w-0 items-center gap-1.5 text-muted-foreground">
           <ShieldCheck className="size-3.5 shrink-0" />
           <span className="truncate">Безпечна оплата</span>
@@ -421,11 +435,13 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
           {formatMoney(data.totalAmount, data.currency)}
         </span>
       </div>
-      <Button
+      <button
         type="submit"
         form={formId}
-        size="lg"
-        className="h-13 w-full rounded-full bg-black text-[15px] font-semibold text-white shadow-[0_16px_28px_rgba(0,0,0,0.2)] hover:bg-black/90 sm:h-14 sm:text-base"
+        className={cn(
+          "inline-flex w-full items-center justify-center gap-2 rounded-full bg-black text-[15px] font-semibold text-white shadow-[0_16px_28px_rgba(0,0,0,0.2)] transition-colors hover:bg-black/90 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 sm:h-14 sm:text-base",
+          compact ? "h-11" : "h-13"
+        )}
         disabled={loading || !data.shippingPayload?.branchRef}
       >
         {loading ? (
@@ -436,20 +452,17 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
         ) : (
           buttonText
         )}
-      </Button>
-      <p className="mt-2 text-center text-[11px] leading-4 text-muted-foreground sm:mt-3 sm:text-xs">
-        {submitHint}
-      </p>
-      {!data.shippingPayload?.branchRef ? (
-        <p className="mt-1.5 text-center text-[11px] leading-4 text-amber-700 sm:mt-2 sm:text-xs">
-          Щоб продовжити, оберіть відділення або поштомат Нової Пошти.
+      </button>
+      {!compact ? (
+        <p className="mt-2 text-center text-[11px] leading-4 text-muted-foreground sm:mt-3 sm:text-xs">
+          {submitHint}
         </p>
       ) : null}
     </>
   );
 
   return (
-    <div className="relative mx-auto max-w-[430px] px-2 pb-[calc(7.5rem+env(safe-area-inset-bottom,0px))] sm:max-w-6xl sm:px-6 sm:pb-12">
+    <div className="relative mx-auto max-w-[430px] px-2 pb-[calc(5.5rem+env(safe-area-inset-bottom,0px))] sm:max-w-6xl sm:px-6 sm:pb-12">
       <div className="pointer-events-none absolute inset-x-2 top-0 h-[460px] rounded-[2.75rem] bg-[radial-gradient(circle_at_50%_0%,rgba(255,255,255,0.98),rgba(238,226,218,0.82)_54%,rgba(248,247,245,0.24)_100%)] blur-0 lg:hidden" />
       <div className="relative grid gap-6 lg:grid-cols-[minmax(0,620px)_380px] lg:justify-center lg:gap-8">
         <form
@@ -642,7 +655,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
                 </div>
                 {searchingCities && <Skeleton className="h-10 w-full" />}
                 {cityListOpen && cities.length > 0 && (
-                  <ScrollArea className="h-40 rounded-xl border bg-background">
+                  <div className="h-40 overflow-y-auto rounded-xl border bg-background">
                     <div className="p-1">
                       {cities.map((c) => (
                         <button
@@ -669,7 +682,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
                         </button>
                       ))}
                     </div>
-                  </ScrollArea>
+                  </div>
                 )}
               </div>
 
@@ -698,14 +711,13 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
               )}
 
               {selectedCityRef && !data.shippingPayload?.branchRef && !branchListOpen && (
-                <Button
+                <button
                   type="button"
-                  variant="outline"
-                  className="w-full rounded-xl"
+                  className="h-9 w-full rounded-xl border border-border bg-background px-3 text-sm font-medium transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
                   onClick={() => setBranchListOpen(true)}
                 >
                   Обрати відділення або поштомат
-                </Button>
+                </button>
               )}
 
               {loadingBranches && selectedCityRef && <Skeleton className="h-14 w-full rounded-xl" />}
@@ -722,7 +734,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
                     className="h-10"
                   />
                   {branches.length > 0 ? (
-                    <ScrollArea className="h-48 rounded-xl border bg-background">
+                    <div className="h-48 overflow-y-auto rounded-xl border bg-background">
                       <div className="p-1">
                       {branches.map((b) => {
                         const selected = data.shippingPayload?.branchRef === b.ref;
@@ -749,7 +761,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
                         );
                       })}
                       </div>
-                    </ScrollArea>
+                    </div>
                   ) : !loadingBranches ? (
                     <p className="text-sm text-muted-foreground">
                       Відділення не знайдено. Спробуйте номер або частину адреси.
@@ -794,7 +806,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
                     <CreditCard className="size-4" />
                   </span>
                   <span className="flex-1">
-                    <span className="block text-sm font-medium">LiqPay secure checkout</span>
+                    <span className="block text-sm font-medium">Безпечна оплата LiqPay</span>
                     <span className="block text-xs leading-5 text-muted-foreground">
                       Visa, Mastercard, Apple Pay. Після підтвердження відкриємо захищену сторінку LiqPay.
                     </span>
@@ -857,13 +869,13 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
         </form>
 
         <div
-          className="fixed inset-x-0 bottom-0 z-50 border-t border-black/[0.06] bg-white/96 px-3 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] shadow-[0_-12px_40px_rgba(18,18,18,0.14)] backdrop-blur-xl sm:hidden"
+          className="fixed inset-x-0 bottom-0 z-50 border-t border-black/[0.06] bg-white/96 px-3 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))] shadow-[0_-12px_40px_rgba(18,18,18,0.14)] backdrop-blur-xl sm:hidden"
           aria-label="Підтвердження замовлення"
         >
-          {submitBar("kayer-checkout-form")}
+          {submitBar("kayer-checkout-form", true)}
         </div>
 
-        <div className="order-2 hidden self-start lg:sticky lg:top-6 lg:block lg:pb-2">
+        <div className="order-first space-y-3 self-start lg:order-2 lg:sticky lg:top-6 lg:space-y-0 lg:pb-2">
           <OrderSummary
             lines={data.lines}
             currency={data.currency}
@@ -875,6 +887,10 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
             recommendations={data.recommendations}
             addingVariantGid={addingVariantGid}
             onAddRecommendation={addRecommendation}
+            publicToken={data.publicToken}
+            pricingMode={data.pricingMode}
+            appliedDiscountCode={data.appliedDiscountCode}
+            onSessionUpdate={handleSessionUpdate}
           />
         </div>
       </div>

@@ -24,6 +24,30 @@ type SessionWithRelations = CheckoutSession & {
   paymentAttempts: PaymentAttempt[];
 };
 
+export function allocateProportionalDiscountCents(bases: number[], requestedDiscount: number) {
+  const normalized = bases.map((base) => Math.max(0, Math.round(base)));
+  const subtotal = normalized.reduce((sum, base) => sum + base, 0);
+  const target = Math.min(subtotal, Math.max(0, Math.round(requestedDiscount)));
+  if (subtotal <= 0 || target <= 0) return normalized.map(() => 0);
+
+  const raw = normalized.map((base) => (base * target) / subtotal);
+  const allocated = raw.map((amount) => Math.floor(amount));
+  let remainder = target - allocated.reduce((sum, amount) => sum + amount, 0);
+
+  const order = raw
+    .map((amount, index) => ({ index, fraction: amount - allocated[index] }))
+    .sort((left, right) => right.fraction - left.fraction || left.index - right.index);
+
+  for (const row of order) {
+    if (remainder <= 0) break;
+    if (allocated[row.index] >= normalized[row.index]) continue;
+    allocated[row.index] += 1;
+    remainder -= 1;
+  }
+
+  return allocated;
+}
+
 export function mapCheckoutToOrderCreateInput(
   session: SessionWithRelations,
   paidAttempt: PaymentAttempt | null,
@@ -73,6 +97,24 @@ export function mapCheckoutToOrderCreateInput(
     customAttributes.push({ key: row.name, value: row.value });
   }
 
+  const appliedDiscountCode =
+    typeof sessionAttrs.appliedDiscountCode === "string"
+      ? sessionAttrs.appliedDiscountCode.trim()
+      : "";
+  if (appliedDiscountCode) {
+    customAttributes.push({ key: "discount_code", value: appliedDiscountCode });
+  }
+
+  const lineBases = session.lines.map((line) =>
+    Math.max(0, line.unitPrice * line.quantity - line.lineDiscountAmount)
+  );
+  const sessionCartDiscount = Math.max(0, session.discountAmount ?? 0);
+  const hasExplicitDiscountCode = appliedDiscountCode !== "";
+  const foldedDiscounts = allocateProportionalDiscountCents(
+    lineBases,
+    hasExplicitDiscountCode ? 0 : sessionCartDiscount
+  );
+
   return {
     currency: session.currency,
     email: session.buyerEmail ?? undefined,
@@ -85,6 +127,21 @@ export function mapCheckoutToOrderCreateInput(
         ? "UA external checkout B2B/ФОП order"
         : "UA external checkout order",
     customAttributes,
+    ...(hasExplicitDiscountCode && sessionCartDiscount > 0
+      ? {
+          discountCode: {
+            itemFixedDiscountCode: {
+              code: appliedDiscountCode,
+              amountSet: {
+                shopMoney: {
+                  amount: sessionCartDiscount / 100,
+                  currencyCode: session.currency,
+                },
+              },
+            },
+          },
+        }
+      : {}),
     metafields: [
       {
         namespace: "external_checkout",
@@ -118,8 +175,9 @@ export function mapCheckoutToOrderCreateInput(
           ]
         : []),
     ],
-    lineItems: session.lines.map((line) => {
-      const lineTotal = line.unitPrice * line.quantity - line.lineDiscountAmount;
+    lineItems: session.lines.map((line, index) => {
+      const lineBase = lineBases[index];
+      const lineTotal = Math.max(0, lineBase - foldedDiscounts[index]);
       const effectiveUnit = line.quantity > 0 ? lineTotal / line.quantity : line.unitPrice;
       return {
       variantId: line.variantGid,

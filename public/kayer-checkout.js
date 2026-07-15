@@ -610,6 +610,33 @@
     };
   }
 
+  function readCookie(name) {
+    try {
+      var prefix = name + "=";
+      var rows = document.cookie ? document.cookie.split("; ") : [];
+      for (var i = 0; i < rows.length; i += 1) {
+        if (rows[i].indexOf(prefix) === 0) {
+          return decodeURIComponent(rows[i].slice(prefix.length));
+        }
+      }
+    } catch {}
+    return "";
+  }
+
+  function appliedCartDiscountCode(cart) {
+    var codes = (cart && cart.discount_codes) || [];
+    for (var i = 0; i < codes.length; i += 1) {
+      var row = codes[i];
+      var code = typeof row === "string" ? row : row && (row.code || row.discount_code);
+      if (code && String(code).trim()) return String(code).trim().toUpperCase();
+    }
+
+    // The newsletter cookie is also the checkout fallback when Shopify Ajax cart
+    // doesn't expose the code in cart.discount_codes.
+    var newsletterCode = readCookie("kayer_ua_promo_confirmed");
+    return newsletterCode ? newsletterCode.trim().toUpperCase() : "";
+  }
+
   async function redirectToCheckout(trigger) {
     if (window.__kayerRedirectInProgress) return;
     window.__kayerRedirectInProgress = true;
@@ -638,9 +665,15 @@
       cartToken: cart.token,
       cartItemsSubtotalCents: cart.items_subtotal_price,
       cartTotalCents: cart.total_price,
-      customAttributes: Object.assign(readB2BAttributes(cart.attributes || {}), {
-        cartDiscountSnapshot: buildCartDiscountSnapshot(cart),
-      }),
+      customAttributes: Object.assign(
+        readB2BAttributes(cart.attributes || {}),
+        {
+          cartDiscountSnapshot: buildCartDiscountSnapshot(cart),
+        },
+        appliedCartDiscountCode(cart)
+          ? { appliedDiscountCode: appliedCartDiscountCode(cart) }
+          : {}
+      ),
       sourceUrl: window.location.href,
     };
     if (pricingAuth && pricingAuth.pricingToken) {

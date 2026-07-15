@@ -37,18 +37,18 @@ export default async function PaymentsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Payments"
-        description="LiqPay card checkout status, keys and reconciliation for pending payments."
+        title="Платежі"
+        description="Стан карткових оплат LiqPay, ключі та звірка платежів в очікуванні."
         action={
         <form action="/api/admin/reconcile-payments" method="post">
-          <Button type="submit" variant="outline">Check LiqPay pending payments</Button>
+          <Button type="submit" variant="outline">Перевірити платежі LiqPay</Button>
         </form>
         }
       />
       <div className="grid gap-4 md:grid-cols-3">
-        <StatCard label="LiqPay status" value={liqpay?.isEnabled ? "Enabled" : "Disabled"} icon={<ShieldCheck className="size-4" />} tone={liqpay?.isEnabled ? "success" : "warning"} />
-        <StatCard label="Pending attempts" value={pendingCount} icon={<CreditCard className="size-4" />} tone="warning" />
-        <StatCard label="Failed attempts" value={failedCount} icon={<XCircle className="size-4" />} tone={failedCount ? "danger" : "default"} />
+        <StatCard label="Стан LiqPay" value={liqpay?.isEnabled ? "Увімкнено" : "Вимкнено"} icon={<ShieldCheck className="size-4" />} tone={liqpay?.isEnabled ? "success" : "warning"} />
+        <StatCard label="В очікуванні" value={pendingCount} icon={<CreditCard className="size-4" />} tone="warning" />
+        <StatCard label="Невдалі спроби" value={failedCount} icon={<XCircle className="size-4" />} tone={failedCount ? "danger" : "default"} />
       </div>
       <Card className="bg-card/95 shadow-sm shadow-black/5">
         <CardHeader>

@@ -7,8 +7,9 @@ export async function POST(request: NextRequest) {
     const result = await handlePaymentCallback("LIQPAY", rawBody, {});
     return NextResponse.json(result);
   } catch (error) {
+    console.error("LiqPay callback rejected", error instanceof Error ? error.message : error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Callback failed" },
+      { error: "Invalid callback" },
       { status: 400 }
     );
   }

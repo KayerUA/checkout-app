@@ -20,9 +20,18 @@ import {
 import { verifyStorefrontPricingToken } from "@/lib/checkout/storefront-pricing-token";
 import { buildCheckoutLineTitle } from "@/lib/checkout/line-display";
 import { buildSavingsSummary } from "@/lib/checkout/savings-summary";
+import {
+  CheckoutDiscountError,
+  assertCheckoutPromoAllowed,
+  computeCheckoutDiscountCents,
+  fetchCheckoutDiscountByCode,
+  normalizeDiscountCode,
+  promoDiscountRowTitle,
+} from "@/lib/checkout/discount-code";
 import { calcTotals } from "@/lib/checkout/pricing";
 import { assertTransition } from "@/lib/checkout/state-machine";
 import type { CheckoutStatus, PaymentProvider, Prisma } from "@prisma/client";
+import type { CheckoutSessionPatch } from "@/lib/checkout/public-input";
 
 const VARIANT_QUERY = `
   query GetVariants($ids: [ID!]!) {
@@ -435,7 +444,16 @@ export async function createCheckoutSession(input: CreateCheckoutSessionInput) {
   }
 
   let linesSubtotal = linesSubtotalCents(pricedLines);
-  let discountAmount = partnerContext
+  const inputAttributes = { ...(input.customAttributes ?? {}) };
+  const requestedDiscountCode =
+    typeof inputAttributes.appliedDiscountCode === "string"
+      ? normalizeDiscountCode(inputAttributes.appliedDiscountCode)
+      : "";
+  delete inputAttributes.appliedDiscountCode;
+
+  let validatedDiscountCode = "";
+  let validatedPromoTitle = "";
+  let discountAmount = partnerContext || requestedDiscountCode
     ? 0
     : computeCartLevelDiscountCents(linesSubtotal, input.cartTotalCents);
 
@@ -467,6 +485,20 @@ export async function createCheckoutSession(input: CreateCheckoutSessionInput) {
     }
   }
 
+  if (requestedDiscountCode) {
+    assertCheckoutPromoAllowed(partnerContext ? "partner_rules" : "shopify_cart");
+    const discount = await fetchCheckoutDiscountByCode(input.merchantId, requestedDiscountCode);
+    discountAmount = computeCheckoutDiscountCents({
+      subtotalCents: linesSubtotal,
+      discount,
+    });
+    if (discountAmount <= 0) {
+      throw new CheckoutDiscountError("Промокод не дає знижки для поточного замовлення");
+    }
+    validatedDiscountCode = requestedDiscountCode;
+    validatedPromoTitle = promoDiscountRowTitle(requestedDiscountCode, discount.title);
+  }
+
   const verifiedPartnerEmail =
     partnerContext?.email ??
     tokenIdentity.email ??
@@ -491,6 +523,21 @@ export async function createCheckoutSession(input: CreateCheckoutSessionInput) {
     0,
     discountAmount
   );
+  const cartDiscountSnapshot = validatedDiscountCode
+    ? buildPromoCartDiscountSnapshot(
+        {
+          lines: pricedLines,
+          subtotal: totals.subtotal,
+          shippingAmount: totals.shippingAmount,
+          customAttributes: inputAttributes,
+        },
+        {
+          discountCents: totals.discountAmount,
+          promoTitle: validatedPromoTitle,
+          pricingMode: "shopify_cart",
+        }
+      )
+    : inputAttributes.cartDiscountSnapshot ?? null;
 
   const cartToken = input.cartToken ?? input.ab?.cartToken;
   const sourceIdentifier = cartToken
@@ -505,6 +552,7 @@ export async function createCheckoutSession(input: CreateCheckoutSessionInput) {
               quantity: line.quantity,
             })),
             cartTotalCents: input.cartTotalCents ?? null,
+            appliedDiscountCode: validatedDiscountCode || null,
           })
         )
         .digest("hex")
@@ -524,7 +572,7 @@ export async function createCheckoutSession(input: CreateCheckoutSessionInput) {
       buyerFirstName: storefrontCustomerFirstName,
       buyerLastName: storefrontCustomerLastName,
       customAttributes: {
-        ...(input.customAttributes ?? {}),
+        ...inputAttributes,
         utm: input.utm ?? {},
         buyerIp: input.buyerIp ?? null,
         sourceUrl: input.sourceUrl ?? null,
@@ -534,7 +582,8 @@ export async function createCheckoutSession(input: CreateCheckoutSessionInput) {
         verifiedPartnerEmail,
         partnerCustomerGid: verifiedPartnerGid,
         pricingMode: partnerContext ? "partner_rules" : "shopify_cart",
-        cartDiscountSnapshot: input.customAttributes?.cartDiscountSnapshot ?? null,
+        cartDiscountSnapshot,
+        ...(validatedDiscountCode ? { appliedDiscountCode: validatedDiscountCode } : {}),
       },
       lines: {
         create: pricedLines.map((line) => ({
@@ -641,18 +690,7 @@ export async function getCheckoutSessionByToken(publicToken: string) {
 
 export async function updateCheckoutSession(
   publicToken: string,
-  data: {
-    buyerEmail?: string;
-    buyerPhone?: string;
-    buyerFirstName?: string;
-    buyerLastName?: string;
-    shippingMethodCode?: string;
-    shippingProvider?: string;
-    shippingPayload?: Record<string, unknown>;
-    paymentProvider?: PaymentProvider;
-    customAttributes?: Record<string, unknown>;
-    status?: CheckoutStatus;
-  }
+  data: CheckoutSessionPatch
 ) {
   const existing = await prisma.checkoutSession.findUnique({
     where: { publicToken },
@@ -666,7 +704,14 @@ export async function updateCheckoutSession(
   return prisma.checkoutSession.update({
     where: { publicToken },
     data: {
-      ...data,
+      buyerEmail: data.buyerEmail,
+      buyerPhone: data.buyerPhone,
+      buyerFirstName: data.buyerFirstName,
+      buyerLastName: data.buyerLastName,
+      shippingMethodCode: data.shippingMethodCode,
+      shippingProvider: data.shippingProvider,
+      paymentProvider: data.paymentProvider as PaymentProvider | undefined,
+      status: data.status as CheckoutStatus | undefined,
       customAttributes: data.customAttributes
         ? ({
             ...((existing.customAttributes ?? {}) as Record<string, unknown>),
@@ -689,7 +734,150 @@ export async function updateCheckoutSession(
 
 export async function repriceCheckoutSession(publicToken: string, shippingAmount?: number) {
   await ensureSessionLinePricing(publicToken);
+  const session = await getCheckoutSessionByToken(publicToken);
+  const attrs = (session?.customAttributes ?? {}) as Record<string, unknown>;
+  if (typeof attrs.appliedDiscountCode === "string" && attrs.appliedDiscountCode.trim()) {
+    await applyCheckoutDiscountCode(publicToken, attrs.appliedDiscountCode);
+  }
   return recalcCheckoutSessionTotals(publicToken, shippingAmount);
+}
+
+function lineCatalogCentsForSnapshot(line: {
+  unitPrice: number;
+  compareAtPrice?: number | null;
+  metadata?: unknown;
+}) {
+  const metadata = (line.metadata ?? {}) as Record<string, unknown>;
+  if (typeof metadata.catalogUnitPriceCents === "number" && metadata.catalogUnitPriceCents > 0) {
+    return Math.round(metadata.catalogUnitPriceCents);
+  }
+  if (typeof line.compareAtPrice === "number" && line.compareAtPrice > line.unitPrice) {
+    return Math.round(line.compareAtPrice);
+  }
+  return Math.round(line.unitPrice);
+}
+
+function buildPromoCartDiscountSnapshot(
+  session: {
+    lines: Array<{
+      unitPrice: number;
+      quantity: number;
+      compareAtPrice?: number | null;
+      metadata?: unknown;
+    }>;
+    subtotal: number;
+    shippingAmount: number;
+    customAttributes?: unknown;
+  } | null,
+  input: {
+    discountCents: number;
+    promoTitle: string;
+    pricingMode: string;
+  }
+) {
+  if (!session) throw new Error("Session not found");
+
+  const attrs = (session.customAttributes ?? {}) as Record<string, unknown>;
+  const existingSnapshot = (attrs.cartDiscountSnapshot ?? null) as {
+    grossSubtotalCents?: number;
+    discountRows?: Array<{ title?: string; amountCents?: number }>;
+  } | null;
+
+  const grossFromLines = session.lines.reduce(
+    (sum, line) => sum + lineCatalogCentsForSnapshot(line) * line.quantity,
+    0
+  );
+  const grossSubtotalCents =
+    typeof existingSnapshot?.grossSubtotalCents === "number" && existingSnapshot.grossSubtotalCents > 0
+      ? Math.round(existingSnapshot.grossSubtotalCents)
+      : grossFromLines;
+
+  const lineDiscountCents = Math.max(0, grossSubtotalCents - session.subtotal);
+  const promoPrefix = "Промокод";
+  const discountRows: Array<{ title: string; amountCents: number }> = [];
+
+  for (const row of existingSnapshot?.discountRows ?? []) {
+    const title = String(row?.title ?? "").trim();
+    const amountCents = Math.max(0, Math.round(row?.amountCents ?? 0));
+    if (!title || amountCents <= 0 || title.startsWith(promoPrefix)) continue;
+    discountRows.push({ title, amountCents });
+  }
+
+  if (lineDiscountCents > 0 && !discountRows.some((row) => row.title === "Знижки на товари")) {
+    discountRows.unshift({
+      title: input.pricingMode === "partner_rules" ? "Партнерська знижка" : "Знижки на товари",
+      amountCents: lineDiscountCents,
+    });
+  }
+
+  if (input.discountCents > 0) {
+    discountRows.push({ title: input.promoTitle, amountCents: input.discountCents });
+  }
+
+  const totalDueCents = Math.max(
+    0,
+    session.subtotal + session.shippingAmount - input.discountCents
+  );
+
+  return {
+    grossSubtotalCents,
+    discountRows,
+    totalDueCents,
+    pricingMode: "shopify_cart" as const,
+  };
+}
+
+export async function applyCheckoutDiscountCode(publicToken: string, rawCode: string) {
+  const session = await getCheckoutSessionByToken(publicToken);
+  if (!session) throw new Error("Session not found");
+  if (!["DRAFT", "READY"].includes(session.status)) {
+    throw new Error("Checkout cannot be changed after payment started");
+  }
+
+  const attrs = (session.customAttributes ?? {}) as Record<string, unknown>;
+  const pricingMode = typeof attrs.pricingMode === "string" ? attrs.pricingMode : "shopify_cart";
+  assertCheckoutPromoAllowed(pricingMode);
+
+  const code = normalizeDiscountCode(rawCode);
+  if (!code) {
+    throw new CheckoutDiscountError("Введіть промокод");
+  }
+
+  const discount = await fetchCheckoutDiscountByCode(session.merchantId, code);
+  const subtotalCents = linesSubtotalCents(session.lines);
+  const discountCents = computeCheckoutDiscountCents({ subtotalCents, discount });
+  if (discountCents <= 0) {
+    throw new CheckoutDiscountError("Промокод не дає знижки для поточного замовлення");
+  }
+
+  const promoTitle = promoDiscountRowTitle(code, discount.title);
+  const cartDiscountSnapshot = buildPromoCartDiscountSnapshot(session, {
+    discountCents,
+    promoTitle,
+    pricingMode,
+  });
+  const totals = calcTotals(session.lines, session.shippingAmount, discountCents);
+
+  return prisma.checkoutSession.update({
+    where: { publicToken },
+    data: {
+      subtotal: totals.subtotal,
+      discountAmount: discountCents,
+      totalAmount: totals.totalAmount,
+      status: session.status === "DRAFT" ? "READY" : session.status,
+      customAttributes: {
+        ...attrs,
+        appliedDiscountCode: code,
+        cartDiscountSnapshot,
+      } as Prisma.InputJsonValue,
+    },
+    include: {
+      lines: true,
+      merchant: true,
+      paymentAttempts: { orderBy: { createdAt: "desc" } },
+      orderLink: { include: { fiscalReceipt: true } },
+    },
+  });
 }
 
 export async function markAbandonedSessions(staleMinutes = 60) {
@@ -716,6 +904,20 @@ export function serializePublicSession(
   const attrs = (session.customAttributes ?? {}) as Record<string, unknown>;
   const ab = (attrs.ab ?? null) as Record<string, string> | null;
   const savingsSummary = buildSavingsSummary(session, attrs);
+  const editableAttributes = Object.fromEntries(
+    [
+      "buyer_type",
+      "payment_preference",
+      "fop_name",
+      "fop_tax_id",
+      "fop_legal_address",
+      "docs_email",
+      "docs_phone",
+      "accounting_comment",
+    ]
+      .filter((key) => key in attrs)
+      .map((key) => [key, attrs[key]])
+  );
   return {
     publicToken: session.publicToken,
     status: session.status,
@@ -725,6 +927,9 @@ export function serializePublicSession(
     discountAmount: session.discountAmount,
     totalAmount: session.totalAmount,
     savingsSummary,
+    appliedDiscountCode:
+      typeof attrs.appliedDiscountCode === "string" ? attrs.appliedDiscountCode : null,
+    pricingMode: typeof attrs.pricingMode === "string" ? attrs.pricingMode : "shopify_cart",
     buyerEmail: session.buyerEmail,
     buyerPhone: session.buyerPhone,
     buyerFirstName: session.buyerFirstName,
@@ -733,11 +938,15 @@ export function serializePublicSession(
     shippingProvider: session.shippingProvider,
     shippingPayload: session.shippingPayload,
     paymentProvider: session.paymentProvider,
-    customAttributes: session.customAttributes,
+    customAttributes: editableAttributes,
     lines: session.lines.map((line) => {
       const metadata = (line.metadata ?? {}) as Record<string, unknown>;
       return {
-        ...line,
+        id: line.id,
+        title: line.title,
+        quantity: line.quantity,
+        unitPrice: line.unitPrice,
+        compareAtPrice: line.compareAtPrice,
         imageUrl: typeof metadata.imageUrl === "string" ? metadata.imageUrl : null,
         imageAlt: typeof metadata.imageAlt === "string" ? metadata.imageAlt : line.title,
         productHandle: typeof metadata.productHandle === "string" ? metadata.productHandle : null,

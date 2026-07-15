@@ -53,7 +53,7 @@ export function CheckoutHeader({ logoUrl }: Props) {
           <Badge variant="secondary" className="rounded-full bg-white/70 px-3 py-1 gap-1.5 font-normal ring-1 ring-black/[0.04]">
             <ShieldCheck className="size-3.5" />
             <span className="hidden sm:inline">Безпечна оплата</span>
-            <span className="sm:hidden">Secure</span>
+            <span className="sm:hidden">Безпечно</span>
           </Badge>
         </div>
       </div>

@@ -4,6 +4,9 @@ import {
   serializePublicSession,
   updateCheckoutSession,
 } from "@/lib/checkout/session-service";
+import { checkoutSessionPatchSchema } from "@/lib/checkout/public-input";
+import { checkRateLimit, rateLimitHeaders } from "@/lib/rate-limit";
+import { apiErrorResponse } from "@/lib/api/errors";
 
 export async function GET(
   _request: NextRequest,
@@ -23,15 +26,23 @@ export async function PATCH(
 ) {
   const { token } = await params;
   try {
-    const body = await request.json();
+    const rate = await checkRateLimit(
+      request,
+      { name: "checkout-update", limit: 120, windowSeconds: 60 },
+      token
+    );
+    if (!rate.allowed) {
+      return NextResponse.json(
+        { error: "Too many checkout updates" },
+        { status: 429, headers: rateLimitHeaders(rate) }
+      );
+    }
+    const body = checkoutSessionPatchSchema.parse(await request.json());
     const session = await updateCheckoutSession(token, body);
     return NextResponse.json(serializePublicSession(
       await getCheckoutSessionByToken(session.publicToken)
     ));
   } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Update failed" },
-      { status: 400 }
-    );
+    return apiErrorResponse(error, "Checkout update failed");
   }
 }

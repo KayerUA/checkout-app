@@ -5,7 +5,8 @@ import {
   mapCheckoutToOrderCreateInput,
   ORDER_CREATE_MUTATION,
 } from "@/lib/shopify/order-mapper";
-import { ensureSessionLinePricing } from "@/lib/checkout/session-service";
+import { repriceCheckoutSession } from "@/lib/checkout/session-service";
+import { assertPaymentIntegrity } from "@/lib/payments/integrity";
 import { enqueueJob, QUEUE_NAMES } from "@/lib/queue";
 import { logWithCorrelation } from "@/lib/logger";
 import { normalizeB2BAttributes, validateFopFields } from "@/lib/b2b/attributes";
@@ -213,18 +214,15 @@ export async function createShopifyOrderIdempotent(checkoutSessionId: string) {
       },
     });
 
-    await ensureSessionLinePricing(session.publicToken);
-    const pricedSession = await prisma.checkoutSession.findUniqueOrThrow({
-      where: { id: checkoutSessionId },
-      include: {
-        lines: true,
-        paymentAttempts: true,
-        merchant: true,
-      },
-    });
+    const pricedSession = session;
 
     const paidAttempt = pricedSession.paymentAttempts.find((a) => a.status === "PAID");
     if (!paidAttempt) throw new Error("No successful payment attempt");
+    assertPaymentIntegrity({
+      expectedAmount: pricedSession.totalAmount,
+      actualAmount: paidAttempt.amount,
+      expectedCurrency: pricedSession.currency,
+    });
 
     const shopifySession = await getMerchantShopifySession(session.merchantId);
     if (!shopifySession) throw new Error("Shopify session not found");
@@ -408,7 +406,7 @@ export async function createShopifyOrderIdempotent(checkoutSessionId: string) {
 }
 
 export async function createBankInvoiceShopifyOrderIdempotent(publicToken: string) {
-  await ensureSessionLinePricing(publicToken);
+  await repriceCheckoutSession(publicToken);
   const session = await prisma.checkoutSession.findUniqueOrThrow({
     where: { publicToken },
     include: { lines: true, paymentAttempts: true, merchant: true },

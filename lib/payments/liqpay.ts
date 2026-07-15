@@ -53,6 +53,7 @@ export const liqpayAdapter: PaymentAdapter = {
       providerReference: parsed.order_id,
       status,
       amount: Math.round(Number(parsed.amount) * 100),
+      currency: typeof parsed.currency === "string" ? parsed.currency : undefined,
       modifiedAt: parsed.end_date ? new Date(Number(parsed.end_date)) : undefined,
       rawPayload: parsed,
     };
@@ -91,6 +92,7 @@ export const liqpayAdapter: PaymentAdapter = {
       providerReference,
       status,
       amount: Math.round(Number(parsed.amount ?? 0) * 100),
+      currency: typeof parsed.currency === "string" ? parsed.currency : undefined,
       modifiedAt: parsed.end_date ? new Date(Number(parsed.end_date)) : undefined,
       rawPayload: parsed,
     };

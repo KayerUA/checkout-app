@@ -52,7 +52,7 @@ export default async function AdminDashboardPage({ searchParams }: AdminDashboar
               <LockKeyhole className="size-5" />
             </div>
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-              Internal access
+              Внутрішній доступ
             </p>
             <h1 className="mt-2 text-3xl font-semibold tracking-[-0.03em]">KAYER Checkout Admin</h1>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">
@@ -61,13 +61,13 @@ export default async function AdminDashboardPage({ searchParams }: AdminDashboar
           </div>
           <Card className="bg-card/82 shadow-[0_30px_90px_rgba(28,20,16,0.12)] ring-white/70 backdrop-blur-2xl">
             <CardHeader>
-              <CardTitle>Sign in</CardTitle>
+              <CardTitle>Вхід</CardTitle>
             </CardHeader>
             <CardContent>
               <form action="/api/admin/internal-login" method="post" className="space-y-4">
                 <input type="hidden" name="next" value={nextPath.startsWith("/admin") ? nextPath : "/admin"} />
                 <label className="block space-y-2 text-sm">
-                  <span className="font-medium">Admin password</span>
+                  <span className="font-medium">Пароль адміністратора</span>
                   <input
                     name="password"
                     type="password"
@@ -91,8 +91,13 @@ export default async function AdminDashboardPage({ searchParams }: AdminDashboar
             </CardContent>
           </Card>
           <div className="text-center">
-            <Button nativeButton={false} variant="outline" className="rounded-2xl bg-white/70" render={<Link href="/api/auth/shopify/install" />}>
-              Install on Shopify
+            <Button
+              nativeButton={false}
+              variant="outline"
+              className="rounded-2xl bg-white/70"
+              render={<Link href="/api/auth/shopify/install" />}
+            >
+              Встановити в Shopify
             </Button>
           </div>
         </div>
@@ -168,38 +173,38 @@ export default async function AdminDashboardPage({ searchParams }: AdminDashboar
     <div className="space-y-8">
       <PageHeader
         eyebrow={merchant?.shopDomain ?? "KAYER UA"}
-        title="Dashboard"
-        description="Operational overview for checkout sessions, payments, shipping documents and recovery work."
+        title="Огляд"
+        description="Стан checkout-сесій, платежів, доставки, документів і відновлення замовлень."
         action={
           <div className="flex flex-wrap gap-2">
             <Button nativeButton={false} variant="outline" render={<Link href="/admin/orders" />}>
-              Orders
+              Замовлення
             </Button>
             <Button nativeButton={false} render={<Link href="/admin/payments" />}>
-              Payments
+              Платежі
             </Button>
           </div>
         }
       />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
-        <StatCard label="Today revenue" value={formatMoney(todayRevenue._sum.totalAmount ?? 0, merchant?.defaultCurrency ?? "UAH")} icon={<TrendingUp className="size-4" />} tone="success" />
-        <StatCard label="Paid orders" value={paidCount} helper={`${orderCount} Shopify orders`} icon={<Package className="size-4" />} tone="success" />
-        <StatCard label="Pending payments" value={pendingPayments} icon={<CreditCard className="size-4" />} tone="warning" />
-        <StatCard label="Failed payments" value={failedPayments} icon={<AlertCircle className="size-4" />} tone={failedPayments ? "danger" : "default"} />
-        <StatCard label="Abandoned" value={abandonedCount} icon={<ShoppingCart className="size-4" />} tone="warning" />
-        <StatCard label="Fiscal errors" value={fiscalErrors} icon={<Receipt className="size-4" />} tone={fiscalErrors ? "danger" : "default"} />
+        <StatCard label="Виторг сьогодні" value={formatMoney(todayRevenue._sum.totalAmount ?? 0, merchant?.defaultCurrency ?? "UAH")} icon={<TrendingUp className="size-4" />} tone="success" />
+        <StatCard label="Оплачені замовлення" value={paidCount} helper={`${orderCount} замовлень Shopify`} icon={<Package className="size-4" />} tone="success" />
+        <StatCard label="Платежі в очікуванні" value={pendingPayments} icon={<CreditCard className="size-4" />} tone="warning" />
+        <StatCard label="Невдалі платежі" value={failedPayments} icon={<AlertCircle className="size-4" />} tone={failedPayments ? "danger" : "default"} />
+        <StatCard label="Покинуті checkout" value={abandonedCount} icon={<ShoppingCart className="size-4" />} tone="warning" />
+        <StatCard label="Помилки фіскалізації" value={fiscalErrors} icon={<Receipt className="size-4" />} tone={fiscalErrors ? "danger" : "default"} />
       </div>
 
       <Card className="bg-card/82 shadow-[0_24px_70px_rgba(28,20,16,0.07)] ring-white/70 backdrop-blur-xl">
         <CardHeader>
           <div className="flex items-center justify-between gap-4">
             <div>
-              <CardTitle>Recent orders</CardTitle>
-              <p className="mt-1 text-sm text-muted-foreground">Latest paid, pending and fiscal events.</p>
+              <CardTitle>Останні замовлення</CardTitle>
+              <p className="mt-1 text-sm text-muted-foreground">Останні оплати, очікування та фіскальні події.</p>
             </div>
             <Button nativeButton={false} variant="outline" className="hidden rounded-2xl bg-white/60 sm:inline-flex" render={<Link href="/admin/orders" />}>
-              View all
+              Переглянути всі
             </Button>
           </div>
         </CardHeader>
@@ -208,22 +213,22 @@ export default async function AdminDashboardPage({ searchParams }: AdminDashboar
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Order</TableHead>
-                  <TableHead>Customer</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Payment</TableHead>
-                  <TableHead>Fiscal</TableHead>
-                  <TableHead className="text-right">Total</TableHead>
+                  <TableHead>Замовлення</TableHead>
+                  <TableHead>Клієнт</TableHead>
+                  <TableHead>Статус</TableHead>
+                  <TableHead>Оплата</TableHead>
+                  <TableHead>Фіскалізація</TableHead>
+                  <TableHead className="text-right">Сума</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {recentOrders.map((order) => (
                   <TableRow key={order.id}>
                     <TableCell className="font-medium">
-                      {order.shopifyOrderName ?? order.sourceIdentifier ?? "Pending"}
+                      {order.shopifyOrderName ?? order.sourceIdentifier ?? "Очікує"}
                     </TableCell>
                     <TableCell className="text-muted-foreground">
-                      {order.checkoutSession.buyerEmail ?? order.checkoutSession.buyerPhone ?? "Anonymous"}
+                      {order.checkoutSession.buyerEmail ?? order.checkoutSession.buyerPhone ?? "Без імені"}
                     </TableCell>
                     <TableCell><StatusBadge status={order.orderStatus ?? order.checkoutSession.status} /></TableCell>
                     <TableCell><StatusBadge status={paymentStatusForOrder(order)} /></TableCell>
@@ -236,7 +241,7 @@ export default async function AdminDashboardPage({ searchParams }: AdminDashboar
               </TableBody>
             </Table>
           ) : (
-            <EmptyState title="No orders yet" description="Paid checkout sessions will appear here after Shopify order creation." icon={<Package className="size-4" />} />
+            <EmptyState title="Замовлень ще немає" description="Оплачені checkout-сесії зʼявляться тут після створення замовлення Shopify." icon={<Package className="size-4" />} />
           )}
         </CardContent>
       </Card>

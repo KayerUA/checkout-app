@@ -14,7 +14,7 @@ export function corsHeaders(origin: string | null) {
       process.env.NODE_ENV === "development");
 
   return {
-    "Access-Control-Allow-Origin": allowed ? origin! : ALLOWED_ORIGINS[0] ?? "*",
+    ...(allowed ? { "Access-Control-Allow-Origin": origin! } : {}),
     "Access-Control-Allow-Methods": "GET, POST, PATCH, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
     "Access-Control-Max-Age": "86400",

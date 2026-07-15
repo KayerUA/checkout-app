@@ -27,7 +27,7 @@ test.describe("KAYER checkout rollout", () => {
 
   test("admin install CTA visible when not authenticated", async ({ page }) => {
     await page.goto("/admin");
-    await expect(page.getByText("Install on Shopify")).toBeVisible();
+    await expect(page.getByText("Встановити в Shopify")).toBeVisible();
   });
 
   test("checkout page shows LiqPay only (when session exists)", async ({ page }) => {
