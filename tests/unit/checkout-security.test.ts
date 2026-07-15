@@ -111,6 +111,42 @@ describe("public checkout input", () => {
       }).success
     ).toBe(true);
   });
+
+  it("accepts the contact attributes always emitted by the Shopify storefront bridge", () => {
+    expect(
+      publicCheckoutSessionCreateSchema.safeParse({
+        shopDomain: "9drztb-0x.myshopify.com",
+        cartLines: [
+          {
+            variantGid: "gid://shopify/ProductVariant/1",
+            quantity: 1,
+            unitPriceCents: 68_875,
+            originalUnitPriceCents: 72_500,
+          },
+        ],
+        customAttributes: {
+          buyer_type: "individual",
+          payment_preference: "card",
+          fop_name: "",
+          fop_tax_id: "",
+          fop_legal_address: "",
+          docs_email: "",
+          docs_phone: "",
+          accounting_comment: "",
+          customer_email: "",
+          customer_first_name: "",
+          customer_last_name: "",
+          customer_phone: "",
+          cartDiscountSnapshot: {
+            grossSubtotalCents: 72_500,
+            discountRows: [{ title: "Знижки", amountCents: 3_625 }],
+            totalDueCents: 68_875,
+            pricingMode: "shopify_cart",
+          },
+        },
+      }).success
+    ).toBe(true);
+  });
 });
 
 describe("payment integrity", () => {

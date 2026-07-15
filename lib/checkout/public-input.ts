@@ -82,6 +82,12 @@ const cartDiscountSnapshotSchema = z
   .strict();
 
 const checkoutCreateAttributesSchema = editableCheckoutAttributesSchema.extend({
+  // The Shopify storefront bridge includes these legacy contact attributes on
+  // every checkout request, including for anonymous customers as empty strings.
+  customer_email: email.optional(),
+  customer_first_name: nullableShortText.optional(),
+  customer_last_name: nullableShortText.optional(),
+  customer_phone: z.string().trim().max(32).nullable().optional(),
   cartDiscountSnapshot: cartDiscountSnapshotSchema.optional(),
   appliedDiscountCode: z.string().trim().min(1).max(64).optional(),
 });
