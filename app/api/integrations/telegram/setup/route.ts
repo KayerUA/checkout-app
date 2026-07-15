@@ -29,7 +29,8 @@ export async function POST(request: NextRequest) {
   });
   await telegramApi(env.TG_BOT_TOKEN, "setMyCommands", {
     commands: [
-      { command: "payments", description: "Проверить ожидающие оплаты" },
+      { command: "payments", description: "Сверить оплаты по банковской выписке" },
+      { command: "online_payments", description: "Проверить LiqPay/Monobank" },
       { command: "status", description: "Показать статус оплат" },
       { command: "myid", description: "Показать ID чата" },
       { command: "help", description: "Показать команды" },

@@ -190,6 +190,7 @@ async function finalizeMatchedBankPayment(input: {
     transactionId: input.tx.transaction_id,
     status: "MATCHED",
     shopifyOrderId: input.order.shopifyOrderId,
+    shopifyOrderName: input.order.shopifyOrderName,
     shopifyPaymentTransactionId: shopifyPayment.transaction.id,
     shopifyPaymentCreated: shopifyPayment.created,
   };
@@ -217,6 +218,7 @@ async function finalizeMatchedBankPaymentSafe(input: {
       transactionId: input.tx.transaction_id,
       status: "ERROR" as const,
       shopifyOrderId: input.order.shopifyOrderId,
+      shopifyOrderName: input.order.shopifyOrderName,
       reason: error instanceof Error ? error.message : "finalize_failed",
     };
   }

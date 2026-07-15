@@ -3,8 +3,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getEnv } from "@/lib/env";
 import { reconcilePendingPayments } from "@/lib/payments/reconciliation";
+import { reconcileBankPayments } from "@/lib/reconciliation/service";
 import {
   parseTelegramCommand,
+  summarizeBankReconciliation,
   summarizePaymentReconciliation,
   telegramApi,
   telegramChatIsAllowed,
@@ -97,8 +99,22 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    await sendMessage(env.TG_BOT_TOKEN, chatId, "Запускаю проверку ожидающих оплат…");
-    const result = await reconcilePendingPayments({ take: command.take });
+    if (command.name === "payments") {
+      const days = command.days ?? 7;
+      const to = new Date();
+      const from = new Date(to.getTime() - days * 24 * 60 * 60 * 1000);
+      await sendMessage(
+        env.TG_BOT_TOKEN,
+        chatId,
+        `Сверяю банковские оплаты за ${days} дн.…`
+      );
+      const result = await reconcileBankPayments({ from, to });
+      await sendMessage(env.TG_BOT_TOKEN, chatId, summarizeBankReconciliation(result));
+      return NextResponse.json({ ok: true });
+    }
+
+    await sendMessage(env.TG_BOT_TOKEN, chatId, "Проверяю ожидающие LiqPay/Monobank оплаты…");
+    const result = await reconcilePendingPayments({ take: command.take ?? 20 });
     await sendMessage(env.TG_BOT_TOKEN, chatId, summarizePaymentReconciliation(result));
     return NextResponse.json({ ok: true });
   } catch (error) {
