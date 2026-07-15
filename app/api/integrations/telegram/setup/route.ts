@@ -36,5 +36,20 @@ export async function POST(request: NextRequest) {
     ],
   });
 
-  return NextResponse.json({ ok: true, webhookUrl });
+  const bot = await telegramApi<{ id: number; username?: string }>(env.TG_BOT_TOKEN, "getMe", {});
+  const webhook = await telegramApi<{
+    url: string;
+    pending_update_count: number;
+    last_error_message?: string;
+  }>(env.TG_BOT_TOKEN, "getWebhookInfo", {});
+
+  return NextResponse.json({
+    ok: true,
+    bot: { id: bot.id, username: bot.username ?? null },
+    webhook: {
+      url: webhook.url,
+      pendingUpdates: webhook.pending_update_count,
+      lastError: webhook.last_error_message ?? null,
+    },
+  });
 }
