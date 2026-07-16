@@ -9,6 +9,8 @@ import type { ShopifyOrderPayload } from "@/lib/b2b/types";
 const OPEN_B2B_STATUSES = [
   "INVOICE_SENT",
   "WAITING_BANK_PAYMENT",
+  "PARTIALLY_PAID",
+  "PAYMENT_MATCHED",
   "CREATED",
   "NEEDS_REVIEW",
 ] as const;
@@ -23,6 +25,7 @@ const SHOPIFY_OPEN_ORDERS_QUERY = `
         invoiceNumber: metafield(namespace: "kayer_b2b", key: "invoice_number") { value }
         invoiceAmount: metafield(namespace: "kayer_b2b", key: "invoice_amount_uah") { value }
         fopName: metafield(namespace: "kayer_b2b", key: "fop_name") { value }
+        fopTaxId: metafield(namespace: "kayer_b2b", key: "fop_tax_id") { value }
       }
     }
   }
@@ -35,6 +38,7 @@ type ShopifyOpenOrderNode = {
   invoiceNumber?: { value?: string | null } | null;
   invoiceAmount?: { value?: string | null } | null;
   fopName?: { value?: string | null } | null;
+  fopTaxId?: { value?: string | null } | null;
 };
 
 type RankedMatchCandidate = MatchCandidate & { amountPriority: number };
@@ -67,6 +71,7 @@ export function mergeBankReconciliationCandidates(
       shopifyOrderName: existing.shopifyOrderName ?? candidate.shopifyOrderName,
       invoiceNumber: existing.invoiceNumber ?? candidate.invoiceNumber,
       fopName: existing.fopName ?? candidate.fopName,
+      fopTaxId: existing.fopTaxId ?? candidate.fopTaxId,
       amount: preferCandidateAmount ? candidate.amount : existing.amount,
       currency: preferCandidateAmount ? candidate.currency : existing.currency,
       amountPriority: Math.max(existing.amountPriority, candidate.amountPriority),
@@ -77,6 +82,7 @@ export function mergeBankReconciliationCandidates(
     shopifyOrderName: candidate.shopifyOrderName,
     invoiceNumber: candidate.invoiceNumber,
     fopName: candidate.fopName,
+    fopTaxId: candidate.fopTaxId,
     amount: candidate.amount,
     currency: candidate.currency,
   }));
@@ -109,6 +115,7 @@ async function fetchShopifyOpenBankInvoiceCandidates(): Promise<RankedMatchCandi
       shopifyOrderName: node.name,
       invoiceNumber: node.invoiceNumber?.value?.trim() || null,
       fopName: node.fopName?.value?.trim() || null,
+      fopTaxId: node.fopTaxId?.value?.trim() || null,
       amount: invoiceAmount ?? Number(node.totalPriceSet?.shopMoney?.amount ?? 0),
       currency: node.totalPriceSet?.shopMoney?.currencyCode ?? "UAH",
       amountPriority: invoiceAmount ? 3 : 2,
@@ -141,6 +148,7 @@ export async function buildBankReconciliationCandidates(): Promise<{
       shopifyOrderName: order.shopifyOrderName,
       invoiceNumber: invoice?.number,
       fopName: order.fopName,
+      fopTaxId: order.fopTaxId,
       amount: invoiceAmount ?? Number(order.orderTotalAmount ?? 0),
       currency: order.orderCurrency ?? "UAH",
       amountPriority: invoiceAmount ? 3 : 1,

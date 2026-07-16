@@ -341,6 +341,10 @@ model B2BOrder {
   docsPhone         String?  @map("docs_phone")
   accountingComment String?  @map("accounting_comment")
   orderTotalAmount  Decimal? @map("order_total_amount") @db.Decimal(12, 2)
+  expectedAmount    Decimal? @map("expected_amount_uah") @db.Decimal(12, 2)
+  paidAmount        Decimal  @default(0) @map("paid_amount_uah") @db.Decimal(12, 2)
+  remainingAmount   Decimal? @map("remaining_amount_uah") @db.Decimal(12, 2)
+  paymentStatus     String   @default("UNPAID") @map("payment_status")
   orderCurrency     String?  @map("order_currency")
   status            String   @default("CREATED")
   createdAt         DateTime @default(now()) @map("created_at")
@@ -379,6 +383,7 @@ model BankPayment {
   currency              String
   paymentDescription    String?  @map("payment_description")
   matchedShopifyOrderId String?  @map("matched_shopify_order_id")
+  matchingMethod        String?  @map("matching_method")
   matchConfidence       Decimal? @map("match_confidence") @db.Decimal(4, 2)
   status                String   @default("NEW")
   rawPayload            Json?    @map("raw_payload")

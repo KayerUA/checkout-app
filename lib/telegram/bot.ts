@@ -112,7 +112,15 @@ export function summarizeBankReconciliation(result: {
     transactionId?: string;
   }>;
 }) {
-  const matched = result.results.filter((row) => row.status === "MATCHED");
+  const matchedStatuses = new Set([
+    "MATCHED",
+    "PARTIALLY_PAID",
+    "PAID",
+    "PAID_WITH_OVERPAYMENT",
+  ]);
+  const matched = result.results.filter((row) =>
+    matchedStatuses.has(String(row.status ?? "").toUpperCase())
+  );
   const needsReview = result.results.filter((row) => row.status === "NEEDS_REVIEW").length;
   const errors = result.results.filter((row) => row.status === "ERROR").length;
 
@@ -124,7 +132,15 @@ export function summarizeBankReconciliation(result: {
     const transaction = row.transactionId
       ? ` · транзакция …${row.transactionId.slice(-8)}`
       : "";
-    lines.push(`✅ ${order}${transaction}`);
+    const status = String(row.status ?? "").toUpperCase();
+    const marker = status === "PARTIALLY_PAID" ? "🟡" : "✅";
+    const suffix =
+      status === "PARTIALLY_PAID"
+        ? " · частичная оплата, ждём доплату"
+        : status === "PAID_WITH_OVERPAYMENT"
+          ? " · оплата с переплатой"
+          : "";
+    lines.push(`${marker} ${order}${transaction}${suffix}`);
   }
   lines.push(`Проверено операций: ${result.checked}`);
   if (needsReview) lines.push(`Требуют ручной проверки: ${needsReview}`);

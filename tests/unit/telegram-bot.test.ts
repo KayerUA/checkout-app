@@ -30,15 +30,23 @@ describe("Telegram payments bot", () => {
       checked: 3,
       results: [
         {
-          status: "MATCHED",
+          status: "PARTIALLY_PAID",
           shopifyOrderName: "#UA1201",
           transactionId: "bank-transaction-12345678",
+        },
+        {
+          status: "PAID_WITH_OVERPAYMENT",
+          shopifyOrderName: "#UA1202",
+          transactionId: "bank-transaction-87654321",
         },
         { status: "NEEDS_REVIEW" },
       ],
     });
     expect(matched).toContain("#UA1201");
     expect(matched).toContain("…12345678");
+    expect(matched).toContain("частичная оплата, ждём доплату");
+    expect(matched).toContain("#UA1202");
+    expect(matched).toContain("оплата с переплатой");
     expect(matched).toContain("Требуют ручной проверки: 1");
   });
 

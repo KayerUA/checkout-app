@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  extractBareOrderNumberHints,
   extractInvoiceNumber,
   extractOrderNumberHints,
   matchBankTransaction,
+  normalizeTaxIdentifier,
   parseShopifyOrderName,
 } from "@/lib/reconciliation/matcher";
 import type { BankTransaction } from "@/lib/bank/types";
@@ -10,6 +12,7 @@ import {
   invoiceAmountFromDocumentMetadata,
   mergeBankReconciliationCandidates,
 } from "@/lib/reconciliation/candidates";
+import { calculateBankPaymentProgress } from "@/lib/reconciliation/service";
 
 const baseTx: BankTransaction = {
   provider: "mock",
@@ -39,6 +42,7 @@ const ua1155Candidates = [
     shopifyOrderName: "#UA1155",
     invoiceNumber: "KAYER-UA-2026-000200",
     fopName: "Карапата Тетяна",
+    fopTaxId: "1234567890",
     amount: 7722,
     currency: "UAH",
   },
@@ -188,4 +192,89 @@ describe("B2B bank reconciliation matcher", () => {
     expect(match.status).toBe("MATCHED");
     expect(match.candidate?.shopifyOrderId).toBe("10993912217924");
   });
+
+  it.each([
+    "Оплата замовлення UA1155",
+    "Оплата замовлення UA 1155",
+    "Оплата замовлення ua-1155",
+  ])("matches a different amount by exact tax id and order reference: %s", (description) => {
+    const match = matchBankTransaction(
+      {
+        ...baseTx,
+        amount: 999,
+        payer_tax_id: "123 456-7890",
+        payment_description: description,
+      },
+      ua1155Candidates
+    );
+    expect(match.status).toBe("MATCHED");
+    expect(match.reason).toBe("tax_id_and_order_number");
+    expect(match.confidence).toBe(0.99);
+  });
+
+  it("matches a bare numeric order only with an exact tax id", () => {
+    expect(extractBareOrderNumberHints("Товари 1155 без ПДВ")).toEqual([
+      { full: "UA1155", numeric: 1155 },
+    ]);
+    const match = matchBankTransaction(
+      {
+        ...baseTx,
+        amount: 999,
+        payer_tax_id: "1234567890",
+        payment_description: "Товари 1155 без ПДВ",
+      },
+      ua1155Candidates
+    );
+    expect(match.status).toBe("MATCHED");
+    expect(match.reason).toBe("tax_id_and_numeric_order_number");
+  });
+
+  it("does not auto-match a bare numeric order without the payer tax id", () => {
+    const match = matchBankTransaction(
+      {
+        ...baseTx,
+        amount: 999,
+        payer_tax_id: undefined,
+        payment_description: "Товари 1155 без ПДВ",
+      },
+      ua1155Candidates
+    );
+    expect(match.status).toBe("NEW");
+  });
+
+  it("does not auto-match a mismatched currency even with tax id and order number", () => {
+    const match = matchBankTransaction(
+      {
+        ...baseTx,
+        amount: 999,
+        currency: "EUR",
+        payer_tax_id: "1234567890",
+        payment_description: "Оплата замовлення UA1155",
+      },
+      ua1155Candidates
+    );
+    expect(match.status).toBe("NEEDS_REVIEW");
+  });
+
+  it("normalizes punctuation in tax identifiers", () => {
+    expect(normalizeTaxIdentifier(" UA-12 34/56 ")).toBe("UA123456");
+  });
+
+  it.each([
+    [1000, 999, "PARTIALLY_PAID", 1, 0],
+    [1000, 1000, "PAID", 0, 0],
+    [1000, 1001, "PAID_WITH_OVERPAYMENT", 0, 1],
+  ] as const)(
+    "calculates cumulative payment progress %s/%s as %s",
+    (expected, paid, status, remaining, overpayment) => {
+      expect(calculateBankPaymentProgress(expected, paid)).toMatchObject({
+        status,
+        expectedAmount: expected,
+        paidAmount: paid,
+        remainingAmount: remaining,
+        overpaymentAmount: overpayment,
+        isFullyPaid: paid >= expected,
+      });
+    }
+  );
 });

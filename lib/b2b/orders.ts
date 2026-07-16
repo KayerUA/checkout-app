@@ -250,6 +250,10 @@ export async function createPostPaymentDocuments(input: {
   invoiceNumber: string;
   transactionId: string;
   shopDomain?: string | null;
+  paymentStatus: "PAID" | "PAID_WITH_OVERPAYMENT";
+  paidAmount: number;
+  remainingAmount: number;
+  overpaymentAmount: number;
 }) {
   const existingDocsSent = await prisma.b2BOrder.findUnique({
     where: { shopifyOrderId: String(input.order.id) },
@@ -293,7 +297,10 @@ export async function createPostPaymentDocuments(input: {
     orderId: String(input.order.id),
     metafields: {
       delivery_note_pdf_url: note.document.pdfUrl,
-      bank_payment_status: "PAYMENT_CONFIRMED",
+      bank_payment_status: input.paymentStatus,
+      paid_amount_uah: input.paidAmount.toFixed(2),
+      remaining_amount_uah: input.remainingAmount.toFixed(2),
+      overpayment_amount_uah: input.overpaymentAmount.toFixed(2),
       bank_transaction_id: input.transactionId,
       automation_status: "READY_TO_FULFILL_AFTER_BANK_PAYMENT",
     },

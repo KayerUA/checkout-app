@@ -17,6 +17,51 @@ import type { BankTransaction } from "@/lib/bank/types";
 import type { ShopifyOrderPayload } from "@/lib/b2b/types";
 import type { B2BOrder, Prisma } from "@prisma/client";
 
+export type BankPaymentProgressStatus =
+  | "PARTIALLY_PAID"
+  | "PAID"
+  | "PAID_WITH_OVERPAYMENT";
+
+export function calculateBankPaymentProgress(expectedAmount: number, paidAmount: number) {
+  const expectedCents = Math.max(0, Math.round(expectedAmount * 100));
+  const paidCents = Math.max(0, Math.round(paidAmount * 100));
+  const remainingCents = Math.max(0, expectedCents - paidCents);
+  const overpaymentCents = Math.max(0, paidCents - expectedCents);
+  const status: BankPaymentProgressStatus =
+    paidCents < expectedCents
+      ? "PARTIALLY_PAID"
+      : paidCents === expectedCents
+        ? "PAID"
+        : "PAID_WITH_OVERPAYMENT";
+  return {
+    status,
+    expectedAmount: expectedCents / 100,
+    paidAmount: paidCents / 100,
+    remainingAmount: remainingCents / 100,
+    overpaymentAmount: overpaymentCents / 100,
+    isFullyPaid: paidCents >= expectedCents,
+  };
+}
+
+function paymentPayloadWithMatching(input: {
+  rawPayload: unknown;
+  matchingMethod: string;
+  matchingConfidence: number;
+}) {
+  const raw = input.rawPayload;
+  const base =
+    raw && typeof raw === "object" && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>)
+      : { bank_payload: raw };
+  return {
+    ...base,
+    _reconciliation: {
+      matching_method: input.matchingMethod,
+      matching_confidence: input.matchingConfidence,
+    },
+  } as Prisma.InputJsonValue;
+}
+
 async function saveBankTransaction(tx: BankTransaction) {
   return prisma.bankPayment.upsert({
     where: { transactionId: tx.transaction_id },
@@ -53,60 +98,137 @@ function orderGid(orderId: string) {
   return orderId.startsWith("gid://shopify/Order/") ? orderId : `gid://shopify/Order/${orderId}`;
 }
 
-async function applyCriticalBankPaymentMatch(input: {
+async function attachBankPaymentAndCalculateProgress(input: {
   tx: BankTransaction;
   order: B2BOrder;
+  expectedAmount: number;
   confidence: number;
-  invoiceNumber?: string | null;
+  matchingMethod: string;
 }) {
-  const { tx, order } = input;
+  return prisma.$transaction(async (db) => {
+    const existing = await db.bankPayment.findUnique({
+      where: { transactionId: input.tx.transaction_id },
+      select: { matchedShopifyOrderId: true },
+    });
+    if (
+      existing?.matchedShopifyOrderId &&
+      existing.matchedShopifyOrderId !== input.order.shopifyOrderId
+    ) {
+      throw new Error("Bank transaction is already matched to another order");
+    }
 
-  const shopifyPayment = await markOrderPaidByBankTransfer({
-    shopDomain: order.shopDomain,
-    orderId: order.shopifyOrderId,
-    amount: tx.amount,
-    currency: tx.currency,
-    bankTransactionId: tx.transaction_id,
+    await db.bankPayment.update({
+      where: { transactionId: input.tx.transaction_id },
+      data: {
+        status: "MATCHED",
+        matchedShopifyOrderId: input.order.shopifyOrderId,
+        matchingMethod: input.matchingMethod,
+        matchConfidence: input.confidence,
+        rawPayload: paymentPayloadWithMatching({
+          rawPayload: input.tx.raw_payload,
+          matchingMethod: input.matchingMethod,
+          matchingConfidence: input.confidence,
+        }),
+      },
+    });
+
+    const aggregate = await db.bankPayment.aggregate({
+      where: {
+        matchedShopifyOrderId: input.order.shopifyOrderId,
+        status: "MATCHED",
+        currency: input.tx.currency,
+      },
+      _sum: { amount: true },
+    });
+    const progress = calculateBankPaymentProgress(
+      input.expectedAmount,
+      Number(aggregate._sum.amount ?? 0)
+    );
+
+    await db.b2BOrder.update({
+      where: { shopifyOrderId: input.order.shopifyOrderId },
+      data: {
+        orderTotalAmount: progress.expectedAmount,
+        expectedAmount: progress.expectedAmount,
+        paidAmount: progress.paidAmount,
+        remainingAmount: progress.remainingAmount,
+        paymentStatus: progress.status,
+        status: progress.isFullyPaid ? "PAYMENT_MATCHED" : "PARTIALLY_PAID",
+      },
+    });
+    return progress;
+  }, { isolationLevel: "Serializable" });
+}
+
+async function applyPartialBankPaymentState(input: {
+  tx: BankTransaction;
+  order: B2BOrder;
+  progress: ReturnType<typeof calculateBankPaymentProgress>;
+}) {
+  await syncOrderLinkPaymentStatus(input.order.shopifyOrderId, "WAITING_BANK_PAYMENT");
+  await updateOrderTags({
+    shopDomain: input.order.shopDomain,
+    orderId: input.order.shopifyOrderId,
+    add: [B2B_TAGS.partiallyPaid, B2B_TAGS.waitingIbanPayment],
+    remove: [B2B_TAGS.needsPaymentReview],
   });
-
-  await prisma.bankPayment.update({
-    where: { transactionId: tx.transaction_id },
-    data: {
-      status: "MATCHED",
-      matchedShopifyOrderId: order.shopifyOrderId,
-      matchConfidence: input.confidence,
+  await setOrderMetafields({
+    shopDomain: input.order.shopDomain,
+    orderId: input.order.shopifyOrderId,
+    metafields: {
+      bank_payment_status: input.progress.status,
+      paid_amount_uah: input.progress.paidAmount.toFixed(2),
+      remaining_amount_uah: input.progress.remainingAmount.toFixed(2),
+      overpayment_amount_uah: input.progress.overpaymentAmount.toFixed(2),
+      bank_transaction_id: input.tx.transaction_id,
+      automation_status: "WAITING_BANK_PAYMENT",
     },
   });
+}
 
-  await prisma.b2BOrder.update({
-    where: { shopifyOrderId: order.shopifyOrderId },
-    data: { status: "PAYMENT_MATCHED" },
+async function applyFullyPaidBankPaymentState(input: {
+  tx: BankTransaction;
+  order: B2BOrder;
+  progress: ReturnType<typeof calculateBankPaymentProgress>;
+}) {
+  const shopifyPayment = await markOrderPaidByBankTransfer({
+    shopDomain: input.order.shopDomain,
+    orderId: input.order.shopifyOrderId,
+    amount: input.progress.paidAmount,
+    currency: input.tx.currency,
+    bankTransactionId: input.tx.transaction_id,
   });
-  await syncOrderLinkPaymentStatus(order.shopifyOrderId, "BANK_TRANSFER_PAID");
 
+  await syncOrderLinkPaymentStatus(input.order.shopifyOrderId, "BANK_TRANSFER_PAID");
   await updateOrderTags({
-    shopDomain: order.shopDomain,
-    orderId: order.shopifyOrderId,
-    add: [B2B_TAGS.paymentMatched, B2B_TAGS.bankTransferPaid],
-    remove: [B2B_TAGS.waitingIbanPayment, B2B_TAGS.needsPaymentReview],
+    shopDomain: input.order.shopDomain,
+    orderId: input.order.shopifyOrderId,
+    add: [
+      B2B_TAGS.paymentMatched,
+      B2B_TAGS.bankTransferPaid,
+      ...(input.progress.status === "PAID_WITH_OVERPAYMENT"
+        ? [B2B_TAGS.paidWithOverpayment]
+        : []),
+    ],
+    remove: [
+      B2B_TAGS.waitingIbanPayment,
+      B2B_TAGS.needsPaymentReview,
+      B2B_TAGS.partiallyPaid,
+    ],
   });
-
   await setOrderMetafields({
-    shopDomain: order.shopDomain,
-    orderId: order.shopifyOrderId,
+    shopDomain: input.order.shopDomain,
+    orderId: input.order.shopifyOrderId,
     metafields: {
-      bank_payment_status: "BANK_TRANSFER_PAID",
-      bank_transaction_id: tx.transaction_id,
+      bank_payment_status: input.progress.status,
+      paid_amount_uah: input.progress.paidAmount.toFixed(2),
+      remaining_amount_uah: input.progress.remainingAmount.toFixed(2),
+      overpayment_amount_uah: input.progress.overpaymentAmount.toFixed(2),
+      bank_transaction_id: input.tx.transaction_id,
       shopify_bank_transaction_id: shopifyPayment.transaction.id,
       automation_status: "PAYMENT_CONFIRMED",
     },
   });
-  await updateOrderTags({
-    shopDomain: order.shopDomain,
-    orderId: order.shopifyOrderId,
-    add: [B2B_TAGS.paymentConfirmed],
-  });
-
   return shopifyPayment;
 }
 
@@ -114,6 +236,7 @@ async function completeBankPaymentSideEffects(input: {
   tx: BankTransaction;
   order: B2BOrder;
   invoiceNumber?: string | null;
+  progress: ReturnType<typeof calculateBankPaymentProgress>;
 }) {
   const shopifyOrder = (await getShopifyOrder({
     shopDomain: input.order.shopDomain,
@@ -138,6 +261,13 @@ async function completeBankPaymentSideEffects(input: {
       invoiceNumber: input.invoiceNumber ?? "",
       transactionId: input.tx.transaction_id,
       shopDomain: input.order.shopDomain,
+      paymentStatus:
+        input.progress.status === "PAID_WITH_OVERPAYMENT"
+          ? "PAID_WITH_OVERPAYMENT"
+          : "PAID",
+      paidAmount: input.progress.paidAmount,
+      remainingAmount: input.progress.remainingAmount,
+      overpaymentAmount: input.progress.overpaymentAmount,
     });
     await syncOrderLinkPaymentStatus(input.order.shopifyOrderId, "READY_TO_FULFILL_AFTER_BANK_PAYMENT");
   } catch (error) {
@@ -176,30 +306,61 @@ async function completeBankPaymentSideEffects(input: {
 async function finalizeMatchedBankPayment(input: {
   tx: BankTransaction;
   order: B2BOrder;
+  expectedAmount: number;
   confidence: number;
+  matchingMethod: string;
   invoiceNumber?: string | null;
 }) {
-  const shopifyPayment = await applyCriticalBankPaymentMatch(input);
+  const progress = await attachBankPaymentAndCalculateProgress(input);
+  if (!progress.isFullyPaid) {
+    await applyPartialBankPaymentState({
+      tx: input.tx,
+      order: input.order,
+      progress,
+    });
+    return {
+      transactionId: input.tx.transaction_id,
+      status: progress.status,
+      shopifyOrderId: input.order.shopifyOrderId,
+      shopifyOrderName: input.order.shopifyOrderName,
+      expectedAmount: progress.expectedAmount,
+      paidAmount: progress.paidAmount,
+      remainingAmount: progress.remainingAmount,
+    };
+  }
+
+  const shopifyPayment = await applyFullyPaidBankPaymentState({
+    tx: input.tx,
+    order: input.order,
+    progress,
+  });
   await completeBankPaymentSideEffects({
     tx: input.tx,
     order: input.order,
     invoiceNumber: input.invoiceNumber,
+    progress,
   });
 
   return {
     transactionId: input.tx.transaction_id,
-    status: "MATCHED",
+    status: progress.status,
     shopifyOrderId: input.order.shopifyOrderId,
     shopifyOrderName: input.order.shopifyOrderName,
     shopifyPaymentTransactionId: shopifyPayment.transaction.id,
     shopifyPaymentCreated: shopifyPayment.created,
+    expectedAmount: progress.expectedAmount,
+    paidAmount: progress.paidAmount,
+    remainingAmount: progress.remainingAmount,
+    overpaymentAmount: progress.overpaymentAmount,
   };
 }
 
 async function finalizeMatchedBankPaymentSafe(input: {
   tx: BankTransaction;
   order: B2BOrder;
+  expectedAmount: number;
   confidence: number;
+  matchingMethod: string;
   invoiceNumber?: string | null;
 }) {
   try {
@@ -253,7 +414,7 @@ export async function reconcileBankTransactions(
           shopifyOrderId: saved.matchedShopifyOrderId ?? "",
           shopDomain: openOrders[0]?.shopDomain,
         }));
-      if (order && ["PAYMENT_MATCHED", "READY_TO_FULFILL_AFTER_BANK_PAYMENT", "DOCS_SENT"].includes(order.status)) {
+      if (order && ["READY_TO_FULFILL_AFTER_BANK_PAYMENT", "DOCS_SENT"].includes(order.status)) {
         results.push({
           transactionId: tx.transaction_id,
           status: "SKIPPED",
@@ -263,11 +424,27 @@ export async function reconcileBankTransactions(
         continue;
       }
       if (order) {
+        const candidate = candidates.find(
+          (row) => row.shopifyOrderId === order.shopifyOrderId
+        );
+        const expectedAmount =
+          candidate?.amount ?? Number(order.expectedAmount ?? order.orderTotalAmount ?? 0);
+        if (expectedAmount <= 0) {
+          results.push({
+            transactionId: tx.transaction_id,
+            status: "ERROR",
+            reason: "expected_amount_missing",
+            shopifyOrderId: order.shopifyOrderId,
+          });
+          continue;
+        }
         results.push(
           await finalizeMatchedBankPaymentSafe({
             tx,
             order,
+            expectedAmount,
             confidence: Number(saved.matchConfidence ?? 1),
+            matchingMethod: saved.matchingMethod ?? "existing_confirmed_match",
             invoiceNumber: invoiceByOrder.get(order.shopifyOrderId)?.number,
           })
         );
@@ -297,11 +474,22 @@ export async function reconcileBankTransactions(
           results.push({ transactionId: tx.transaction_id, status: "ERROR", reason: "b2b_order_missing" });
           continue;
         }
+        if (candidate.amount <= 0) {
+          results.push({
+            transactionId: tx.transaction_id,
+            status: "ERROR",
+            reason: "expected_amount_missing",
+            shopifyOrderId: order.shopifyOrderId,
+          });
+          continue;
+        }
         results.push(
           await finalizeMatchedBankPaymentSafe({
             tx,
             order,
+            expectedAmount: candidate.amount,
             confidence: match.confidence,
+            matchingMethod: match.reason,
             invoiceNumber: match.invoiceNumber ?? invoiceByOrder.get(order.shopifyOrderId)?.number,
           })
         );
@@ -317,10 +505,16 @@ export async function reconcileBankTransactions(
           data: {
             status: "NEEDS_REVIEW",
             matchedShopifyOrderId: match.candidate.shopifyOrderId,
+            matchingMethod: match.reason,
             matchConfidence: match.confidence,
+            rawPayload: paymentPayloadWithMatching({
+              rawPayload: tx.raw_payload,
+              matchingMethod: match.reason,
+              matchingConfidence: match.confidence,
+            }),
           },
         });
-        if (order) {
+        if (order && order.status !== "PARTIALLY_PAID") {
           await prisma.b2BOrder.update({
             where: { shopifyOrderId: match.candidate.shopifyOrderId },
             data: { status: "NEEDS_REVIEW" },

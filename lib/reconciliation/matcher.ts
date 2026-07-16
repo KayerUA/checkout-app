@@ -6,6 +6,7 @@ export type MatchCandidate = {
   shopifyOrderName?: string | null;
   invoiceNumber?: string | null;
   fopName?: string | null;
+  fopTaxId?: string | null;
   amount: number;
   currency: string;
 };
@@ -28,6 +29,16 @@ function includesName(a?: string | null, b?: string | null) {
   const right = normalizeName(b);
   if (!left || !right) return false;
   return left.includes(right) || right.includes(left);
+}
+
+export function normalizeTaxIdentifier(value?: string | null) {
+  return (value ?? "").toUpperCase().replace(/[^\p{L}\p{N}]+/gu, "");
+}
+
+function taxIdentifiersEqual(left?: string | null, right?: string | null) {
+  const normalizedLeft = normalizeTaxIdentifier(left);
+  const normalizedRight = normalizeTaxIdentifier(right);
+  return Boolean(normalizedLeft && normalizedRight && normalizedLeft === normalizedRight);
 }
 
 export function extractInvoiceNumber(description?: string | null) {
@@ -76,6 +87,21 @@ export function extractOrderNumberHints(description?: string | null): ParsedOrde
   return [...refs.values()];
 }
 
+export function extractBareOrderNumberHints(description?: string | null): ParsedOrderRef[] {
+  if (!description?.trim()) return [];
+  const withoutInvoicesAndDates = description
+    .replace(new RegExp(INVOICE_NUMBER_PATTERN.source, "gi"), " ")
+    .replace(/\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b/g, " ");
+  const refs = new Map<string, ParsedOrderRef>();
+  for (const match of withoutInvoicesAndDates.matchAll(/(?<![\p{L}\p{N}])(\d{3,6})(?![\p{L}\p{N}])/gu)) {
+    const numeric = Number.parseInt(match[1], 10);
+    if (!Number.isFinite(numeric) || numeric < 100) continue;
+    const full = `UA${numeric}`;
+    refs.set(full, { full, numeric });
+  }
+  return [...refs.values()];
+}
+
 function descriptionHasOrderNumber(description: string | null | undefined, orderName?: string | null) {
   if (!description || !orderName) return false;
   const normalizedDescription = description.replace(/\s+/g, " ");
@@ -105,6 +131,16 @@ function findCandidatesByOrderHints(description: string | null | undefined, cand
     }
   }
   return matched;
+}
+
+function findCandidatesByParsedHints(hints: ParsedOrderRef[], candidates: MatchCandidate[]) {
+  if (!hints.length) return [];
+  return candidates.filter((candidate) => {
+    const parsed = parseShopifyOrderName(candidate.shopifyOrderName);
+    return Boolean(
+      parsed && hints.some((hint) => parsed.full === hint.full || parsed.numeric === hint.numeric)
+    );
+  });
 }
 
 function amountsEqual(left: number, right: number) {
@@ -149,6 +185,20 @@ export function matchBankTransaction(tx: BankTransaction, candidates: MatchCandi
   if (invoiceNumber) {
     const byInvoice = candidates.find((candidate) => candidate.invoiceNumber === invoiceNumber);
     if (!byInvoice) return { status: "NEW" as const, invoiceNumber };
+    const invoiceOrderHints = findCandidatesByOrderHints(tx.payment_description, [byInvoice]);
+    if (
+      invoiceOrderHints.length === 1 &&
+      taxIdentifiersEqual(tx.payer_tax_id, byInvoice.fopTaxId) &&
+      byInvoice.currency === tx.currency
+    ) {
+      return {
+        status: "MATCHED" as const,
+        confidence: 0.99,
+        candidate: byInvoice,
+        reason: "tax_id_and_order_number",
+        invoiceNumber,
+      };
+    }
     return matchResultForCandidate(byInvoice, amount, tx.currency, {
       confidence: 1,
       reason: "invoice_number_exact_amount",
@@ -158,6 +208,17 @@ export function matchBankTransaction(tx: BankTransaction, candidates: MatchCandi
 
   const hintedMatches = findCandidatesByOrderHints(tx.payment_description, candidates);
   if (hintedMatches.length === 1) {
+    if (
+      taxIdentifiersEqual(tx.payer_tax_id, hintedMatches[0].fopTaxId) &&
+      hintedMatches[0].currency === tx.currency
+    ) {
+      return {
+        status: "MATCHED" as const,
+        confidence: 0.99,
+        candidate: hintedMatches[0],
+        reason: "tax_id_and_order_number",
+      };
+    }
     return matchResultForCandidate(hintedMatches[0], amount, tx.currency, {
       confidence: 0.97,
       reason: "order_number_hint",
@@ -176,6 +237,32 @@ export function matchBankTransaction(tx: BankTransaction, candidates: MatchCandi
       confidence: 0.8,
       candidate: hintedMatches[0],
       reason: "ambiguous_order_number_hint",
+    };
+  }
+
+  const taxMatchedCandidates = candidates.filter(
+    (candidate) =>
+      candidate.currency === tx.currency &&
+      taxIdentifiersEqual(tx.payer_tax_id, candidate.fopTaxId)
+  );
+  const bareMatches = findCandidatesByParsedHints(
+    extractBareOrderNumberHints(tx.payment_description),
+    taxMatchedCandidates
+  );
+  if (bareMatches.length === 1) {
+    return {
+      status: "MATCHED" as const,
+      confidence: 0.98,
+      candidate: bareMatches[0],
+      reason: "tax_id_and_numeric_order_number",
+    };
+  }
+  if (bareMatches.length > 1) {
+    return {
+      status: "NEEDS_REVIEW" as const,
+      confidence: 0.8,
+      candidate: bareMatches[0],
+      reason: "ambiguous_numeric_order_number_for_tax_id",
     };
   }
 

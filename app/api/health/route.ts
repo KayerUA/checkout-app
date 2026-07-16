@@ -66,6 +66,22 @@ async function checkRedisAndWorker(): Promise<{ redis: Check; worker: Check }> {
 
 export async function GET() {
   try {
+    // One-release bootstrap for the cumulative bank-payment schema. Removed after production applies it.
+    await prisma.$executeRawUnsafe(
+      'ALTER TABLE "b2b_orders" ADD COLUMN IF NOT EXISTS "expected_amount_uah" DECIMAL(12,2)'
+    );
+    await prisma.$executeRawUnsafe(
+      'ALTER TABLE "b2b_orders" ADD COLUMN IF NOT EXISTS "paid_amount_uah" DECIMAL(12,2) NOT NULL DEFAULT 0'
+    );
+    await prisma.$executeRawUnsafe(
+      'ALTER TABLE "b2b_orders" ADD COLUMN IF NOT EXISTS "remaining_amount_uah" DECIMAL(12,2)'
+    );
+    await prisma.$executeRawUnsafe(
+      `ALTER TABLE "b2b_orders" ADD COLUMN IF NOT EXISTS "payment_status" TEXT NOT NULL DEFAULT 'UNPAID'`
+    );
+    await prisma.$executeRawUnsafe(
+      'ALTER TABLE "bank_payments" ADD COLUMN IF NOT EXISTS "matching_method" TEXT'
+    );
     await prisma.$queryRaw`SELECT 1`;
     const queueChecks = await checkRedisAndWorker();
     const degraded =
