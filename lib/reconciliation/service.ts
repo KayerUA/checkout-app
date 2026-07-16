@@ -88,7 +88,7 @@ async function applyCriticalBankPaymentMatch(input: {
     shopDomain: order.shopDomain,
     orderId: order.shopifyOrderId,
     add: [B2B_TAGS.paymentMatched, B2B_TAGS.bankTransferPaid],
-    remove: [B2B_TAGS.waitingIbanPayment],
+    remove: [B2B_TAGS.waitingIbanPayment, B2B_TAGS.needsPaymentReview],
   });
 
   await setOrderMetafields({
