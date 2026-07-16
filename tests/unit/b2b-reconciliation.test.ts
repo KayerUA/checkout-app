@@ -12,7 +12,10 @@ import {
   invoiceAmountFromDocumentMetadata,
   mergeBankReconciliationCandidates,
 } from "@/lib/reconciliation/candidates";
-import { calculateBankPaymentProgress } from "@/lib/reconciliation/service";
+import {
+  calculateBankPaymentProgress,
+  calculateShopifyPaymentPresentation,
+} from "@/lib/reconciliation/service";
 
 const baseTx: BankTransaction = {
   provider: "mock",
@@ -277,4 +280,29 @@ describe("B2B bank reconciliation matcher", () => {
       });
     }
   );
+
+  it("presents a bank amount above the Shopify transaction as an overpayment", () => {
+    expect(
+      calculateShopifyPaymentPresentation({
+        paidAmount: 6272.5,
+        businessOverpaymentAmount: 0,
+        shopifyRecordedAmount: 4077.12,
+      })
+    ).toEqual({
+      status: "PAID_WITH_OVERPAYMENT",
+      shopifyRecordedAmount: 4077.12,
+      bankVsShopifyDifferenceAmount: 2195.38,
+      overpaymentAmount: 2195.38,
+    });
+  });
+
+  it("keeps an exact bank and Shopify payment as paid", () => {
+    expect(
+      calculateShopifyPaymentPresentation({
+        paidAmount: 1000,
+        businessOverpaymentAmount: 0,
+        shopifyRecordedAmount: 1000,
+      })
+    ).toMatchObject({ status: "PAID", overpaymentAmount: 0 });
+  });
 });

@@ -145,6 +145,64 @@ export async function setOrderMetafields(input: {
   }
 }
 
+export async function appendOrderNote(input: {
+  shopDomain?: string | null;
+  orderId: string;
+  marker: string;
+  message: string;
+}) {
+  const id = orderGid(input.orderId);
+  const currentResult = await shopifyGraphQL<{
+    data?: { order?: { note?: string | null } | null };
+    errors?: Array<{ message: string }>;
+  }>(
+    input.shopDomain,
+    `query OrderNote($id: ID!) {
+      order(id: $id) { note }
+    }`,
+    { id }
+  );
+  if (currentResult.errors?.length) {
+    throw new Error(
+      `Shopify order note query failed: ${currentResult.errors.map((error) => error.message).join("; ")}`
+    );
+  }
+  const currentNote = currentResult.data?.order?.note?.trim() ?? "";
+  if (currentNote.includes(input.marker)) return { updated: false };
+
+  const note = [currentNote, input.message].filter(Boolean).join("\n\n");
+  const updateResult = await shopifyGraphQL<{
+    data?: {
+      orderUpdate?: {
+        order?: { id: string } | null;
+        userErrors: Array<{ message: string }>;
+      };
+    };
+    errors?: Array<{ message: string }>;
+  }>(
+    input.shopDomain,
+    `mutation UpdateOrderNote($input: OrderInput!) {
+      orderUpdate(input: $input) {
+        order { id }
+        userErrors { message }
+      }
+    }`,
+    { input: { id, note } }
+  );
+  if (updateResult.errors?.length) {
+    throw new Error(
+      `Shopify order note update failed: ${updateResult.errors.map((error) => error.message).join("; ")}`
+    );
+  }
+  const userErrors = updateResult.data?.orderUpdate?.userErrors ?? [];
+  if (userErrors.length) {
+    throw new Error(
+      `Shopify order note update failed: ${userErrors.map((error) => error.message).join("; ")}`
+    );
+  }
+  return { updated: true };
+}
+
 export async function sendOrderInvoiceEmail(input: {
   shopDomain?: string | null;
   orderId: string;
@@ -221,7 +279,27 @@ function isSuccessfulPaymentTransaction(transaction: ShopifyOrderTransaction) {
 }
 
 function latestSuccessfulPaymentTransaction(transactions: ShopifyOrderTransaction[]) {
-  return transactions.find(isSuccessfulPaymentTransaction);
+  return [...transactions].reverse().find(isSuccessfulPaymentTransaction);
+}
+
+function successfulPaymentAmount(transactions: ShopifyOrderTransaction[]) {
+  return transactions.reduce((total, transaction) => {
+    if (!isSuccessfulPaymentTransaction(transaction)) return total;
+    const amount = Number(transaction.amount);
+    return total + (Number.isFinite(amount) ? amount : 0);
+  }, 0);
+}
+
+function paymentResult(
+  transactions: ShopifyOrderTransaction[],
+  transaction: ShopifyOrderTransaction,
+  created: boolean
+) {
+  return {
+    transaction,
+    created,
+    recordedAmount: Math.round(successfulPaymentAmount(transactions) * 100) / 100,
+  };
 }
 
 type OrderMarkAsPaidResponse = {
@@ -323,13 +401,15 @@ export async function markOrderPaidByBankTransfer(input: {
     isBankTransferTransaction(transaction, input.bankTransactionId)
   );
   if (existing) {
-    return { transaction: existing, created: false };
+    return paymentResult(transactions.transactions, existing, false);
   }
 
   const state = await getOrderPaymentState(input.shopDomain, input.orderId);
   if (!state.canMarkAsPaid) {
     const paidTransaction = latestSuccessfulPaymentTransaction(transactions.transactions);
-    if (paidTransaction) return { transaction: paidTransaction, created: false };
+    if (paidTransaction) {
+      return paymentResult(transactions.transactions, paidTransaction, false);
+    }
     throw new Error(`Shopify order ${state.name} cannot be marked as paid (${state.displayFinancialStatus})`);
   }
 
@@ -342,5 +422,5 @@ export async function markOrderPaidByBankTransfer(input: {
   const paidTransaction = latestSuccessfulPaymentTransaction(updated.transactions);
   if (!paidTransaction) throw new Error("Shopify marked order as paid but no successful payment transaction was returned");
 
-  return { transaction: paidTransaction, created: true };
+  return paymentResult(updated.transactions, paidTransaction, true);
 }

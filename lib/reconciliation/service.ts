@@ -8,6 +8,7 @@ import { writeAutomationLog } from "@/lib/b2b/log";
 import { createPostPaymentDocuments } from "@/lib/b2b/orders";
 import { notifyDiloshopOrderReady } from "@/lib/accounting/diloshop";
 import {
+  appendOrderNote,
   getShopifyOrder,
   markOrderPaidByBankTransfer,
   setOrderMetafields,
@@ -41,6 +42,46 @@ export function calculateBankPaymentProgress(expectedAmount: number, paidAmount:
     overpaymentAmount: overpaymentCents / 100,
     isFullyPaid: paidCents >= expectedCents,
   };
+}
+
+export function calculateShopifyPaymentPresentation(input: {
+  paidAmount: number;
+  businessOverpaymentAmount: number;
+  shopifyRecordedAmount: number;
+}) {
+  const paidCents = Math.max(0, Math.round(input.paidAmount * 100));
+  const recordedCents = Math.max(0, Math.round(input.shopifyRecordedAmount * 100));
+  const businessOverpaymentCents = Math.max(
+    0,
+    Math.round(input.businessOverpaymentAmount * 100)
+  );
+  const differenceCents = paidCents - recordedCents;
+  const overpaymentCents = Math.max(businessOverpaymentCents, differenceCents, 0);
+  return {
+    status: (overpaymentCents > 0 ? "PAID_WITH_OVERPAYMENT" : "PAID") as
+      | "PAID"
+      | "PAID_WITH_OVERPAYMENT",
+    shopifyRecordedAmount: recordedCents / 100,
+    bankVsShopifyDifferenceAmount: differenceCents / 100,
+    overpaymentAmount: overpaymentCents / 100,
+  };
+}
+
+function bankPaymentReconcileNote(input: {
+  transactionId: string;
+  currency: string;
+  paidAmount: number;
+  shopifyRecordedAmount: number;
+  differenceAmount: number;
+}) {
+  const sign = input.differenceAmount >= 0 ? "+" : "";
+  return [
+    `Банківська звірка [${input.transactionId}]:`,
+    `отримано ${input.paidAmount.toFixed(2)} ${input.currency};`,
+    `Shopify зафіксував ${input.shopifyRecordedAmount.toFixed(2)} ${input.currency};`,
+    `різниця ${sign}${input.differenceAmount.toFixed(2)} ${input.currency}.`,
+    "Фактичну оплату звіряти за банківською транзакцією.",
+  ].join(" ");
 }
 
 function paymentPayloadWithMatching(input: {
@@ -198,6 +239,48 @@ async function applyFullyPaidBankPaymentState(input: {
     currency: input.tx.currency,
     bankTransactionId: input.tx.transaction_id,
   });
+  const recordedAmount = shopifyPayment.recordedAmount;
+  const presentation = calculateShopifyPaymentPresentation({
+    paidAmount: input.progress.paidAmount,
+    businessOverpaymentAmount: input.progress.overpaymentAmount,
+    shopifyRecordedAmount: Number.isFinite(recordedAmount)
+      ? recordedAmount
+      : input.progress.expectedAmount,
+  });
+  const reconcileNote = bankPaymentReconcileNote({
+    transactionId: input.tx.transaction_id,
+    currency: input.tx.currency,
+    paidAmount: input.progress.paidAmount,
+    shopifyRecordedAmount: presentation.shopifyRecordedAmount,
+    differenceAmount: presentation.bankVsShopifyDifferenceAmount,
+  });
+
+  if (presentation.bankVsShopifyDifferenceAmount !== 0) {
+    try {
+      await appendOrderNote({
+        shopDomain: input.order.shopDomain,
+        orderId: input.order.shopifyOrderId,
+        marker: `[${input.tx.transaction_id}]`,
+        message: reconcileNote,
+      });
+    } catch (error) {
+      await writeAutomationLog({
+        shopifyOrderId: input.order.shopifyOrderId,
+        eventType: "bank/reconcile",
+        step: "payment_reconcile_note",
+        status: "WARN",
+        message: "Bank payment difference was recorded, but the Shopify order note failed",
+        error,
+        metadata: { transactionId: input.tx.transaction_id },
+      });
+    }
+  }
+  if (presentation.status !== input.progress.status) {
+    await prisma.b2BOrder.update({
+      where: { shopifyOrderId: input.order.shopifyOrderId },
+      data: { paymentStatus: presentation.status },
+    });
+  }
 
   await syncOrderLinkPaymentStatus(input.order.shopifyOrderId, "BANK_TRANSFER_PAID");
   await updateOrderTags({
@@ -206,7 +289,7 @@ async function applyFullyPaidBankPaymentState(input: {
     add: [
       B2B_TAGS.paymentMatched,
       B2B_TAGS.bankTransferPaid,
-      ...(input.progress.status === "PAID_WITH_OVERPAYMENT"
+      ...(presentation.status === "PAID_WITH_OVERPAYMENT"
         ? [B2B_TAGS.paidWithOverpayment]
         : []),
     ],
@@ -220,16 +303,20 @@ async function applyFullyPaidBankPaymentState(input: {
     shopDomain: input.order.shopDomain,
     orderId: input.order.shopifyOrderId,
     metafields: {
-      bank_payment_status: input.progress.status,
+      bank_payment_status: presentation.status,
       paid_amount_uah: input.progress.paidAmount.toFixed(2),
       remaining_amount_uah: input.progress.remainingAmount.toFixed(2),
-      overpayment_amount_uah: input.progress.overpaymentAmount.toFixed(2),
+      overpayment_amount_uah: presentation.overpaymentAmount.toFixed(2),
+      shopify_recorded_paid_amount_uah: presentation.shopifyRecordedAmount.toFixed(2),
+      bank_vs_shopify_difference_uah:
+        presentation.bankVsShopifyDifferenceAmount.toFixed(2),
+      payment_reconcile_note: reconcileNote,
       bank_transaction_id: input.tx.transaction_id,
       shopify_bank_transaction_id: shopifyPayment.transaction.id,
       automation_status: "PAYMENT_CONFIRMED",
     },
   });
-  return shopifyPayment;
+  return { ...shopifyPayment, presentation };
 }
 
 async function completeBankPaymentSideEffects(input: {
@@ -237,6 +324,7 @@ async function completeBankPaymentSideEffects(input: {
   order: B2BOrder;
   invoiceNumber?: string | null;
   progress: ReturnType<typeof calculateBankPaymentProgress>;
+  presentation: ReturnType<typeof calculateShopifyPaymentPresentation>;
 }) {
   const shopifyOrder = (await getShopifyOrder({
     shopDomain: input.order.shopDomain,
@@ -261,13 +349,10 @@ async function completeBankPaymentSideEffects(input: {
       invoiceNumber: input.invoiceNumber ?? "",
       transactionId: input.tx.transaction_id,
       shopDomain: input.order.shopDomain,
-      paymentStatus:
-        input.progress.status === "PAID_WITH_OVERPAYMENT"
-          ? "PAID_WITH_OVERPAYMENT"
-          : "PAID",
+      paymentStatus: input.presentation.status,
       paidAmount: input.progress.paidAmount,
       remainingAmount: input.progress.remainingAmount,
-      overpaymentAmount: input.progress.overpaymentAmount,
+      overpaymentAmount: input.presentation.overpaymentAmount,
     });
     await syncOrderLinkPaymentStatus(input.order.shopifyOrderId, "READY_TO_FULFILL_AFTER_BANK_PAYMENT");
   } catch (error) {
@@ -339,11 +424,12 @@ async function finalizeMatchedBankPayment(input: {
     order: input.order,
     invoiceNumber: input.invoiceNumber,
     progress,
+    presentation: shopifyPayment.presentation,
   });
 
   return {
     transactionId: input.tx.transaction_id,
-    status: progress.status,
+    status: shopifyPayment.presentation.status,
     shopifyOrderId: input.order.shopifyOrderId,
     shopifyOrderName: input.order.shopifyOrderName,
     shopifyPaymentTransactionId: shopifyPayment.transaction.id,
@@ -351,7 +437,10 @@ async function finalizeMatchedBankPayment(input: {
     expectedAmount: progress.expectedAmount,
     paidAmount: progress.paidAmount,
     remainingAmount: progress.remainingAmount,
-    overpaymentAmount: progress.overpaymentAmount,
+    overpaymentAmount: shopifyPayment.presentation.overpaymentAmount,
+    shopifyRecordedAmount: shopifyPayment.presentation.shopifyRecordedAmount,
+    bankVsShopifyDifferenceAmount:
+      shopifyPayment.presentation.bankVsShopifyDifferenceAmount,
   };
 }
 
