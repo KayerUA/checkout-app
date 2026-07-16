@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { verifyLiqPayCallback, parseLiqPayData } from "@/lib/payments/types";
+import {
+  parseLiqPayCallbackEnvelope,
+  parseLiqPayData,
+  verifyLiqPayCallback,
+} from "@/lib/payments/types";
+import { liqpayAdapter } from "@/lib/payments/liqpay";
 import crypto from "node:crypto";
 import { calcTotals, formatMoney } from "@/lib/checkout/pricing";
 import { invoiceGoodsAmount } from "@/lib/documents/invoice";
@@ -21,6 +26,43 @@ describe("LiqPay verification", () => {
     const payload = { order_id: "abc", amount: 100 };
     const data = Buffer.from(JSON.stringify(payload)).toString("base64");
     expect(parseLiqPayData(data)).toEqual(payload);
+  });
+
+  it("parses the form-urlencoded callback sent by LiqPay", () => {
+    const data = Buffer.from(JSON.stringify({ order_id: "order-1" })).toString("base64");
+    const body = new URLSearchParams({ data, signature: "signature+/=" }).toString();
+
+    expect(parseLiqPayCallbackEnvelope(body)).toEqual({
+      data,
+      signature: "signature+/=",
+    });
+  });
+
+  it("verifies a signed form-urlencoded callback end to end", () => {
+    const privateKey = "test_private_key";
+    const payload = {
+      order_id: "order-2",
+      status: "success",
+      amount: 1434.5,
+      currency: "UAH",
+    };
+    const data = Buffer.from(JSON.stringify(payload)).toString("base64");
+    const signature = crypto
+      .createHash("sha1")
+      .update(privateKey + data + privateKey)
+      .digest("base64");
+    const body = new URLSearchParams({ data, signature }).toString();
+
+    expect(liqpayAdapter.verifyCallback(body, {}, { privateKey })).toMatchObject({
+      providerReference: "order-2",
+      status: "PAID",
+      amount: 143_450,
+      currency: "UAH",
+    });
+  });
+
+  it("rejects malformed signatures without throwing", () => {
+    expect(verifyLiqPayCallback("data", "short", "private")).toBe(false);
   });
 });
 

@@ -2,7 +2,7 @@ import { prisma } from "@/lib/db";
 import { getPaymentAdapter } from "@/lib/payments/index";
 import { getLiqPayCallbackUrl } from "@/lib/payments/liqpay";
 import { getMonobankCallbackUrl } from "@/lib/payments/monobank";
-import { parseLiqPayData } from "@/lib/payments/types";
+import { parseLiqPayCallbackEnvelope, parseLiqPayData } from "@/lib/payments/types";
 import { getEnv } from "@/lib/env";
 import { enqueueJob, QUEUE_NAMES } from "@/lib/queue";
 import { logWithCorrelation } from "@/lib/logger";
@@ -23,16 +23,16 @@ function extractUnverifiedProviderReference(
 ): string | null {
   try {
     const bodyText = Buffer.isBuffer(rawBody) ? rawBody.toString("utf8") : rawBody;
-    const body = JSON.parse(bodyText) as Record<string, unknown>;
 
     if (provider === "LIQPAY") {
-      const data = typeof body.data === "string" ? body.data : null;
-      if (!data) return null;
-      const parsed = parseLiqPayData(data) as Record<string, unknown>;
+      const envelope = parseLiqPayCallbackEnvelope(bodyText);
+      if (!envelope) return null;
+      const parsed = parseLiqPayData(envelope.data) as Record<string, unknown>;
       return typeof parsed.order_id === "string" ? parsed.order_id : null;
     }
 
     if (provider === "MONOBANK") {
+      const body = JSON.parse(bodyText) as Record<string, unknown>;
       const invoiceId = body.invoiceId ?? body.invoice_id;
       return typeof invoiceId === "string" ? invoiceId : null;
     }

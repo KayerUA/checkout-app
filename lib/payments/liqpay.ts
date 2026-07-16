@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { getEnv } from "@/lib/env";
 import {
+  parseLiqPayCallbackEnvelope,
   parseLiqPayData,
   verifyLiqPayCallback,
   type PaymentAdapter,
@@ -37,8 +38,9 @@ export const liqpayAdapter: PaymentAdapter = {
   },
 
   verifyCallback(rawBody, _headers, config) {
-    const body = typeof rawBody === "string" ? JSON.parse(rawBody) : JSON.parse(rawBody.toString());
-    const { data, signature } = body;
+    const envelope = parseLiqPayCallbackEnvelope(rawBody);
+    if (!envelope) return null;
+    const { data, signature } = envelope;
     if (!verifyLiqPayCallback(data, signature, config.privateKey)) return null;
 
     const parsed = parseLiqPayData(data);

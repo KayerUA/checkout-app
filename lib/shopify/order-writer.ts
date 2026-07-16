@@ -148,6 +148,8 @@ function buildBaseCheckoutNoteAttributes(
   const ab = (attrs.ab ?? {}) as Record<string, string>;
   const base = [
     { name: "checkout_session_id", value: session.id },
+    { name: "checkout_public_token", value: session.publicToken },
+    { name: "source_identifier", value: session.sourceIdentifier ?? session.id },
     { name: "payment_provider", value: paidAttempt.provider },
     { name: "cod_enabled", value: "false" },
     ...extra,

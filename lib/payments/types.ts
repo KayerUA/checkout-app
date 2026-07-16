@@ -48,10 +48,29 @@ export function verifyLiqPayCallback(
     .createHash("sha1")
     .update(privateKey + dataBase64 + privateKey)
     .digest("base64");
+  if (expected.length !== signature.length) return false;
   return crypto.timingSafeEqual(
     Buffer.from(expected),
     Buffer.from(signature)
   );
+}
+
+export function parseLiqPayCallbackEnvelope(rawBody: string | Buffer) {
+  const bodyText = Buffer.isBuffer(rawBody) ? rawBody.toString("utf8") : rawBody;
+
+  try {
+    const parsed = JSON.parse(bodyText) as Record<string, unknown>;
+    if (typeof parsed.data === "string" && typeof parsed.signature === "string") {
+      return { data: parsed.data, signature: parsed.signature };
+    }
+  } catch {
+    // LiqPay sends callbacks as POST form fields, not as a JSON document.
+  }
+
+  const form = new URLSearchParams(bodyText);
+  const data = form.get("data");
+  const signature = form.get("signature");
+  return data && signature ? { data, signature } : null;
 }
 
 export function parseLiqPayData(dataBase64: string) {
