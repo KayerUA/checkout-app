@@ -13,7 +13,10 @@ import {
 } from "@/lib/checkout/cart-pricing";
 import {
   fetchPartnerPricingContextByGid,
+  isPartnerProgramDiscountCode,
   normalizeCheckoutEmail,
+  partnerCartSnapshotUnitPrice,
+  partnerMarketUsesCatalogCheckoutPrice,
   partnerUnitPriceFromCatalog,
   type PartnerPricingContext,
 } from "@/lib/checkout/partner-pricing";
@@ -152,13 +155,20 @@ export async function resolveAndPriceLines(
       typeof line.unitPriceCents === "number" &&
       line.unitPriceCents > 0
     ) {
-      unitPrice = Math.round(line.unitPriceCents);
+      unitPrice = partnerContext
+        ? partnerCartSnapshotUnitPrice({
+            market: partnerContext.market,
+            finalUnitPriceCents: line.unitPriceCents,
+            originalUnitPriceCents: line.originalUnitPriceCents,
+          })
+        : Math.round(line.unitPriceCents);
       pricingSource = partnerContext ? "partner_rules" : "shopify_cart";
     } else if (partnerContext) {
       unitPrice = partnerUnitPriceFromCatalog(
         catalogUnitPrice,
         partnerContext.rules,
-        collectionHandles
+        collectionHandles,
+        partnerContext.market
       );
       pricingSource = "partner_rules";
     } else if (options?.useRetailCartHints !== false) {
@@ -445,11 +455,28 @@ export async function createCheckoutSession(input: CreateCheckoutSessionInput) {
 
   let linesSubtotal = linesSubtotalCents(pricedLines);
   const inputAttributes = { ...(input.customAttributes ?? {}) };
-  const requestedDiscountCode =
+  let requestedDiscountCode =
     typeof inputAttributes.appliedDiscountCode === "string"
       ? normalizeDiscountCode(inputAttributes.appliedDiscountCode)
       : "";
   delete inputAttributes.appliedDiscountCode;
+
+  const partnerUsesCatalogCheckout =
+    Boolean(partnerContext) &&
+    partnerMarketUsesCatalogCheckoutPrice(partnerContext?.market);
+  if (
+    partnerUsesCatalogCheckout &&
+    isPartnerProgramDiscountCode(requestedDiscountCode)
+  ) {
+    requestedDiscountCode = "";
+    if (
+      typeof input.cartItemsSubtotalCents === "number" &&
+      typeof input.cartTotalCents === "number" &&
+      input.cartTotalCents < input.cartItemsSubtotalCents
+    ) {
+      input.cartTotalCents = input.cartItemsSubtotalCents;
+    }
+  }
 
   let validatedDiscountCode = "";
   let validatedPromoTitle = "";

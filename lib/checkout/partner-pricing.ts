@@ -10,8 +10,37 @@ export type PartnerDiscountRule = {
 export type PartnerPricingContext = {
   customerGid: string;
   email: string;
+  market?: string;
   rules: PartnerDiscountRule[];
 };
+
+export const UA_REGIONAL_DISTRIBUTOR_MARKETS = new Set(["LVIV", "LUTSK", "KHARKIV"]);
+
+export function isUaRegionalDistributorMarket(market?: string | null): boolean {
+  return UA_REGIONAL_DISTRIBUTOR_MARKETS.has((market ?? "").trim().toUpperCase());
+}
+
+/** UA regional distributors pay contextual market catalog prices — no extra % at checkout. */
+export function partnerMarketUsesCatalogCheckoutPrice(market?: string | null): boolean {
+  return isUaRegionalDistributorMarket(market);
+}
+
+export function isPartnerProgramDiscountCode(code?: string | null): boolean {
+  return /^PARTNER-/i.test(String(code ?? "").trim());
+}
+
+export function partnerCartSnapshotUnitPrice(input: {
+  market?: string | null;
+  finalUnitPriceCents?: number | null;
+  originalUnitPriceCents?: number | null;
+}): number {
+  const finalPrice = Math.max(0, Math.round(input.finalUnitPriceCents ?? 0));
+  const originalPrice = Math.max(0, Math.round(input.originalUnitPriceCents ?? 0));
+  if (partnerMarketUsesCatalogCheckoutPrice(input.market) && originalPrice > 0) {
+    return originalPrice;
+  }
+  return finalPrice || originalPrice;
+}
 
 const LUXIO_COLOUR_PROMO_HANDLE = "akcja-luxio-kolory-2026-06";
 
@@ -100,9 +129,11 @@ export function bestPartnerDiscountPct(
 export function partnerUnitPriceFromCatalog(
   catalogCents: number,
   rules: PartnerDiscountRule[],
-  collectionHandles: string[]
+  collectionHandles: string[],
+  market?: string | null
 ): number {
   const catalog = Math.max(0, Math.round(catalogCents));
+  if (partnerMarketUsesCatalogCheckoutPrice(market)) return catalog;
   const pct = bestPartnerDiscountPct(rules, collectionHandles);
   if (pct <= 0) return catalog;
   return Math.max(0, Math.round(catalog * (1 - pct / 100)));
@@ -144,6 +175,7 @@ function buildPartnerContextFromCustomer(
   return {
     customerGid: customer.id,
     email: normalizeCheckoutEmail(customer.email) || normalizeCheckoutEmail(fallbackEmail),
+    market: (metafields.market || metafields.distributor_country || "").trim().toUpperCase() || undefined,
     rules,
   };
 }

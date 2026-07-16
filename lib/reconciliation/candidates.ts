@@ -21,6 +21,7 @@ const SHOPIFY_OPEN_ORDERS_QUERY = `
         name
         totalPriceSet { shopMoney { amount currencyCode } }
         invoiceNumber: metafield(namespace: "kayer_b2b", key: "invoice_number") { value }
+        invoiceAmount: metafield(namespace: "kayer_b2b", key: "invoice_amount_uah") { value }
         fopName: metafield(namespace: "kayer_b2b", key: "fop_name") { value }
       }
     }
@@ -32,10 +33,56 @@ type ShopifyOpenOrderNode = {
   name: string;
   totalPriceSet?: { shopMoney?: { amount?: string; currencyCode?: string } };
   invoiceNumber?: { value?: string | null } | null;
+  invoiceAmount?: { value?: string | null } | null;
   fopName?: { value?: string | null } | null;
 };
 
-async function fetchShopifyOpenBankInvoiceCandidates(): Promise<MatchCandidate[]> {
+type RankedMatchCandidate = MatchCandidate & { amountPriority: number };
+
+function positiveAmount(value: unknown): number | null {
+  const amount = Number(value);
+  return Number.isFinite(amount) && amount > 0 ? amount : null;
+}
+
+export function invoiceAmountFromDocumentMetadata(metadata: unknown): number | null {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return null;
+  const input = (metadata as Record<string, unknown>).input;
+  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+  return positiveAmount((input as Record<string, unknown>).amount);
+}
+
+export function mergeBankReconciliationCandidates(
+  candidates: RankedMatchCandidate[]
+): MatchCandidate[] {
+  const merged = new Map<string, RankedMatchCandidate>();
+  for (const candidate of candidates) {
+    const existing = merged.get(candidate.shopifyOrderId);
+    if (!existing) {
+      merged.set(candidate.shopifyOrderId, candidate);
+      continue;
+    }
+    const preferCandidateAmount = candidate.amountPriority > existing.amountPriority;
+    merged.set(candidate.shopifyOrderId, {
+      ...existing,
+      shopifyOrderName: existing.shopifyOrderName ?? candidate.shopifyOrderName,
+      invoiceNumber: existing.invoiceNumber ?? candidate.invoiceNumber,
+      fopName: existing.fopName ?? candidate.fopName,
+      amount: preferCandidateAmount ? candidate.amount : existing.amount,
+      currency: preferCandidateAmount ? candidate.currency : existing.currency,
+      amountPriority: Math.max(existing.amountPriority, candidate.amountPriority),
+    });
+  }
+  return [...merged.values()].map((candidate) => ({
+    shopifyOrderId: candidate.shopifyOrderId,
+    shopifyOrderName: candidate.shopifyOrderName,
+    invoiceNumber: candidate.invoiceNumber,
+    fopName: candidate.fopName,
+    amount: candidate.amount,
+    currency: candidate.currency,
+  }));
+}
+
+async function fetchShopifyOpenBankInvoiceCandidates(): Promise<RankedMatchCandidate[]> {
   const env = getEnv();
   const domain = env.SHOPIFY_SHOP_DOMAIN;
   const token = env.SHOPIFY_ADMIN_ACCESS_TOKEN;
@@ -55,14 +102,18 @@ async function fetchShopifyOpenBankInvoiceCandidates(): Promise<MatchCandidate[]
     data?: { orders?: { nodes?: ShopifyOpenOrderNode[] } };
   };
 
-  return (payload.data?.orders?.nodes ?? []).map((node) => ({
-    shopifyOrderId: node.id.replace("gid://shopify/Order/", ""),
-    shopifyOrderName: node.name,
-    invoiceNumber: node.invoiceNumber?.value?.trim() || null,
-    fopName: node.fopName?.value?.trim() || null,
-    amount: Number(node.totalPriceSet?.shopMoney?.amount ?? 0),
-    currency: node.totalPriceSet?.shopMoney?.currencyCode ?? "UAH",
-  }));
+  return (payload.data?.orders?.nodes ?? []).map((node) => {
+    const invoiceAmount = positiveAmount(node.invoiceAmount?.value);
+    return {
+      shopifyOrderId: node.id.replace("gid://shopify/Order/", ""),
+      shopifyOrderName: node.name,
+      invoiceNumber: node.invoiceNumber?.value?.trim() || null,
+      fopName: node.fopName?.value?.trim() || null,
+      amount: invoiceAmount ?? Number(node.totalPriceSet?.shopMoney?.amount ?? 0),
+      currency: node.totalPriceSet?.shopMoney?.currencyCode ?? "UAH",
+      amountPriority: invoiceAmount ? 3 : 2,
+    };
+  });
 }
 
 export async function buildBankReconciliationCandidates(): Promise<{
@@ -82,41 +133,34 @@ export async function buildBankReconciliationCandidates(): Promise<{
   });
   const invoiceByOrder = new Map(invoices.map((invoice) => [invoice.shopifyOrderId, invoice]));
 
-  const prismaCandidates: MatchCandidate[] = openOrders.map((order) => ({
-    shopifyOrderId: order.shopifyOrderId,
-    shopifyOrderName: order.shopifyOrderName,
-    invoiceNumber: invoiceByOrder.get(order.shopifyOrderId)?.number,
-    fopName: order.fopName,
-    amount: Number(order.orderTotalAmount ?? 0),
-    currency: order.orderCurrency ?? "UAH",
-  }));
+  const prismaCandidates: RankedMatchCandidate[] = openOrders.map((order) => {
+    const invoice = invoiceByOrder.get(order.shopifyOrderId);
+    const invoiceAmount = invoiceAmountFromDocumentMetadata(invoice?.metadata);
+    return {
+      shopifyOrderId: order.shopifyOrderId,
+      shopifyOrderName: order.shopifyOrderName,
+      invoiceNumber: invoice?.number,
+      fopName: order.fopName,
+      amount: invoiceAmount ?? Number(order.orderTotalAmount ?? 0),
+      currency: order.orderCurrency ?? "UAH",
+      amountPriority: invoiceAmount ? 3 : 1,
+    };
+  });
 
   const shopifyCandidates = await fetchShopifyOpenBankInvoiceCandidates();
-  const merged = new Map<string, MatchCandidate>();
-  for (const candidate of [...prismaCandidates, ...shopifyCandidates]) {
-    const existing = merged.get(candidate.shopifyOrderId);
-    if (!existing) {
-      merged.set(candidate.shopifyOrderId, candidate);
-      continue;
-    }
-    merged.set(candidate.shopifyOrderId, {
-      ...existing,
-      shopifyOrderName: existing.shopifyOrderName ?? candidate.shopifyOrderName,
-      invoiceNumber: existing.invoiceNumber ?? candidate.invoiceNumber,
-      fopName: existing.fopName ?? candidate.fopName,
-      amount: existing.amount > 0 ? existing.amount : candidate.amount,
-      currency: existing.currency || candidate.currency,
-    });
-  }
+  const candidates = mergeBankReconciliationCandidates([
+    ...prismaCandidates,
+    ...shopifyCandidates,
+  ]);
 
   return {
-    candidates: [...merged.values()],
+    candidates,
     openOrders,
     invoiceByOrder,
     stats: {
       prismaOrders: prismaCandidates.length,
       shopifyOrders: shopifyCandidates.length,
-      merged: merged.size,
+      merged: candidates.length,
     },
   };
 }

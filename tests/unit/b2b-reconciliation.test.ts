@@ -6,6 +6,10 @@ import {
   parseShopifyOrderName,
 } from "@/lib/reconciliation/matcher";
 import type { BankTransaction } from "@/lib/bank/types";
+import {
+  invoiceAmountFromDocumentMetadata,
+  mergeBankReconciliationCandidates,
+} from "@/lib/reconciliation/candidates";
 
 const baseTx: BankTransaction = {
   provider: "mock",
@@ -41,6 +45,38 @@ const ua1155Candidates = [
 ];
 
 describe("B2B bank reconciliation matcher", () => {
+  it("reads the authoritative amount from generated invoice metadata", () => {
+    expect(
+      invoiceAmountFromDocumentMetadata({
+        paymentPurpose: "Оплата рахунку",
+        input: { amount: 5135, currency: "UAH" },
+      })
+    ).toBe(5135);
+    expect(invoiceAmountFromDocumentMetadata({ input: { amount: 0 } })).toBeNull();
+  });
+
+  it("prefers the invoice amount over a stale B2B order total", () => {
+    const [candidate] = mergeBankReconciliationCandidates([
+      {
+        shopifyOrderId: "11008804684100",
+        shopifyOrderName: "#UA1179",
+        invoiceNumber: "KAYER-UA-2026-000028",
+        amount: 3337.75,
+        currency: "UAH",
+        amountPriority: 1,
+      },
+      {
+        shopifyOrderId: "11008804684100",
+        shopifyOrderName: "#UA1179",
+        invoiceNumber: "KAYER-UA-2026-000028",
+        amount: 5135,
+        currency: "UAH",
+        amountPriority: 3,
+      },
+    ]);
+    expect(candidate.amount).toBe(5135);
+  });
+
   it("extracts invoice number from payment description", () => {
     expect(extractInvoiceNumber(baseTx.payment_description)).toBe("KAYER-UA-2026-000123");
   });

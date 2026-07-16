@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   bestPartnerDiscountPct,
   parsePartnerDiscountRules,
+  partnerCartSnapshotUnitPrice,
   partnerEmailForPricing,
   partnerUnitPriceFromCatalog,
 } from "@/lib/checkout/partner-pricing";
@@ -26,6 +27,34 @@ describe("partner pricing rules", () => {
     expect(partnerUnitPriceFromCatalog(700_000, rules, ["luxio"])).toBe(
       Math.round(700_000 * 0.65)
     );
+  });
+
+  it("keeps UA regional distributor market catalog price without extra checkout %", () => {
+    expect(partnerUnitPriceFromCatalog(513_500, rules, ["luxio"], "KHARKIV")).toBe(513_500);
+    expect(partnerUnitPriceFromCatalog(513_500, rules, ["luxio"], "LVIV")).toBe(513_500);
+    expect(partnerUnitPriceFromCatalog(513_500, rules, ["luxio"], "LUTSK")).toBe(513_500);
+    expect(partnerUnitPriceFromCatalog(513_500, rules, ["luxio"], "RO")).toBe(333_775);
+  });
+
+  it("restores the contextual catalog price from stale UA partner carts", () => {
+    const staleDiscountedPrice = 40_771;
+    const contextualCatalogPrice = 62_725;
+    for (const market of ["KHARKIV", "LVIV", "LUTSK"]) {
+      expect(
+        partnerCartSnapshotUnitPrice({
+          market,
+          finalUnitPriceCents: staleDiscountedPrice,
+          originalUnitPriceCents: contextualCatalogPrice,
+        })
+      ).toBe(contextualCatalogPrice);
+    }
+    expect(
+      partnerCartSnapshotUnitPrice({
+        market: "RO",
+        finalUnitPriceCents: staleDiscountedPrice,
+        originalUnitPriceCents: contextualCatalogPrice,
+      })
+    ).toBe(staleDiscountedPrice);
   });
 
   it("keeps logged-in partner email for pricing when checkout email differs", () => {
