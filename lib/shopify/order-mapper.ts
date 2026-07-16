@@ -3,6 +3,10 @@ import {
   buildShopifyNovaPoshtaNoteAttributes,
   type NovaPoshtaShippingPayload,
 } from "@/lib/shipping/shopify-np-note-attributes";
+import {
+  isPartnerProgramDiscountCode,
+  partnerMarketUsesCatalogCheckoutPrice,
+} from "@/lib/checkout/partner-pricing";
 
 const ORDER_CREATE_MUTATION = `
   mutation OrderCreateExternal($order: OrderCreateOrderInput!, $options: OrderCreateOptionsInput) {
@@ -101,15 +105,21 @@ export function mapCheckoutToOrderCreateInput(
     typeof sessionAttrs.appliedDiscountCode === "string"
       ? sessionAttrs.appliedDiscountCode.trim()
       : "";
-  if (appliedDiscountCode) {
-    customAttributes.push({ key: "discount_code", value: appliedDiscountCode });
+  const partnerMarket =
+    typeof sessionAttrs.partnerMarket === "string" ? sessionAttrs.partnerMarket : "";
+  const skipPartnerDiscountCode =
+    partnerMarketUsesCatalogCheckoutPrice(partnerMarket) &&
+    isPartnerProgramDiscountCode(appliedDiscountCode);
+  const effectiveDiscountCode = skipPartnerDiscountCode ? "" : appliedDiscountCode;
+  if (effectiveDiscountCode) {
+    customAttributes.push({ key: "discount_code", value: effectiveDiscountCode });
   }
 
   const lineBases = session.lines.map((line) =>
     Math.max(0, line.unitPrice * line.quantity - line.lineDiscountAmount)
   );
   const sessionCartDiscount = Math.max(0, session.discountAmount ?? 0);
-  const hasExplicitDiscountCode = appliedDiscountCode !== "";
+  const hasExplicitDiscountCode = effectiveDiscountCode !== "";
   const foldedDiscounts = allocateProportionalDiscountCents(
     lineBases,
     hasExplicitDiscountCode ? 0 : sessionCartDiscount
@@ -131,7 +141,7 @@ export function mapCheckoutToOrderCreateInput(
       ? {
           discountCode: {
             itemFixedDiscountCode: {
-              code: appliedDiscountCode,
+              code: effectiveDiscountCode,
               amountSet: {
                 shopMoney: {
                   amount: sessionCartDiscount / 100,

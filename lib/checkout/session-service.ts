@@ -12,6 +12,7 @@ import {
   type ResolvedCartLinePricing,
 } from "@/lib/checkout/cart-pricing";
 import {
+  fetchPartnerPricingContext,
   fetchPartnerPricingContextByGid,
   isPartnerProgramDiscountCode,
   normalizeCheckoutEmail,
@@ -280,11 +281,19 @@ export type CreateCheckoutSessionInput = {
   };
 };
 
+function storefrontCustomerGid(rawId?: string | null): string | null {
+  const trimmed = rawId?.trim();
+  if (!trimmed) return null;
+  return trimmed.startsWith("gid://") ? trimmed : `gid://shopify/Customer/${trimmed}`;
+}
+
 async function resolvePartnerContextForMerchant(input: {
   merchantId: string;
   shopDomain?: string;
   storefrontPricingToken?: string;
   verifiedPartnerGid?: string | null;
+  storefrontCustomerEmail?: string;
+  storefrontCustomerId?: string;
 }): Promise<PartnerPricingContext | null> {
   const shopifySession = await getMerchantShopifySession(input.merchantId);
   if (!shopifySession) return null;
@@ -295,13 +304,26 @@ async function resolvePartnerContextForMerchant(input: {
       input.shopDomain ?? shopifySession.shop
     );
     if (payload) {
-      return fetchPartnerPricingContextByGid(shopifySession, payload.customerGid);
+      const fromToken = await fetchPartnerPricingContextByGid(shopifySession, payload.customerGid);
+      if (fromToken) return fromToken;
     }
   }
 
   const verifiedGid = input.verifiedPartnerGid?.trim();
   if (verifiedGid) {
-    return fetchPartnerPricingContextByGid(shopifySession, verifiedGid);
+    const fromVerifiedGid = await fetchPartnerPricingContextByGid(shopifySession, verifiedGid);
+    if (fromVerifiedGid) return fromVerifiedGid;
+  }
+
+  const customerGid = storefrontCustomerGid(input.storefrontCustomerId);
+  if (customerGid) {
+    const fromCustomerId = await fetchPartnerPricingContextByGid(shopifySession, customerGid);
+    if (fromCustomerId) return fromCustomerId;
+  }
+
+  const email = normalizeCheckoutEmail(input.storefrontCustomerEmail);
+  if (email) {
+    return fetchPartnerPricingContext(shopifySession, email);
   }
 
   return null;
@@ -310,10 +332,12 @@ async function resolvePartnerContextForMerchant(input: {
 async function resolvePartnerContextForSession(input: {
   merchantId: string;
   verifiedPartnerGid?: string | null;
+  verifiedPartnerEmail?: string | null;
 }): Promise<PartnerPricingContext | null> {
   return resolvePartnerContextForMerchant({
     merchantId: input.merchantId,
     verifiedPartnerGid: input.verifiedPartnerGid,
+    storefrontCustomerEmail: input.verifiedPartnerEmail ?? undefined,
   });
 }
 
@@ -344,9 +368,13 @@ export async function ensureSessionLinePricing(publicToken: string) {
   const verifiedPartnerGid =
     typeof attrs.partnerCustomerGid === "string" ? attrs.partnerCustomerGid : null;
 
+  const verifiedPartnerEmail =
+    typeof attrs.verifiedPartnerEmail === "string" ? attrs.verifiedPartnerEmail : null;
+
   const partnerContext = await resolvePartnerContextForSession({
     merchantId: session.merchantId,
     verifiedPartnerGid,
+    verifiedPartnerEmail,
   });
 
   const repricedLines = await resolveAndPriceLines(
@@ -426,6 +454,8 @@ export async function createCheckoutSession(input: CreateCheckoutSessionInput) {
     merchantId: input.merchantId,
     shopDomain,
     storefrontPricingToken: input.storefrontPricingToken,
+    storefrontCustomerEmail: input.storefrontCustomerEmail,
+    storefrontCustomerId: input.storefrontCustomerId,
   });
 
   let pricedLines = await resolveAndPriceLines(input.merchantId, input.cartLines, {
@@ -608,6 +638,7 @@ export async function createCheckoutSession(input: CreateCheckoutSessionInput) {
         checkoutRecommendations: recommendations,
         verifiedPartnerEmail,
         partnerCustomerGid: verifiedPartnerGid,
+        ...(partnerContext?.market ? { partnerMarket: partnerContext.market } : {}),
         pricingMode: partnerContext ? "partner_rules" : "shopify_cart",
         cartDiscountSnapshot,
         ...(validatedDiscountCode ? { appliedDiscountCode: validatedDiscountCode } : {}),
@@ -668,6 +699,8 @@ export async function addCheckoutSessionLine(
     merchantId: session.merchantId,
     verifiedPartnerGid:
       typeof attrs.partnerCustomerGid === "string" ? attrs.partnerCustomerGid : null,
+    verifiedPartnerEmail:
+      typeof attrs.verifiedPartnerEmail === "string" ? attrs.verifiedPartnerEmail : null,
   });
   const [pricedLine] = await resolveAndPriceLines(
     session.merchantId,

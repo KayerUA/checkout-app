@@ -623,12 +623,32 @@
     return "";
   }
 
+  function isUaRegionalCatalogPartner() {
+    var sf = window.KayerPartnerStorefront;
+    if (sf && sf.distributor && sf.market) {
+      var market = String(sf.market).toUpperCase();
+      if (market === "LVIV" || market === "LUTSK" || market === "KHARKIV") return true;
+    }
+    if (
+      document.body &&
+      document.body.classList.contains("kayer-partner-pricing--gross") &&
+      document.body.getAttribute("data-kayer-distributor-partner") === "1"
+    ) {
+      return true;
+    }
+    return false;
+  }
+
   function appliedCartDiscountCode(cart) {
     var codes = (cart && cart.discount_codes) || [];
     for (var i = 0; i < codes.length; i += 1) {
       var row = codes[i];
       var code = typeof row === "string" ? row : row && (row.code || row.discount_code);
-      if (code && String(code).trim()) return String(code).trim().toUpperCase();
+      if (code && String(code).trim()) {
+        var normalized = String(code).trim().toUpperCase();
+        if (/^PARTNER-/i.test(normalized) && isUaRegionalCatalogPartner()) return "";
+        return normalized;
+      }
     }
 
     // The newsletter cookie is also the checkout fallback when Shopify Ajax cart

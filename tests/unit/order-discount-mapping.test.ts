@@ -87,4 +87,20 @@ describe("Shopify cart discount mapping", () => {
     expect(mappedTotalCents).toBe(14_535);
     expect("discountCode" in order).toBe(false);
   });
+
+  it("does not write PARTNER discount code for UA regional catalog-price markets", () => {
+    const session = sessionWithDiscount("PARTNER-24109539885380");
+    session.customAttributes = {
+      appliedDiscountCode: "PARTNER-24109539885380",
+      partnerMarket: "KHARKIV",
+    };
+
+    const order = mapCheckoutToOrderCreateInput(session, null);
+
+    expect("discountCode" in order).toBe(false);
+    expect(order.customAttributes).not.toContainEqual({
+      key: "discount_code",
+      value: "PARTNER-24109539885380",
+    });
+  });
 });
