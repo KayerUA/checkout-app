@@ -39,6 +39,43 @@ export function telegramChatIsAllowed(chatId: number | string, configured?: stri
   return allowed.has(String(chatId));
 }
 
+export function telegramGroupChatIds(configured?: string) {
+  if (!configured?.trim()) return [];
+  return Array.from(
+    new Set(
+      configured
+        .split(/[\s,;]+/)
+        .map((value) => value.trim())
+        .filter((value) => /^-\d+$/.test(value))
+    )
+  );
+}
+
+export function paymentWithoutOrderAlertMessage(input: {
+  provider: string;
+  amount: number;
+  currency: string;
+  checkoutSessionId: string;
+  sourceIdentifier?: string | null;
+  providerReference?: string | null;
+  retryQueued?: boolean;
+}) {
+  const amount = new Intl.NumberFormat("uk-UA", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(input.amount / 100);
+  return [
+    "🚨 Оплата підтверджена, але Shopify-замовлення відсутнє",
+    `Провайдер: ${input.provider}`,
+    `Сума: ${amount} ${input.currency}`,
+    `Checkout: ${input.checkoutSessionId}`,
+    `Джерело: ${input.sourceIdentifier || "—"}`,
+    `Reference: ${input.providerReference || "—"}`,
+    `Повтор створення: ${input.retryQueued ? "поставлено в чергу" : "не поставлено в чергу"}`,
+    "Потрібна ручна перевірка в checkout admin.",
+  ].join("\n");
+}
+
 export function summarizePaymentReconciliation(result: {
   checked: number;
   results: Array<{ status?: string; shopifyOrderName?: string | null }>;

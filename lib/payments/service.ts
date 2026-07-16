@@ -10,6 +10,7 @@ import type { PaymentProvider, PaymentStatus, Prisma } from "@prisma/client";
 import { repriceCheckoutSession } from "@/lib/checkout/session-service";
 import { assertPaymentIntegrity } from "@/lib/payments/integrity";
 import { decryptPaymentConfig } from "@/lib/payments/config-secrets";
+import { notifyPaymentWithoutOrder } from "@/lib/telegram/ops-alerts";
 
 function getCallbackUrl(provider: PaymentProvider) {
   if (provider === "LIQPAY") return getLiqPayCallbackUrl();
@@ -43,18 +44,24 @@ function extractUnverifiedProviderReference(
   return null;
 }
 
-async function ensureShopifyOrderCreation(checkoutSessionId: string) {
+export async function ensureShopifyOrderCreation(checkoutSessionId: string) {
   const { createShopifyOrderIdempotent } = await import("@/lib/shopify/order-writer");
+  let creationError = "Shopify order creation failed";
 
   try {
-    await createShopifyOrderIdempotent(checkoutSessionId);
-    return;
+    const orderLink = await createShopifyOrderIdempotent(checkoutSessionId);
+    return {
+      created: Boolean(orderLink.shopifyOrderGid),
+      retryQueued: false,
+      shopifyOrderName: orderLink.shopifyOrderName,
+    };
   } catch (error) {
+    creationError = error instanceof Error ? error.message : String(error);
     logWithCorrelation(
       "warn",
       "Inline Shopify order creation failed, enqueueing retry",
       { checkoutSessionId },
-      { error: error instanceof Error ? error.message : String(error) }
+      { error: creationError }
     );
   }
 
@@ -62,6 +69,12 @@ async function ensureShopifyOrderCreation(checkoutSessionId: string) {
     await enqueueJob(QUEUE_NAMES.ORDERS, "create-shopify-order", {
       checkoutSessionId,
     });
+    return {
+      created: false,
+      retryQueued: true,
+      shopifyOrderName: null,
+      error: creationError,
+    };
   } catch (error) {
     logWithCorrelation(
       "error",
@@ -69,6 +82,12 @@ async function ensureShopifyOrderCreation(checkoutSessionId: string) {
       { checkoutSessionId },
       { error: error instanceof Error ? error.message : String(error) }
     );
+    return {
+      created: false,
+      retryQueued: false,
+      shopifyOrderName: null,
+      error: creationError,
+    };
   }
 }
 
@@ -271,7 +290,25 @@ export async function handlePaymentCallback(
       data: { status: "PAID" },
     });
 
-    await ensureShopifyOrderCreation(paymentAttempt.checkoutSessionId);
+    const orderCreation = await ensureShopifyOrderCreation(paymentAttempt.checkoutSessionId);
+    if (!orderCreation.created) {
+      await notifyPaymentWithoutOrder({
+        provider,
+        amount: paymentAttempt.amount,
+        currency: paymentAttempt.checkoutSession.currency,
+        checkoutSessionId: paymentAttempt.checkoutSessionId,
+        sourceIdentifier: paymentAttempt.checkoutSession.sourceIdentifier,
+        providerReference: paymentAttempt.providerReference,
+        retryQueued: orderCreation.retryQueued,
+      }).catch((error) => {
+        logWithCorrelation(
+          "error",
+          "Payment-without-order Telegram alert failed",
+          { checkoutSessionId: paymentAttempt.checkoutSessionId },
+          { error: error instanceof Error ? error.message : String(error) }
+        );
+      });
+    }
 
     const sessionAttrs = (paymentAttempt.checkoutSession.customAttributes ?? {}) as Record<
       string,

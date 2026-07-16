@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   parseTelegramCommand,
+  paymentWithoutOrderAlertMessage,
   summarizeBankReconciliation,
   summarizePaymentReconciliation,
   telegramChatIsAllowed,
+  telegramGroupChatIds,
 } from "@/lib/telegram/bot";
 
 describe("Telegram payments bot", () => {
@@ -44,6 +46,25 @@ describe("Telegram payments bot", () => {
     expect(telegramChatIsAllowed(123, undefined)).toBe(false);
     expect(telegramChatIsAllowed(123, "456, 123 -1001")).toBe(true);
     expect(telegramChatIsAllowed(999, "456, 123 -1001")).toBe(false);
+    expect(telegramGroupChatIds("5228806558, -4121486955; -4121486955")).toEqual([
+      "-4121486955",
+    ]);
+  });
+
+  it("formats a payment-without-order alert without customer secrets", () => {
+    const message = paymentWithoutOrderAlertMessage({
+      provider: "LIQPAY",
+      amount: 143_450,
+      currency: "UAH",
+      checkoutSessionId: "session-1",
+      sourceIdentifier: "chk_cart_123",
+      providerReference: "chk_cart_123_456",
+      retryQueued: true,
+    });
+    expect(message).toContain("Оплата підтверджена");
+    expect(message).toContain("1 434,50 UAH");
+    expect(message).toContain("chk_cart_123");
+    expect(message).toContain("поставлено в чергу");
   });
 
   it("summarizes reconciliation without exposing internal errors", () => {

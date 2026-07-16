@@ -1,9 +1,14 @@
 import type { PaymentAttempt, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { getPaymentAdapter } from "@/lib/payments";
-import { createShopifyOrderIdempotent } from "@/lib/shopify/order-writer";
+import { ensureShopifyOrderCreation } from "@/lib/payments/service";
 import { assertPaymentIntegrity } from "@/lib/payments/integrity";
 import { decryptPaymentConfig } from "@/lib/payments/config-secrets";
+import { logWithCorrelation } from "@/lib/logger";
+import {
+  alertExistingPaidSessionsWithoutOrders,
+  notifyPaymentWithoutOrder,
+} from "@/lib/telegram/ops-alerts";
 
 type PendingAttempt = PaymentAttempt & {
   checkoutSession: {
@@ -84,8 +89,37 @@ export async function reconcilePendingPaymentAttempt(attempt: PendingAttempt) {
       data: { status: "PAID" },
     });
 
-    const orderLink = await createShopifyOrderIdempotent(attempt.checkoutSessionId);
-    shopifyOrderName = orderLink.shopifyOrderName;
+    const orderCreation = await ensureShopifyOrderCreation(attempt.checkoutSessionId);
+    shopifyOrderName = orderCreation.shopifyOrderName;
+    if (!orderCreation.created) {
+      await notifyPaymentWithoutOrder({
+        provider: attempt.provider,
+        amount: attempt.amount,
+        currency: attempt.checkoutSession.currency,
+        checkoutSessionId: attempt.checkoutSessionId,
+        sourceIdentifier: attempt.checkoutSession.sourceIdentifier,
+        providerReference: attempt.providerReference,
+        retryQueued: orderCreation.retryQueued,
+      }).catch((error) => {
+        logWithCorrelation(
+          "error",
+          "Payment-without-order Telegram alert failed during reconciliation",
+          { checkoutSessionId: attempt.checkoutSessionId },
+          { error: error instanceof Error ? error.message : String(error) }
+        );
+      });
+      return {
+        paymentAttemptId: attempt.id,
+        checkoutSessionId: attempt.checkoutSessionId,
+        publicToken: attempt.checkoutSession.publicToken,
+        sourceIdentifier: attempt.checkoutSession.sourceIdentifier,
+        providerReference: attempt.providerReference,
+        status: "error",
+        paymentStatus: "PAID",
+        reason: "Shopify order creation failed",
+        retryQueued: orderCreation.retryQueued,
+      };
+    }
   }
 
   return {
@@ -138,5 +172,14 @@ export async function reconcilePendingPayments(input?: {
     }
   }
 
-  return { checked: attempts.length, results };
+  const orphanAlerts = await alertExistingPaidSessionsWithoutOrders().catch((error) => {
+    logWithCorrelation(
+      "error",
+      "Paid checkout orphan alert scan failed",
+      {},
+      { error: error instanceof Error ? error.message : String(error) }
+    );
+    return { checked: 0, alerted: 0, failed: true };
+  });
+  return { checked: attempts.length, results, orphanAlerts };
 }
