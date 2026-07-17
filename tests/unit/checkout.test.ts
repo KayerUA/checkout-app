@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   parseLiqPayCallbackEnvelope,
   parseLiqPayData,
@@ -63,6 +63,23 @@ describe("LiqPay verification", () => {
 
   it("rejects malformed signatures without throwing", () => {
     expect(verifyLiqPayCallback("data", "short", "private")).toBe(false);
+  });
+
+  it("keeps an unknown LiqPay status pending instead of reporting amount mismatch", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        json: async () => ({ result: "error", err_code: "payment_not_found" }),
+      })
+    );
+
+    await expect(
+      liqpayAdapter.getFinalStatus?.("missing-order", {
+        publicKey: "public",
+        privateKey: "private",
+      })
+    ).resolves.toBeNull();
+    vi.unstubAllGlobals();
   });
 });
 

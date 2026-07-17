@@ -75,19 +75,25 @@ describe("Telegram payments bot", () => {
     expect(message).toContain("поставлено в чергу");
   });
 
-  it("summarizes reconciliation without exposing internal errors", () => {
+  it("summarizes reconciliation with actionable error details", () => {
     const message = summarizePaymentReconciliation({
       checked: 4,
       results: [
         { status: "PAID", shopifyOrderName: "#UA1200" },
         { status: "PENDING" },
-        { status: "error" },
+        {
+          status: "error",
+          error: "Payment amount mismatch",
+          providerReference: "checkout-reference-123456",
+        },
         { status: "skipped" },
       ],
     });
     expect(message).toContain("Проверено: 4");
     expect(message).toContain("Оплачено: 1");
     expect(message).toContain("Ошибки: 1");
+    expect(message).toContain("Ошибка 1: Payment amount mismatch");
+    expect(message).toContain("ref …rence-123456");
     expect(message).toContain("Shopify: #UA1200");
   });
 });

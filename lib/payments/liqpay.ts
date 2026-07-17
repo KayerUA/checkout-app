@@ -83,6 +83,9 @@ export const liqpayAdapter: PaymentAdapter = {
 
     const parsed = (await response.json()) as Record<string, unknown>;
     const statusValue = String(parsed.status ?? "");
+    if (!statusValue || parsed.amount == null) {
+      return null;
+    }
     const status =
       statusValue === "success" || statusValue === "sandbox"
         ? "PAID"

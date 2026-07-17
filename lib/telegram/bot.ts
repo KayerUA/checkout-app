@@ -78,7 +78,13 @@ export function paymentWithoutOrderAlertMessage(input: {
 
 export function summarizePaymentReconciliation(result: {
   checked: number;
-  results: Array<{ status?: string; shopifyOrderName?: string | null }>;
+  results: Array<{
+    status?: string;
+    shopifyOrderName?: string | null;
+    providerReference?: string | null;
+    error?: string;
+    reason?: string;
+  }>;
 }) {
   const counts = new Map<string, number>();
   for (const row of result.results) {
@@ -100,6 +106,18 @@ export function summarizePaymentReconciliation(result: {
   if (createdOrders.length) {
     rows.push(`Shopify: ${createdOrders.slice(0, 10).join(", ")}`);
   }
+  const errors = result.results.filter(
+    (row) => String(row.status ?? "").toUpperCase() === "ERROR"
+  );
+  errors.slice(0, 5).forEach((row, index) => {
+    const message = String(row.error || row.reason || "неизвестная ошибка")
+      .replace(/\s+/g, " ")
+      .slice(0, 180);
+    const reference = row.providerReference
+      ? ` · ref …${row.providerReference.slice(-12)}`
+      : "";
+    rows.push(`Ошибка ${index + 1}: ${message}${reference}`);
+  });
   return rows.join("\n");
 }
 

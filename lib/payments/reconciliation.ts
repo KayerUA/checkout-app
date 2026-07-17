@@ -162,6 +162,19 @@ export async function reconcilePendingPayments(input?: {
     try {
       results.push(await reconcilePendingPaymentAttempt(attempt));
     } catch (error) {
+      logWithCorrelation(
+        "error",
+        "Pending payment reconciliation failed",
+        {
+          checkoutSessionId: attempt.checkoutSessionId,
+          paymentAttemptId: attempt.id,
+        },
+        {
+          provider: attempt.provider,
+          providerReference: attempt.providerReference,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
       results.push({
         paymentAttemptId: attempt.id,
         checkoutSessionId: attempt.checkoutSessionId,
