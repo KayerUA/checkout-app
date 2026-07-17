@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { getEnv } from "@/lib/env";
-import { telegramApi } from "@/lib/telegram/bot";
+import { telegramApi, telegramBotCommands } from "@/lib/telegram/bot";
 
 export const runtime = "nodejs";
 
@@ -28,13 +28,7 @@ export async function POST(request: NextRequest) {
     drop_pending_updates: false,
   });
   await telegramApi(env.TG_BOT_TOKEN, "setMyCommands", {
-    commands: [
-      { command: "payments", description: "Сверить оплаты по банковской выписке" },
-      { command: "online_payments", description: "Проверить LiqPay/Monobank" },
-      { command: "status", description: "Показать статус оплат" },
-      { command: "myid", description: "Показать ID чата" },
-      { command: "help", description: "Показать команды" },
-    ],
+    commands: telegramBotCommands,
   });
 
   const bot = await telegramApi<{ id: number; username?: string }>(env.TG_BOT_TOKEN, "getMe", {});

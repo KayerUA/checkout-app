@@ -5,7 +5,7 @@ type TelegramApiResponse<T> = {
 };
 
 export type TelegramCommand = {
-  name: "help" | "myid" | "payments" | "online_payments" | "status" | "unknown";
+  name: "help" | "myid" | "payments" | "online_payments" | "abandoned" | "status" | "unknown";
   take?: number;
   days?: number;
 };
@@ -30,7 +30,87 @@ export function parseTelegramCommand(text: string): TelegramCommand {
       take: Number.isFinite(requestedTake) ? Math.min(Math.max(requestedTake, 1), 50) : 20,
     };
   }
+  if (command === "/abandoned") {
+    const requestedTake = Number.parseInt(rawTake, 10);
+    return {
+      name: "abandoned",
+      take: Number.isFinite(requestedTake) ? Math.min(Math.max(requestedTake, 1), 50) : 10,
+    };
+  }
   return { name: "unknown" };
+}
+
+export const telegramBotCommands = [
+  { command: "payments", description: "Сверить оплаты по банковской выписке" },
+  { command: "online_payments", description: "Проверить LiqPay/Monobank" },
+  { command: "abandoned", description: "Показать незавершённые checkout" },
+  { command: "status", description: "Показать статус оплат" },
+  { command: "myid", description: "Показать ID чата" },
+  { command: "help", description: "Показать команды" },
+];
+
+export function summarizeAbandonedCheckouts(
+  sessions: Array<{
+    sourceIdentifier?: string | null;
+    buyerFirstName?: string | null;
+    buyerLastName?: string | null;
+    buyerPhone?: string | null;
+    buyerEmail?: string | null;
+    totalAmount: number;
+    currency: string;
+    abandonedAt?: Date | string | null;
+    updatedAt: Date | string;
+    lines: Array<{ title: string; quantity: number }>;
+  }>
+) {
+  if (!sessions.length) return "Незавершённых checkout с контактами нет.";
+
+  const rows = [`Незавершённые checkout: ${sessions.length}`];
+  sessions.forEach((session, index) => {
+    const name = [session.buyerFirstName, session.buyerLastName].filter(Boolean).join(" ") || "Без имени";
+    const amount = new Intl.NumberFormat("uk-UA", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(session.totalAmount / 100);
+    const activity = new Intl.DateTimeFormat("uk-UA", {
+      day: "2-digit",
+      month: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone: "Europe/Kyiv",
+    }).format(new Date(session.abandonedAt ?? session.updatedAt));
+    const cart = session.lines
+      .map((line) => `${line.quantity}× ${line.title}`)
+      .join(", ")
+      .slice(0, 240) || "кошик порожній";
+    rows.push(
+      [
+        `${index + 1}. ${name} · ${amount} ${session.currency} · ${activity}`,
+        `Телефон: ${session.buyerPhone || "не указан"}`,
+        `Email: ${session.buyerEmail || "не указан"}`,
+        `Корзина: ${cart}`,
+        `Checkout: ${session.sourceIdentifier || "без идентификатора"}`,
+      ].join("\n")
+    );
+  });
+  return rows.join("\n\n");
+}
+
+export function splitTelegramMessage(text: string, maxLength = 3800) {
+  if (text.length <= maxLength) return [text];
+  const chunks: string[] = [];
+  let current = "";
+  for (const block of text.split("\n\n")) {
+    const next = current ? `${current}\n\n${block}` : block;
+    if (next.length <= maxLength) {
+      current = next;
+      continue;
+    }
+    if (current) chunks.push(current);
+    current = block.slice(0, maxLength);
+  }
+  if (current) chunks.push(current);
+  return chunks;
 }
 
 export function telegramChatIsAllowed(chatId: number | string, configured?: string) {
@@ -267,6 +347,7 @@ export function telegramHelpMessage(allowed: boolean) {
     lines.push(
       "/payments [1-31] — сверить оплаты по банковской выписке",
       "/online_payments [1-50] — проверить LiqPay/Monobank",
+      "/abandoned [1-50] — показать незавершённые checkout с контактами",
       "/status — краткий статус оплат"
     );
   } else {

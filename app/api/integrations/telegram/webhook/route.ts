@@ -7,9 +7,12 @@ import { reconcileBankPayments } from "@/lib/reconciliation/service";
 import { markAbandonedSessions } from "@/lib/checkout/session-service";
 import {
   parseTelegramCommand,
+  splitTelegramMessage,
+  summarizeAbandonedCheckouts,
   summarizeBankReconciliation,
   summarizePaymentReconciliation,
   telegramApi,
+  telegramBotCommands,
   telegramChatIsAllowed,
   telegramHelpMessage,
 } from "@/lib/telegram/bot";
@@ -121,6 +124,32 @@ export async function POST(request: NextRequest) {
       );
       const result = await reconcileBankPayments({ from, to });
       await sendMessage(env.TG_BOT_TOKEN, chatId, summarizeBankReconciliation(result));
+      return NextResponse.json({ ok: true });
+    }
+
+    if (command.name === "abandoned") {
+      await telegramApi(env.TG_BOT_TOKEN, "setMyCommands", {
+        commands: telegramBotCommands,
+      }).catch(() => {});
+      await markAbandonedSessions();
+      const sessions = await prisma.checkoutSession.findMany({
+        where: {
+          status: "ABANDONED",
+          OR: [
+            { buyerPhone: { not: "" } },
+            { buyerEmail: { not: "" } },
+          ],
+        },
+        orderBy: { abandonedAt: "desc" },
+        take: command.take ?? 10,
+        include: {
+          lines: { select: { title: true, quantity: true } },
+        },
+      });
+      const summary = summarizeAbandonedCheckouts(sessions);
+      for (const chunk of splitTelegramMessage(summary)) {
+        await sendMessage(env.TG_BOT_TOKEN, chatId, chunk);
+      }
       return NextResponse.json({ ok: true });
     }
 

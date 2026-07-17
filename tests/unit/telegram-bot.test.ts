@@ -3,7 +3,9 @@ import {
   parseTelegramCommand,
   paymentWithoutOrderAlertMessage,
   summarizeBankReconciliation,
+  summarizeAbandonedCheckouts,
   summarizePaymentReconciliation,
+  splitTelegramMessage,
   telegramChatIsAllowed,
   telegramGroupChatIds,
 } from "@/lib/telegram/bot";
@@ -20,6 +22,32 @@ describe("Telegram payments bot", () => {
       take: 50,
     });
     expect(parseTelegramCommand("/status")).toEqual({ name: "status" });
+    expect(parseTelegramCommand("/abandoned@kayer_bot 200")).toEqual({
+      name: "abandoned",
+      take: 50,
+    });
+  });
+
+  it("formats abandoned checkout contacts and splits long Telegram messages", () => {
+    const message = summarizeAbandonedCheckouts([
+      {
+        sourceIdentifier: "chk_cart_abandoned",
+        buyerFirstName: "Анна",
+        buyerLastName: "Тест",
+        buyerPhone: "+380501112233",
+        buyerEmail: "anna@example.com",
+        totalAmount: 199_000,
+        currency: "UAH",
+        abandonedAt: "2026-07-17T08:47:00.000Z",
+        updatedAt: "2026-07-17T08:47:00.000Z",
+        lines: [{ title: "Luxio Coy", quantity: 3 }],
+      },
+    ]);
+    expect(message).toContain("Анна Тест · 1 990,00 UAH");
+    expect(message).toContain("Телефон: +380501112233");
+    expect(message).toContain("Email: anna@example.com");
+    expect(message).toContain("3× Luxio Coy");
+    expect(splitTelegramMessage(`${message}\n\n${message}`, message.length + 1)).toHaveLength(2);
   });
 
   it("reports new bank matches or an explicit empty result", () => {
