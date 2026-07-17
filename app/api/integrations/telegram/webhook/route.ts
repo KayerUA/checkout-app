@@ -81,8 +81,16 @@ export async function POST(request: NextRequest) {
 
     if (command.name === "status") {
       const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
-      const [pending, paid24h, failed24h] = await Promise.all([
-        prisma.paymentAttempt.count({ where: { status: "PENDING" } }),
+      const [activePending, inactivePending, paid24h, failed24h] = await Promise.all([
+        prisma.paymentAttempt.count({
+          where: { status: "PENDING", checkoutSession: { status: "PAYMENT_PENDING" } },
+        }),
+        prisma.paymentAttempt.count({
+          where: {
+            status: "PENDING",
+            checkoutSession: { status: { in: ["PAID", "COMPLETED", "ABANDONED"] } },
+          },
+        }),
         prisma.paymentAttempt.count({ where: { status: "PAID", updatedAt: { gte: since } } }),
         prisma.paymentAttempt.count({ where: { status: "FAILED", updatedAt: { gte: since } } }),
       ]);
@@ -91,7 +99,8 @@ export async function POST(request: NextRequest) {
         chatId,
         [
           "Статус оплат:",
-          `Ожидают проверки: ${pending}`,
+          `Активно ожидают оплаты: ${activePending}`,
+          `Старые/неактивные попытки: ${inactivePending}`,
           `Оплачено за 24 ч: ${paid24h}`,
           `Неуспешно за 24 ч: ${failed24h}`,
         ].join("\n")

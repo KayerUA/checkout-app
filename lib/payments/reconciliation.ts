@@ -16,6 +16,7 @@ type PendingAttempt = PaymentAttempt & {
     publicToken: string;
     merchantId: string;
     currency: string;
+    status: string;
     sourceIdentifier: string | null;
     orderLink: { shopifyOrderName: string | null; shopifyOrderGid: string | null } | null;
     merchant: {
@@ -39,6 +40,7 @@ export async function reconcilePendingPaymentAttempt(attempt: PendingAttempt) {
       createdAt: attempt.createdAt,
       sourceIdentifier: attempt.checkoutSession.sourceIdentifier,
       shopifyOrderName: attempt.checkoutSession.orderLink?.shopifyOrderName ?? null,
+      sessionStatus: attempt.checkoutSession.status,
       status: "skipped",
       reason: "missing providerReference",
     };
@@ -59,6 +61,7 @@ export async function reconcilePendingPaymentAttempt(attempt: PendingAttempt) {
       createdAt: attempt.createdAt,
       sourceIdentifier: attempt.checkoutSession.sourceIdentifier,
       shopifyOrderName: attempt.checkoutSession.orderLink?.shopifyOrderName ?? null,
+      sessionStatus: attempt.checkoutSession.status,
       status: "skipped",
       reason: "provider status polling unavailable",
     };
@@ -79,6 +82,7 @@ export async function reconcilePendingPaymentAttempt(attempt: PendingAttempt) {
       createdAt: attempt.createdAt,
       sourceIdentifier: attempt.checkoutSession.sourceIdentifier,
       shopifyOrderName: attempt.checkoutSession.orderLink?.shopifyOrderName ?? null,
+      sessionStatus: attempt.checkoutSession.status,
       status: "pending",
       providerState: "NOT_FOUND",
     };
@@ -146,6 +150,7 @@ export async function reconcilePendingPaymentAttempt(attempt: PendingAttempt) {
     checkoutSessionId: attempt.checkoutSessionId,
     publicToken: attempt.checkoutSession.publicToken,
     sourceIdentifier: attempt.checkoutSession.sourceIdentifier,
+    sessionStatus: attempt.checkoutSession.status,
     providerReference: attempt.providerReference,
     provider: attempt.provider,
     amount: attempt.amount,
@@ -209,6 +214,7 @@ export async function reconcilePendingPayments(input?: {
         createdAt: attempt.createdAt,
         sourceIdentifier: attempt.checkoutSession.sourceIdentifier,
         shopifyOrderName: attempt.checkoutSession.orderLink?.shopifyOrderName ?? null,
+        sessionStatus: attempt.checkoutSession.status,
         status: "error",
         error: error instanceof Error ? error.message : String(error),
       });

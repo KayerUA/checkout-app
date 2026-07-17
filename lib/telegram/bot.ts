@@ -87,6 +87,7 @@ export function summarizePaymentReconciliation(result: {
     currency?: string;
     createdAt?: Date | string;
     providerState?: string;
+    sessionStatus?: string;
     providerReference?: string | null;
     error?: string;
     reason?: string;
@@ -100,11 +101,20 @@ export function summarizePaymentReconciliation(result: {
   const createdOrders = result.results
     .map((row) => row.shopifyOrderName)
     .filter((value): value is string => Boolean(value));
+  const pending = result.results.filter(
+    (row) => String(row.status ?? "").toUpperCase() === "PENDING"
+  );
+  const inactiveSessionStatuses = new Set(["PAID", "COMPLETED", "ABANDONED"]);
+  const inactivePending = pending.filter((row) =>
+    inactiveSessionStatuses.has(String(row.sessionStatus ?? "").toUpperCase())
+  );
+  const activePending = pending.length - inactivePending.length;
   const rows = [
     "Проверка оплат завершена.",
     `Проверено: ${result.checked}`,
     `Оплачено: ${counts.get("PAID") ?? 0}`,
-    `Ожидает: ${counts.get("PENDING") ?? 0}`,
+    `Активно ожидает оплаты: ${activePending}`,
+    `Старых/неактивных попыток: ${inactivePending.length}`,
     `Неуспешно: ${counts.get("FAILED") ?? 0}`,
     `Ошибки: ${counts.get("ERROR") ?? 0}`,
     `Пропущено: ${counts.get("SKIPPED") ?? 0}`,
@@ -112,10 +122,10 @@ export function summarizePaymentReconciliation(result: {
   if (createdOrders.length) {
     rows.push(`Shopify: ${createdOrders.slice(0, 10).join(", ")}`);
   }
-  const pending = result.results.filter(
-    (row) => String(row.status ?? "").toUpperCase() === "PENDING"
-  );
   pending.slice(0, 10).forEach((row, index) => {
+    const inactive = inactiveSessionStatuses.has(
+      String(row.sessionStatus ?? "").toUpperCase()
+    );
     const order = row.shopifyOrderName
       ? `Shopify ${row.shopifyOrderName}`
       : `Shopify-заказ не создан · ${row.sourceIdentifier || "checkout без номера"}`;
@@ -135,14 +145,18 @@ export function summarizePaymentReconciliation(result: {
           timeZone: "Europe/Kyiv",
         }).format(new Date(row.createdAt))}`
       : "";
-    const providerState = row.providerState === "NOT_FOUND"
-      ? " · провайдер не нашёл оплаченную операцию"
-      : " · провайдер ещё не подтвердил оплату";
+    const providerState = inactive
+      ? row.sessionStatus === "ABANDONED"
+        ? " · брошенная платёжная ссылка"
+        : " · заказ уже оплачен, это старая неоплаченная попытка"
+      : row.providerState === "NOT_FOUND"
+        ? " · провайдер не нашёл оплаченную операцию"
+        : " · провайдер ещё не подтвердил оплату";
     const reference = row.providerReference
       ? ` · ref …${row.providerReference.slice(-12)}`
       : "";
     rows.push(
-      `Ожидает ${index + 1}: ${provider}${order}${amount}${createdAt}${providerState}${reference}`
+      `${inactive ? "Старая попытка" : "Ожидает"} ${index + 1}: ${provider}${order}${amount}${createdAt}${providerState}${reference}`
     );
   });
   const errors = result.results.filter(

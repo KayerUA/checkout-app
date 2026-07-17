@@ -88,6 +88,7 @@ describe("Telegram payments bot", () => {
           currency: "UAH",
           createdAt: "2026-07-17T10:30:00.000Z",
           providerState: "PENDING",
+          sessionStatus: "COMPLETED",
           providerReference: "liqpay-reference-1183",
         },
         {
@@ -104,9 +105,11 @@ describe("Telegram payments bot", () => {
     expect(message).toContain("Ошибка 1: Payment amount mismatch");
     expect(message).toContain("ref …rence-123456");
     expect(message).toContain("Shopify: #UA1200");
-    expect(message).toContain("Ожидает 1: LIQPAY · Shopify #UA1183");
+    expect(message).toContain("Активно ожидает оплаты: 0");
+    expect(message).toContain("Старых/неактивных попыток: 1");
+    expect(message).toContain("Старая попытка 1: LIQPAY · Shopify #UA1183");
     expect(message).toContain("1 234,50 UAH");
-    expect(message).toContain("провайдер ещё не подтвердил оплату");
+    expect(message).toContain("заказ уже оплачен, это старая неоплаченная попытка");
     expect(message).toContain("ref …ference-1183");
   });
 });
