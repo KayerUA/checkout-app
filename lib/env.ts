@@ -45,6 +45,7 @@ const envSchema = z.object({
   ACCOUNTING_PROVIDER: z.enum(["none", "diloshop", "dilovod", "bas"]).default("none"),
   DILOSHOP_API_URL: z.string().url().optional(),
   DILOSHOP_API_KEY: z.string().optional(),
+  DILOSHOP_BOT_API_KEY: z.string().optional(),
   DILOSHOP_WEBHOOK_URL: z.string().url().optional(),
   DILOSHOP_NP_WEBHOOK_URL: z.string().url().optional(),
   DILOSHOP_NP_FLOW_SECRET: z.string().optional(),
@@ -54,6 +55,7 @@ const envSchema = z.object({
   TG_BOT_TOKEN: z.string().optional(),
   TG_WEBHOOK_SECRET: z.string().regex(/^[A-Za-z0-9_-]{16,256}$/).optional(),
   TG_ALLOWED_CHAT_IDS: z.string().optional(),
+  TG_ADMIN_USER_IDS: z.string().optional(),
   CRON_SECRET: z.string().optional(),
 });
 
@@ -110,6 +112,7 @@ export function getEnv(): Env {
     ACCOUNTING_PROVIDER: process.env.ACCOUNTING_PROVIDER,
     DILOSHOP_API_URL: process.env.DILOSHOP_API_URL,
     DILOSHOP_API_KEY: process.env.DILOSHOP_API_KEY,
+    DILOSHOP_BOT_API_KEY: process.env.DILOSHOP_BOT_API_KEY,
     DILOSHOP_WEBHOOK_URL: process.env.DILOSHOP_WEBHOOK_URL,
     DILOSHOP_NP_WEBHOOK_URL: process.env.DILOSHOP_NP_WEBHOOK_URL,
     DILOSHOP_NP_FLOW_SECRET: process.env.DILOSHOP_NP_FLOW_SECRET,
@@ -119,6 +122,7 @@ export function getEnv(): Env {
     TG_BOT_TOKEN: process.env.TG_BOT_TOKEN,
     TG_WEBHOOK_SECRET: process.env.TG_WEBHOOK_SECRET,
     TG_ALLOWED_CHAT_IDS: process.env.TG_ALLOWED_CHAT_IDS,
+    TG_ADMIN_USER_IDS: process.env.TG_ADMIN_USER_IDS,
     CRON_SECRET: process.env.CRON_SECRET,
   });
   return cached;

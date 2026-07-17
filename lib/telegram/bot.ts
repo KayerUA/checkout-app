@@ -5,13 +5,39 @@ type TelegramApiResponse<T> = {
 };
 
 export type TelegramCommand = {
-  name: "help" | "myid" | "payments" | "online_payments" | "abandoned" | "status" | "unknown";
+  name:
+    | "help"
+    | "myid"
+    | "payments"
+    | "online_payments"
+    | "abandoned"
+    | "status"
+    | "order"
+    | "issues"
+    | "today"
+    | "health"
+    | "queue"
+    | "unmatched"
+    | "np"
+    | "b2b"
+    | "cashin"
+    | "refund"
+    | "sku"
+    | "customer"
+    | "webhooks"
+    | "mapping_gaps"
+    | "unknown";
   take?: number;
   days?: number;
+  hours?: number;
+  arg?: string;
+  filter?: string;
 };
 
 export function parseTelegramCommand(text: string): TelegramCommand {
-  const [rawCommand = "", rawTake = ""] = text.trim().split(/\s+/, 2);
+  const [rawCommand = "", ...rest] = text.trim().split(/\s+/);
+  const rawTake = rest[0] ?? "";
+  const arg = rest.join(" ").trim();
   const command = rawCommand.toLowerCase().replace(/@[^\s]+$/, "");
   if (command === "/start" || command === "/help") return { name: "help" };
   if (command === "/myid") return { name: "myid" };
@@ -37,17 +63,63 @@ export function parseTelegramCommand(text: string): TelegramCommand {
       take: Number.isFinite(requestedTake) ? Math.min(Math.max(requestedTake, 1), 50) : 10,
     };
   }
+  if (["/order", "/np", "/b2b", "/cashin", "/refund"].includes(command)) {
+    return { name: command.slice(1) as "order" | "np" | "b2b" | "cashin" | "refund", arg };
+  }
+  if (command === "/issues") {
+    const filter = rawTake.toLowerCase();
+    return {
+      name: "issues",
+      filter: ["payments", "np", "dilovod", "b2b", "fiscal", "all"].includes(filter)
+        ? filter
+        : "all",
+      hours: 24,
+    };
+  }
+  if (command === "/today") return { name: "today" };
+  if (command === "/health") return { name: "health" };
+  if (command === "/queue") return { name: "queue" };
+  if (command === "/unmatched") {
+    const requestedDays = Number.parseInt(rawTake, 10);
+    return { name: "unmatched", days: Number.isFinite(requestedDays) ? Math.min(Math.max(requestedDays, 1), 31) : 7 };
+  }
+  if (command === "/sku") return { name: "sku", arg };
+  if (command === "/customer") return { name: "customer", arg };
+  if (command === "/webhooks") {
+    const requestedHours = Number.parseInt(rawTake, 10);
+    return { name: "webhooks", hours: Number.isFinite(requestedHours) ? Math.min(Math.max(requestedHours, 1), 168) : 24 };
+  }
+  if (command === "/mapping_gaps") return { name: "mapping_gaps" };
   return { name: "unknown" };
 }
 
-export const telegramBotCommands = [
+export const telegramGroupBotCommands = [
+  { command: "order", description: "Карточка заказа во всех системах" },
+  { command: "issues", description: "Проблемы Checkout, Dilovod и НП" },
+  { command: "today", description: "Сводка за сегодня" },
+  { command: "health", description: "Проверить сервисы и workers" },
+  { command: "queue", description: "Очереди Checkout и Diloshop" },
   { command: "payments", description: "Сверить оплаты по банковской выписке" },
   { command: "online_payments", description: "Проверить LiqPay/Monobank" },
+  { command: "unmatched", description: "Банковские оплаты без матча" },
   { command: "abandoned", description: "Показать незавершённые checkout" },
-  { command: "status", description: "Показать статус оплат" },
-  { command: "myid", description: "Показать ID чата" },
   { command: "help", description: "Показать команды" },
 ];
+
+export const telegramPrivateBotCommands = [
+  ...telegramGroupBotCommands,
+  { command: "np", description: "ТТН и статус Новой Почты" },
+  { command: "b2b", description: "B2B оплата и документы" },
+  { command: "cashin", description: "Поступление денег в Dilovod" },
+  { command: "refund", description: "Возврат Shopify и Dilovod" },
+  { command: "sku", description: "Mapping товара Shopify ↔ Dilovod" },
+  { command: "customer", description: "Найти клиента по телефону/email" },
+  { command: "webhooks", description: "Состояние Shopify webhooks" },
+  { command: "mapping_gaps", description: "Разрывы Shopify ↔ Dilovod" },
+  { command: "myid", description: "Показать ID чата и пользователя" },
+];
+
+export const telegramBotCommands = telegramGroupBotCommands;
 
 export function summarizeAbandonedCheckouts(
   sessions: Array<{
@@ -117,6 +189,50 @@ export function telegramChatIsAllowed(chatId: number | string, configured?: stri
   if (!configured?.trim()) return false;
   const allowed = new Set(configured.split(/[\s,;]+/).map((value) => value.trim()).filter(Boolean));
   return allowed.has(String(chatId));
+}
+
+export function telegramUserIsAdmin(userId: number | string, configured?: string) {
+  if (!configured?.trim()) return false;
+  const allowed = new Set(configured.split(/[\s,;]+/).map((value) => value.trim()).filter(Boolean));
+  return allowed.has(String(userId));
+}
+
+export type TelegramCallback =
+  | { name: "order"; orderId: string }
+  | { name: "lookup"; reference: string }
+  | { name: "issues"; hours: number; filter: string }
+  | { name: "health" }
+  | { name: "queue" }
+  | { name: "confirm"; action: string; orderId: string }
+  | { name: "run"; action: string; orderId: string }
+  | { name: "cancel" }
+  | { name: "unknown" };
+
+const telegramOrderActionNames = new Set(["retry-dilovod", "retry-np", "refresh-np"]);
+
+export function parseTelegramCallback(data: string): TelegramCallback {
+  const [name, first = "", second = ""] = data.split("|", 3);
+  if (name === "order" && /^\d+$/.test(first)) return { name: "order", orderId: first };
+  if (name === "lookup" && first) return { name: "lookup", reference: first };
+  if (name === "issues") {
+    return { name: "issues", hours: Math.min(Math.max(Number(first) || 24, 1), 720), filter: second || "all" };
+  }
+  if (name === "health") return { name: "health" };
+  if (name === "queue") return { name: "queue" };
+  if ((name === "confirm" || name === "run") && telegramOrderActionNames.has(first) && /^\d+$/.test(second)) {
+    return { name, action: first, orderId: second };
+  }
+  if (name === "cancel") return { name: "cancel" };
+  return { name: "unknown" };
+}
+
+export function telegramConfirmationKeyboard(action: string, orderId: string) {
+  return {
+    inline_keyboard: [[
+      { text: "✅ Подтвердить", callback_data: `run|${action}|${orderId}` },
+      { text: "Отмена", callback_data: "cancel" },
+    ]],
+  };
 }
 
 export function telegramGroupChatIds(configured?: string) {
@@ -340,15 +456,25 @@ export async function telegramApi<T>(
 
 export function telegramHelpMessage(allowed: boolean) {
   const lines = [
-    "KAYER payments bot",
-    "/myid — показать ID этого чата",
+    "KAYER operations bot",
+    "/myid — показать ID чата и пользователя",
   ];
   if (allowed) {
     lines.push(
+      "/order UA1183 — единая карточка заказа",
+      "/issues [payments|np|dilovod|b2b] — проблемы",
+      "/today — сводка за сегодня",
+      "/health — состояние сервисов",
+      "/queue — очереди Checkout/Diloshop",
       "/payments [1-31] — сверить оплаты по банковской выписке",
       "/online_payments [1-50] — проверить LiqPay/Monobank",
+      "/unmatched [1-31] — банковские оплаты без матча",
       "/abandoned [1-50] — показать незавершённые checkout с контактами",
-      "/status — краткий статус оплат"
+      "/np, /b2b, /cashin, /refund UA1183 — детали заказа",
+      "/sku SKU — mapping товара",
+      "/customer телефон|email — найти клиента",
+      "/webhooks [1-168] — состояние webhook'ов",
+      "/mapping_gaps — покрытие mapping товаров"
     );
   } else {
     lines.push("Платёжные команды закрыты: добавьте chat ID в TG_ALLOWED_CHAT_IDS.");

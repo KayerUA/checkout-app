@@ -185,3 +185,67 @@ export async function alertExistingPaidSessionsWithoutOrders(take = 20) {
 
   return { checked: sessions.length, alerted };
 }
+
+export async function notifyExternalOpsAlert(input: {
+  source: string;
+  eventType: string;
+  severity?: string;
+  shopifyOrderId?: string | null;
+  message: string;
+  metadata?: Record<string, unknown>;
+}) {
+  const step = `${input.source}:${input.eventType}:${input.shopifyOrderId || "global"}`;
+  const dedupeSince = new Date(Date.now() - 12 * 60 * 60 * 1000);
+  const alreadySent = await prisma.automationLog.findFirst({
+    where: {
+      eventType: "external_ops_alert",
+      step,
+      status: "ALERT_SENT",
+      createdAt: { gte: dedupeSince },
+    },
+    select: { id: true },
+  });
+  if (alreadySent) return { sent: 0, deduplicated: true };
+
+  const env = getEnv();
+  const chatIds = telegramGroupChatIds(env.TG_ALLOWED_CHAT_IDS);
+  if (!env.TG_BOT_TOKEN || !chatIds.length) return { sent: 0, deduplicated: false };
+  const icon = input.severity === "info" ? "✅" : input.severity === "warning" ? "⚠️" : "🚨";
+  const text = [
+    `${icon} ${input.source}: ${input.eventType}`,
+    input.shopifyOrderId ? `Shopify order ID: ${input.shopifyOrderId}` : null,
+    input.message.replace(/\s+/g, " ").slice(0, 1200),
+  ].filter(Boolean).join("\n");
+  const replyMarkup = input.shopifyOrderId
+    ? { inline_keyboard: [[{ text: "Открыть заказ", callback_data: `order|${input.shopifyOrderId}` }]] }
+    : undefined;
+  const results = await Promise.allSettled(
+    chatIds.map((chatId) =>
+      telegramApi(env.TG_BOT_TOKEN!, "sendMessage", {
+        chat_id: chatId,
+        text,
+        disable_web_page_preview: true,
+        ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+      })
+    )
+  );
+  const sent = results.filter((result) => result.status === "fulfilled").length;
+  if (sent) {
+    await prisma.automationLog.create({
+      data: {
+        shopifyOrderId: input.shopifyOrderId || undefined,
+        eventType: "external_ops_alert",
+        step,
+        status: "ALERT_SENT",
+        message: `Telegram ops alert sent to ${sent} chat(s)`,
+        metadata: {
+          source: input.source,
+          sourceEventType: input.eventType,
+          severity: input.severity ?? "error",
+          ...(input.metadata ?? {}),
+        },
+      },
+    });
+  }
+  return { sent, deduplicated: false };
+}

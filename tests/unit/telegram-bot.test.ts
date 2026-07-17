@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   parseTelegramCommand,
+  parseTelegramCallback,
   paymentWithoutOrderAlertMessage,
   summarizeBankReconciliation,
   summarizeAbandonedCheckouts,
@@ -8,7 +9,9 @@ import {
   splitTelegramMessage,
   telegramChatIsAllowed,
   telegramGroupChatIds,
+  telegramUserIsAdmin,
 } from "@/lib/telegram/bot";
+import { normalizeOrderReference } from "@/lib/telegram/operations";
 
 describe("Telegram payments bot", () => {
   it("parses commands and caps reconciliation size", () => {
@@ -25,6 +28,13 @@ describe("Telegram payments bot", () => {
     expect(parseTelegramCommand("/abandoned@kayer_bot 200")).toEqual({
       name: "abandoned",
       take: 50,
+    });
+    expect(parseTelegramCommand("/order ua-1183")).toEqual({ name: "order", arg: "ua-1183" });
+    expect(parseTelegramCommand("/issues np")).toEqual({ name: "issues", filter: "np", hours: 24 });
+    expect(parseTelegramCommand("/unmatched 90")).toEqual({ name: "unmatched", days: 31 });
+    expect(parseTelegramCommand("/customer anna@example.com")).toEqual({
+      name: "customer",
+      arg: "anna@example.com",
     });
   });
 
@@ -85,6 +95,23 @@ describe("Telegram payments bot", () => {
     expect(telegramGroupChatIds("5228806558, -4121486955; -4121486955")).toEqual([
       "-4121486955",
     ]);
+    expect(telegramUserIsAdmin(5228806558, "5228806558")).toBe(true);
+    expect(telegramUserIsAdmin(1, "5228806558")).toBe(false);
+  });
+
+  it("normalizes order references and validates callback payloads", () => {
+    expect(normalizeOrderReference("ua-1183")).toEqual({
+      input: "ua-1183",
+      name: "#UA1183",
+      numericId: null,
+    });
+    expect(normalizeOrderReference("1234567890123").numericId).toBe("1234567890123");
+    expect(parseTelegramCallback("confirm|retry-np|123456789")).toEqual({
+      name: "confirm",
+      action: "retry-np",
+      orderId: "123456789",
+    });
+    expect(parseTelegramCallback("order|oops")).toEqual({ name: "unknown" });
   });
 
   it("formats a payment-without-order alert without customer secrets", () => {

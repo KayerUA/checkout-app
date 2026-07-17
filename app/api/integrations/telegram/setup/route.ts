@@ -1,7 +1,11 @@
 import crypto from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { getEnv } from "@/lib/env";
-import { telegramApi, telegramBotCommands } from "@/lib/telegram/bot";
+import {
+  telegramApi,
+  telegramGroupBotCommands,
+  telegramPrivateBotCommands,
+} from "@/lib/telegram/bot";
 
 export const runtime = "nodejs";
 
@@ -24,11 +28,16 @@ export async function POST(request: NextRequest) {
   await telegramApi(env.TG_BOT_TOKEN, "setWebhook", {
     url: webhookUrl,
     secret_token: env.TG_WEBHOOK_SECRET,
-    allowed_updates: ["message"],
+    allowed_updates: ["message", "callback_query"],
     drop_pending_updates: false,
   });
   await telegramApi(env.TG_BOT_TOKEN, "setMyCommands", {
-    commands: telegramBotCommands,
+    commands: telegramGroupBotCommands,
+    scope: { type: "all_group_chats" },
+  });
+  await telegramApi(env.TG_BOT_TOKEN, "setMyCommands", {
+    commands: telegramPrivateBotCommands,
+    scope: { type: "all_private_chats" },
   });
 
   const bot = await telegramApi<{ id: number; username?: string }>(env.TG_BOT_TOKEN, "getMe", {});

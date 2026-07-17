@@ -6,25 +6,64 @@ import { reconcilePendingPayments } from "@/lib/payments/reconciliation";
 import { reconcileBankPayments } from "@/lib/reconciliation/service";
 import { markAbandonedSessions } from "@/lib/checkout/session-service";
 import {
+  parseTelegramCallback,
   parseTelegramCommand,
   splitTelegramMessage,
   summarizeAbandonedCheckouts,
   summarizeBankReconciliation,
   summarizePaymentReconciliation,
   telegramApi,
-  telegramBotCommands,
   telegramChatIsAllowed,
+  telegramConfirmationKeyboard,
   telegramHelpMessage,
+  telegramUserIsAdmin,
 } from "@/lib/telegram/bot";
+import {
+  buildCustomerSummary,
+  buildHealthSummary,
+  buildIssuesSummary,
+  buildMappingGapsSummary,
+  buildOrderCard,
+  buildQueueSummary,
+  buildSkuSummary,
+  buildTodaySummary,
+  buildUnmatchedSummary,
+  buildWebhooksSummary,
+  formatDiloshopActionResult,
+  type TelegramOpsMessage,
+} from "@/lib/telegram/operations";
+import { runDiloshopOrderAction } from "@/lib/telegram/diloshop-client";
+import {
+  auditTelegram,
+  claimTelegramCooldown,
+  claimTelegramUpdate,
+  withTelegramLock,
+} from "@/lib/telegram/execution";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
+type TelegramActor = {
+  id?: number;
+  username?: string;
+  first_name?: string;
+};
+
+type TelegramMessage = {
+  message_id?: number;
+  text?: string;
+  from?: TelegramActor;
+  chat?: { id?: number; type?: string };
+};
+
 type TelegramUpdate = {
   update_id?: number;
-  message?: {
-    text?: string;
-    chat?: { id?: number };
+  message?: TelegramMessage;
+  callback_query?: {
+    id?: string;
+    from?: TelegramActor;
+    data?: string;
+    message?: TelegramMessage;
   };
 };
 
@@ -33,12 +72,231 @@ function secretsMatch(actual: string, expected: string) {
   return crypto.timingSafeEqual(Buffer.from(actual), Buffer.from(expected));
 }
 
-async function sendMessage(token: string, chatId: number, text: string) {
-  await telegramApi(token, "sendMessage", {
+async function sendMessage(token: string, chatId: number, message: string | TelegramOpsMessage) {
+  const value = typeof message === "string" ? { text: message } : message;
+  return telegramApi<{ message_id: number }>(token, "sendMessage", {
     chat_id: chatId,
-    text: text.slice(0, 4000),
+    text: value.text.slice(0, 4000),
     disable_web_page_preview: true,
+    ...(value.replyMarkup ? { reply_markup: value.replyMarkup } : {}),
   });
+}
+
+async function editMessage(
+  token: string,
+  chatId: number,
+  messageId: number,
+  message: string | TelegramOpsMessage
+) {
+  const value = typeof message === "string" ? { text: message } : message;
+  return telegramApi(token, "editMessageText", {
+    chat_id: chatId,
+    message_id: messageId,
+    text: value.text.slice(0, 4000),
+    disable_web_page_preview: true,
+    reply_markup: value.replyMarkup ?? { inline_keyboard: [] },
+  });
+}
+
+function isAdmin(userId: number, chatId: number) {
+  const env = getEnv();
+  return telegramUserIsAdmin(userId, env.TG_ADMIN_USER_IDS || env.TG_ALLOWED_CHAT_IDS) ||
+    (chatId > 0 && userId === chatId && telegramChatIsAllowed(chatId, env.TG_ALLOWED_CHAT_IDS));
+}
+
+async function callbackResponse(update: TelegramUpdate) {
+  const env = getEnv();
+  const callback = update.callback_query;
+  const callbackId = callback?.id;
+  const chatId = callback?.message?.chat?.id;
+  const messageId = callback?.message?.message_id;
+  const userId = callback?.from?.id;
+  if (!callbackId || !chatId || !messageId || !userId) return;
+
+  await telegramApi(env.TG_BOT_TOKEN!, "answerCallbackQuery", {
+    callback_query_id: callbackId,
+  }).catch(() => {});
+
+  if (!telegramChatIsAllowed(chatId, env.TG_ALLOWED_CHAT_IDS)) {
+    await sendMessage(env.TG_BOT_TOKEN!, chatId, "Доступ к операциям запрещён.");
+    return;
+  }
+
+  const parsed = parseTelegramCallback(callback?.data ?? "");
+  const admin = isAdmin(userId, chatId);
+  if (parsed.name === "cancel") {
+    await editMessage(env.TG_BOT_TOKEN!, chatId, messageId, "Действие отменено.");
+    return;
+  }
+  if (parsed.name === "confirm") {
+    if (!admin) {
+      await sendMessage(env.TG_BOT_TOKEN!, chatId, "Эта операция доступна только администратору.");
+      return;
+    }
+    await sendMessage(env.TG_BOT_TOKEN!, chatId, {
+      text: `Подтвердите действие ${parsed.action} для Shopify order ${parsed.orderId}.`,
+      replyMarkup: telegramConfirmationKeyboard(parsed.action, parsed.orderId),
+    });
+    return;
+  }
+  if (parsed.name === "run") {
+    if (!admin) {
+      await editMessage(env.TG_BOT_TOKEN!, chatId, messageId, "Операция запрещена: нужен admin user ID.");
+      return;
+    }
+    await editMessage(env.TG_BOT_TOKEN!, chatId, messageId, "Операция выполняется…");
+    try {
+      const result = await withTelegramLock(
+        `action:${parsed.action}:${parsed.orderId}`,
+        () => runDiloshopOrderAction(
+          parsed.action as "retry-dilovod" | "retry-np" | "refresh-np",
+          parsed.orderId
+        )
+      );
+      await auditTelegram({
+        userId,
+        chatId,
+        command: `action:${parsed.action}`,
+        status: "OK",
+        shopifyOrderId: parsed.orderId,
+        message: formatDiloshopActionResult(parsed.action, result),
+      }).catch(() => {});
+      const card = await buildOrderCard(parsed.orderId, { admin });
+      card.text = `${formatDiloshopActionResult(parsed.action, result)}\n\n${card.text}`;
+      await editMessage(env.TG_BOT_TOKEN!, chatId, messageId, card);
+    } catch (error) {
+      const detail = error instanceof Error && error.message === "ALREADY_RUNNING"
+        ? "Эта операция уже выполняется."
+        : `Операция не выполнена: ${error instanceof Error ? error.message : String(error)}`;
+      await auditTelegram({
+        userId,
+        chatId,
+        command: `action:${parsed.action}`,
+        status: "ERROR",
+        shopifyOrderId: parsed.orderId,
+        error,
+      }).catch(() => {});
+      await editMessage(env.TG_BOT_TOKEN!, chatId, messageId, detail.slice(0, 1000));
+    }
+    return;
+  }
+
+  let response: TelegramOpsMessage;
+  if (parsed.name === "order") response = await buildOrderCard(parsed.orderId, { admin });
+  else if (parsed.name === "lookup") response = await buildOrderCard(parsed.reference, { admin });
+  else if (parsed.name === "issues") response = await buildIssuesSummary(parsed.hours, parsed.filter);
+  else if (parsed.name === "health") response = await buildHealthSummary();
+  else if (parsed.name === "queue") response = await buildQueueSummary();
+  else response = { text: "Кнопка устарела. Запустите команду ещё раз." };
+  await editMessage(env.TG_BOT_TOKEN!, chatId, messageId, response);
+}
+
+async function commandResponse(update: TelegramUpdate) {
+  const env = getEnv();
+  const message = update.message;
+  const chatId = message?.chat?.id;
+  const userId = message?.from?.id;
+  const text = message?.text;
+  if (!chatId || !userId || !text?.startsWith("/")) return;
+
+  const command = parseTelegramCommand(text);
+  const allowed = telegramChatIsAllowed(chatId, env.TG_ALLOWED_CHAT_IDS);
+  const admin = isAdmin(userId, chatId);
+
+  if (command.name === "myid") {
+    await sendMessage(env.TG_BOT_TOKEN!, chatId, `Chat ID: ${chatId}\nUser ID: ${userId}`);
+    return;
+  }
+  if (command.name === "help" || command.name === "unknown") {
+    await sendMessage(env.TG_BOT_TOKEN!, chatId, telegramHelpMessage(allowed));
+    return;
+  }
+  if (!allowed) {
+    await sendMessage(env.TG_BOT_TOKEN!, chatId, `Доступ запрещён. Chat ID: ${chatId}.`);
+    return;
+  }
+  if (!(await claimTelegramCooldown(userId, command.name))) {
+    await sendMessage(env.TG_BOT_TOKEN!, chatId, "Команда уже запускалась. Подождите несколько секунд.");
+    return;
+  }
+
+  try {
+    let response: TelegramOpsMessage | null = null;
+    if (["order", "np", "b2b", "cashin", "refund"].includes(command.name)) {
+      response = await buildOrderCard(command.arg ?? "", { admin });
+    } else if (command.name === "issues") {
+      response = await buildIssuesSummary(command.hours ?? 24, command.filter);
+    } else if (command.name === "today") {
+      response = await buildTodaySummary();
+    } else if (command.name === "health" || command.name === "status") {
+      response = await buildHealthSummary();
+    } else if (command.name === "queue") {
+      response = await buildQueueSummary();
+    } else if (command.name === "unmatched") {
+      response = await buildUnmatchedSummary(command.days ?? 7);
+    } else if (command.name === "sku") {
+      response = await buildSkuSummary(command.arg ?? "");
+    } else if (command.name === "customer") {
+      response = await buildCustomerSummary(command.arg ?? "", chatId > 0 && admin);
+    } else if (command.name === "webhooks") {
+      response = await buildWebhooksSummary(command.hours ?? 24);
+    } else if (command.name === "mapping_gaps") {
+      response = await buildMappingGapsSummary();
+    }
+    if (response) {
+      await sendMessage(env.TG_BOT_TOKEN!, chatId, response);
+      await auditTelegram({ userId, chatId, command: command.name, status: "OK" }).catch(() => {});
+      return;
+    }
+
+    if (command.name === "payments") {
+      const days = command.days ?? 7;
+      await sendMessage(env.TG_BOT_TOKEN!, chatId, `Сверяю банковские оплаты за ${days} дн.…`);
+      const result = await withTelegramLock("bank-payments", () => {
+        const to = new Date();
+        const from = new Date(to.getTime() - days * 24 * 60 * 60 * 1000);
+        return reconcileBankPayments({ from, to });
+      });
+      await sendMessage(env.TG_BOT_TOKEN!, chatId, summarizeBankReconciliation(result));
+    } else if (command.name === "abandoned") {
+      await markAbandonedSessions();
+      const sessions = await prisma.checkoutSession.findMany({
+        where: {
+          status: "ABANDONED",
+          OR: [{ buyerPhone: { not: "" } }, { buyerEmail: { not: "" } }],
+        },
+        orderBy: { abandonedAt: "desc" },
+        take: command.take ?? 10,
+        include: { lines: { select: { title: true, quantity: true } } },
+      });
+      for (const chunk of splitTelegramMessage(summarizeAbandonedCheckouts(sessions))) {
+        await sendMessage(env.TG_BOT_TOKEN!, chatId, chunk);
+      }
+    } else {
+      await sendMessage(env.TG_BOT_TOKEN!, chatId, "Проверяю ожидающие LiqPay/Monobank оплаты…");
+      const result = await withTelegramLock("online-payments", () =>
+        reconcilePendingPayments({ take: command.take ?? 20 })
+      );
+      await sendMessage(env.TG_BOT_TOKEN!, chatId, summarizePaymentReconciliation(result));
+    }
+    await auditTelegram({ userId, chatId, command: command.name, status: "OK" }).catch(() => {});
+  } catch (error) {
+    const alreadyRunning = error instanceof Error && error.message === "ALREADY_RUNNING";
+    await auditTelegram({
+      userId,
+      chatId,
+      command: command.name,
+      status: alreadyRunning ? "WARN" : "ERROR",
+      error,
+    }).catch(() => {});
+    await sendMessage(
+      env.TG_BOT_TOKEN!,
+      chatId,
+      alreadyRunning
+        ? "Такая проверка уже выполняется другим пользователем. Дождитесь результата."
+        : "Команда не завершилась. Ошибка записана в журнал."
+    ).catch(() => {});
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -46,129 +304,22 @@ export async function POST(request: NextRequest) {
   if (!env.TG_BOT_TOKEN || !env.TG_WEBHOOK_SECRET) {
     return NextResponse.json({ error: "Telegram bot is not configured" }, { status: 503 });
   }
-  if (
-    !secretsMatch(
-      request.headers.get("x-telegram-bot-api-secret-token") ?? "",
-      env.TG_WEBHOOK_SECRET
-    )
-  ) {
+  if (!secretsMatch(request.headers.get("x-telegram-bot-api-secret-token") ?? "", env.TG_WEBHOOK_SECRET)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const update = (await request.json()) as TelegramUpdate;
-  const chatId = update.message?.chat?.id;
-  const text = update.message?.text;
-  if (!chatId || !text?.startsWith("/")) {
-    return NextResponse.json({ ok: true });
+  if (typeof update.update_id === "number" && !(await claimTelegramUpdate(update.update_id))) {
+    return NextResponse.json({ ok: true, duplicate: true });
   }
-
-  const command = parseTelegramCommand(text);
-  const allowed = telegramChatIsAllowed(chatId, env.TG_ALLOWED_CHAT_IDS);
-
   try {
-    if (command.name === "myid") {
-      await sendMessage(env.TG_BOT_TOKEN, chatId, `Chat ID: ${chatId}`);
-      return NextResponse.json({ ok: true });
-    }
-    if (command.name === "help" || command.name === "unknown") {
-      await sendMessage(env.TG_BOT_TOKEN, chatId, telegramHelpMessage(allowed));
-      return NextResponse.json({ ok: true });
-    }
-    if (!allowed) {
-      await sendMessage(
-        env.TG_BOT_TOKEN,
-        chatId,
-        `Доступ запрещён. Chat ID: ${chatId}. Добавьте его в TG_ALLOWED_CHAT_IDS.`
-      );
-      return NextResponse.json({ ok: true });
-    }
-
-    if (command.name === "status") {
-      await markAbandonedSessions();
-      const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
-      const [activePending, inactivePending, paid24h, failed24h] = await Promise.all([
-        prisma.paymentAttempt.count({
-          where: { status: "PENDING", checkoutSession: { status: "PAYMENT_PENDING" } },
-        }),
-        prisma.paymentAttempt.count({
-          where: {
-            status: "PENDING",
-            checkoutSession: { status: { in: ["PAID", "COMPLETED", "ABANDONED"] } },
-          },
-        }),
-        prisma.paymentAttempt.count({ where: { status: "PAID", updatedAt: { gte: since } } }),
-        prisma.paymentAttempt.count({ where: { status: "FAILED", updatedAt: { gte: since } } }),
-      ]);
-      await sendMessage(
-        env.TG_BOT_TOKEN,
-        chatId,
-        [
-          "Статус оплат:",
-          `Активно ожидают оплаты: ${activePending}`,
-          `Старые/неактивные попытки: ${inactivePending}`,
-          `Оплачено за 24 ч: ${paid24h}`,
-          `Неуспешно за 24 ч: ${failed24h}`,
-        ].join("\n")
-      );
-      return NextResponse.json({ ok: true });
-    }
-
-    if (command.name === "payments") {
-      const days = command.days ?? 7;
-      const to = new Date();
-      const from = new Date(to.getTime() - days * 24 * 60 * 60 * 1000);
-      await sendMessage(
-        env.TG_BOT_TOKEN,
-        chatId,
-        `Сверяю банковские оплаты за ${days} дн.…`
-      );
-      const result = await reconcileBankPayments({ from, to });
-      await sendMessage(env.TG_BOT_TOKEN, chatId, summarizeBankReconciliation(result));
-      return NextResponse.json({ ok: true });
-    }
-
-    if (command.name === "abandoned") {
-      await telegramApi(env.TG_BOT_TOKEN, "setMyCommands", {
-        commands: telegramBotCommands,
-      }).catch(() => {});
-      await markAbandonedSessions();
-      const sessions = await prisma.checkoutSession.findMany({
-        where: {
-          status: "ABANDONED",
-          OR: [
-            { buyerPhone: { not: "" } },
-            { buyerEmail: { not: "" } },
-          ],
-        },
-        orderBy: { abandonedAt: "desc" },
-        take: command.take ?? 10,
-        include: {
-          lines: { select: { title: true, quantity: true } },
-        },
-      });
-      const summary = summarizeAbandonedCheckouts(sessions);
-      for (const chunk of splitTelegramMessage(summary)) {
-        await sendMessage(env.TG_BOT_TOKEN, chatId, chunk);
-      }
-      return NextResponse.json({ ok: true });
-    }
-
-    await sendMessage(env.TG_BOT_TOKEN, chatId, "Проверяю ожидающие LiqPay/Monobank оплаты…");
-    const result = await reconcilePendingPayments({ take: command.take ?? 20 });
-    await sendMessage(env.TG_BOT_TOKEN, chatId, summarizePaymentReconciliation(result));
-    return NextResponse.json({ ok: true });
+    if (update.callback_query) await callbackResponse(update);
+    else await commandResponse(update);
   } catch (error) {
-    console.error("Telegram payments bot command failed", {
+    console.error("Telegram bot update failed", {
       updateId: update.update_id,
-      chatId,
-      command: command.name,
       error: error instanceof Error ? error.message : String(error),
     });
-    await sendMessage(
-      env.TG_BOT_TOKEN,
-      chatId,
-      "Проверка не завершилась. Ошибка записана в журнал, попробуйте позже."
-    ).catch(() => {});
-    return NextResponse.json({ ok: true });
   }
+  return NextResponse.json({ ok: true });
 }

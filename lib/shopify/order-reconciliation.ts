@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { createShopifyOrderIdempotent } from "@/lib/shopify/order-writer";
+import { notifyPaymentWithoutOrder } from "@/lib/telegram/ops-alerts";
 
 export async function reconcileMissingShopifyOrders(take = 20) {
   const pending = await prisma.checkoutSession.findMany({
@@ -19,6 +20,21 @@ export async function reconcileMissingShopifyOrders(take = 20) {
         shopifyOrderGid: orderLink.shopifyOrderGid,
       });
     } catch (error) {
+      const attempt = await prisma.paymentAttempt.findFirst({
+        where: { checkoutSessionId: session.id, status: "PAID" },
+        orderBy: { updatedAt: "desc" },
+      });
+      if (attempt) {
+        await notifyPaymentWithoutOrder({
+          provider: attempt.provider,
+          amount: attempt.amount,
+          currency: session.currency,
+          checkoutSessionId: session.id,
+          sourceIdentifier: session.sourceIdentifier,
+          providerReference: attempt.providerReference,
+          retryQueued: true,
+        }).catch(() => {});
+      }
       results.push({
         checkoutSessionId: session.id,
         status: "error",

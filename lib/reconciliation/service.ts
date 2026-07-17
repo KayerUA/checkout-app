@@ -17,6 +17,7 @@ import {
 import type { BankTransaction } from "@/lib/bank/types";
 import type { ShopifyOrderPayload } from "@/lib/b2b/types";
 import type { B2BOrder, Prisma } from "@prisma/client";
+import { notifyExternalOpsAlert } from "@/lib/telegram/ops-alerts";
 
 export type BankPaymentProgressStatus =
   | "PARTIALLY_PAID"
@@ -453,7 +454,22 @@ async function finalizeMatchedBankPaymentSafe(input: {
   invoiceNumber?: string | null;
 }) {
   try {
-    return await finalizeMatchedBankPayment(input);
+    const result = await finalizeMatchedBankPayment(input);
+    const status = String(result.status);
+    await notifyExternalOpsAlert({
+      source: "bank",
+      eventType: `payment_${status.toLowerCase()}_${input.tx.transaction_id.slice(-8)}`,
+      severity: status === "PAID" ? "info" : "warning",
+      shopifyOrderId: input.order.shopifyOrderId,
+      message: [
+        `${input.order.shopifyOrderName ?? input.order.shopifyOrderId}: ${status}`,
+        `Получено ${result.paidAmount.toFixed(2)} ${input.tx.currency}`,
+        `Ожидалось ${result.expectedAmount.toFixed(2)} ${input.tx.currency}`,
+        `Остаток ${result.remainingAmount.toFixed(2)} ${input.tx.currency}`,
+      ].join(" · "),
+      metadata: { bankTransactionId: input.tx.transaction_id },
+    }).catch(() => {});
+    return result;
   } catch (error) {
     await writeAutomationLog({
       shopifyOrderId: input.order.shopifyOrderId,
@@ -547,6 +563,19 @@ export async function reconcileBankTransactions(
       const match = matchBankTransaction(tx, candidates);
       if (!match.candidate) {
         results.push({ transactionId: tx.transaction_id, status: "NEW" });
+        await notifyExternalOpsAlert({
+          source: "bank",
+          eventType: `unmatched_${tx.transaction_id.slice(-8)}`,
+          severity: "warning",
+          message: [
+            `Платёж без заказа: ${tx.amount.toFixed(2)} ${tx.currency}`,
+            tx.payer_name ? `Плательщик: ${tx.payer_name}` : null,
+            tx.payer_tax_id ? `Tax ID: ${tx.payer_tax_id}` : null,
+            tx.payment_description ? `Назначение: ${tx.payment_description.slice(0, 300)}` : null,
+            `Transaction: …${tx.transaction_id.slice(-12)}`,
+          ].filter(Boolean).join(" · "),
+          metadata: { bankTransactionId: tx.transaction_id },
+        }).catch(() => {});
         continue;
       }
 
@@ -615,6 +644,14 @@ export async function reconcileBankTransactions(
           add: [B2B_TAGS.needsPaymentReview],
         });
         results.push({ transactionId: tx.transaction_id, status: "NEEDS_REVIEW", reason: match.reason });
+        await notifyExternalOpsAlert({
+          source: "bank",
+          eventType: `needs_review_${tx.transaction_id.slice(-8)}`,
+          severity: "warning",
+          shopifyOrderId: match.candidate.shopifyOrderId,
+          message: `Платёж требует проверки: ${tx.amount.toFixed(2)} ${tx.currency} · ${match.reason} · transaction …${tx.transaction_id.slice(-12)}`,
+          metadata: { bankTransactionId: tx.transaction_id },
+        }).catch(() => {});
       }
     } catch (error) {
       await writeAutomationLog({
