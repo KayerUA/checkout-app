@@ -16,6 +16,7 @@ import {
   telegramChatIsAllowed,
   telegramConfirmationKeyboard,
   telegramHelpMessage,
+  telegramMainMenu,
   telegramUserIsAdmin,
 } from "@/lib/telegram/bot";
 import {
@@ -124,6 +125,17 @@ async function callbackResponse(update: TelegramUpdate) {
 
   const parsed = parseTelegramCallback(callback?.data ?? "");
   const admin = isAdmin(userId, chatId);
+  if (parsed.name === "menu") {
+    await editMessage(env.TG_BOT_TOKEN!, chatId, messageId, telegramMainMenu(true));
+    return;
+  }
+  if (parsed.name === "order_help") {
+    await editMessage(env.TG_BOT_TOKEN!, chatId, messageId, {
+      text: "Отправьте номер заказа отдельным сообщением — например UA1183.\n\nТакже работают /order UA1183, /customer +380… и /sku LUX-COY.",
+      replyMarkup: { inline_keyboard: [[{ text: "⌂ Главное меню", callback_data: "menu" }]] },
+    });
+    return;
+  }
   if (parsed.name === "cancel") {
     await editMessage(env.TG_BOT_TOKEN!, chatId, messageId, "Действие отменено.");
     return;
@@ -182,7 +194,28 @@ async function callbackResponse(update: TelegramUpdate) {
   }
 
   let response: TelegramOpsMessage;
-  if (parsed.name === "order") response = await buildOrderCard(parsed.orderId, { admin });
+  if (parsed.name === "today") response = await buildTodaySummary();
+  else if (parsed.name === "unmatched") response = await buildUnmatchedSummary(parsed.days);
+  else if (parsed.name === "abandoned") {
+    await markAbandonedSessions();
+    const sessions = await prisma.checkoutSession.findMany({
+      where: { status: "ABANDONED", OR: [{ buyerPhone: { not: "" } }, { buyerEmail: { not: "" } }] },
+      orderBy: { abandonedAt: "desc" }, take: parsed.take,
+      include: { lines: { select: { title: true, quantity: true } } },
+    });
+    response = { text: summarizeAbandonedCheckouts(sessions), replyMarkup: { inline_keyboard: [[{ text: "⌂ Главное меню", callback_data: "menu" }]] } };
+  } else if (parsed.name === "online_payments") {
+    await editMessage(env.TG_BOT_TOKEN!, chatId, messageId, "Проверяю ожидающие LiqPay/Monobank оплаты…");
+    const result = await withTelegramLock("online-payments", () => reconcilePendingPayments({ take: parsed.take }));
+    response = { text: summarizePaymentReconciliation(result), replyMarkup: { inline_keyboard: [[{ text: "⌂ Главное меню", callback_data: "menu" }]] } };
+  } else if (parsed.name === "payments") {
+    await editMessage(env.TG_BOT_TOKEN!, chatId, messageId, `Сверяю банковские оплаты за ${parsed.days} дн.…`);
+    const result = await withTelegramLock("bank-payments", () => {
+      const to = new Date();
+      return reconcileBankPayments({ from: new Date(to.getTime() - parsed.days * 24 * 60 * 60 * 1000), to });
+    });
+    response = { text: summarizeBankReconciliation(result), replyMarkup: { inline_keyboard: [[{ text: "⌂ Главное меню", callback_data: "menu" }]] } };
+  } else if (parsed.name === "order") response = await buildOrderCard(parsed.orderId, { admin });
   else if (parsed.name === "lookup") response = await buildOrderCard(parsed.reference, { admin });
   else if (parsed.name === "issues") response = await buildIssuesSummary(parsed.hours, parsed.filter);
   else if (parsed.name === "health") response = await buildHealthSummary();
@@ -197,14 +230,26 @@ async function commandResponse(update: TelegramUpdate) {
   const chatId = message?.chat?.id;
   const userId = message?.from?.id;
   const text = message?.text;
-  if (!chatId || !userId || !text?.startsWith("/")) return;
+  if (!chatId || !userId || !text) return;
 
-  const command = parseTelegramCommand(text);
+  const normalizedText = text.trim();
+  const commandText = normalizedText.startsWith("/")
+    ? normalizedText
+    : /^#?UA[\s_-]*\d{1,8}$/i.test(normalizedText)
+      ? `/order ${normalizedText}`
+      : "";
+  if (!commandText) return;
+
+  const command = parseTelegramCommand(commandText);
   const allowed = telegramChatIsAllowed(chatId, env.TG_ALLOWED_CHAT_IDS);
   const admin = isAdmin(userId, chatId);
 
   if (command.name === "myid") {
     await sendMessage(env.TG_BOT_TOKEN!, chatId, `Chat ID: ${chatId}\nUser ID: ${userId}`);
+    return;
+  }
+  if (command.name === "menu") {
+    await sendMessage(env.TG_BOT_TOKEN!, chatId, telegramMainMenu(allowed));
     return;
   }
   if (command.name === "help" || command.name === "unknown") {

@@ -9,6 +9,7 @@ import {
   splitTelegramMessage,
   telegramChatIsAllowed,
   telegramGroupChatIds,
+  telegramMainMenu,
   telegramUserIsAdmin,
 } from "@/lib/telegram/bot";
 import { normalizeOrderReference } from "@/lib/telegram/operations";
@@ -25,6 +26,8 @@ describe("Telegram payments bot", () => {
       take: 50,
     });
     expect(parseTelegramCommand("/status")).toEqual({ name: "status" });
+    expect(parseTelegramCommand("/start")).toEqual({ name: "menu" });
+    expect(parseTelegramCommand("/menu")).toEqual({ name: "menu" });
     expect(parseTelegramCommand("/abandoned@kayer_bot 200")).toEqual({
       name: "abandoned",
       take: 50,
@@ -112,6 +115,9 @@ describe("Telegram payments bot", () => {
       orderId: "123456789",
     });
     expect(parseTelegramCallback("order|oops")).toEqual({ name: "unknown" });
+    expect(parseTelegramCallback("unmatched|90")).toEqual({ name: "unmatched", days: 31 });
+    expect(parseTelegramCallback("online_payments|200")).toEqual({ name: "online_payments", take: 50 });
+    expect(telegramMainMenu(true).replyMarkup.inline_keyboard).toHaveLength(5);
   });
 
   it("formats a payment-without-order alert without customer secrets", () => {

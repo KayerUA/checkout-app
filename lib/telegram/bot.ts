@@ -7,6 +7,7 @@ type TelegramApiResponse<T> = {
 export type TelegramCommand = {
   name:
     | "help"
+    | "menu"
     | "myid"
     | "payments"
     | "online_payments"
@@ -39,7 +40,8 @@ export function parseTelegramCommand(text: string): TelegramCommand {
   const rawTake = rest[0] ?? "";
   const arg = rest.join(" ").trim();
   const command = rawCommand.toLowerCase().replace(/@[^\s]+$/, "");
-  if (command === "/start" || command === "/help") return { name: "help" };
+  if (command === "/start" || command === "/menu") return { name: "menu" };
+  if (command === "/help") return { name: "help" };
   if (command === "/myid") return { name: "myid" };
   if (command === "/status") return { name: "status" };
   if (command === "/payments" || command === "/check_payments") {
@@ -94,6 +96,7 @@ export function parseTelegramCommand(text: string): TelegramCommand {
 }
 
 export const telegramGroupBotCommands = [
+  { command: "menu", description: "Главная панель операций" },
   { command: "order", description: "Карточка заказа во всех системах" },
   { command: "issues", description: "Проблемы Checkout, Dilovod и НП" },
   { command: "today", description: "Сводка за сегодня" },
@@ -198,6 +201,13 @@ export function telegramUserIsAdmin(userId: number | string, configured?: string
 }
 
 export type TelegramCallback =
+  | { name: "menu" }
+  | { name: "today" }
+  | { name: "unmatched"; days: number }
+  | { name: "abandoned"; take: number }
+  | { name: "online_payments"; take: number }
+  | { name: "payments"; days: number }
+  | { name: "order_help" }
   | { name: "order"; orderId: string }
   | { name: "lookup"; reference: string }
   | { name: "issues"; hours: number; filter: string }
@@ -212,6 +222,13 @@ const telegramOrderActionNames = new Set(["retry-dilovod", "retry-np", "refresh-
 
 export function parseTelegramCallback(data: string): TelegramCallback {
   const [name, first = "", second = ""] = data.split("|", 3);
+  if (name === "menu") return { name: "menu" };
+  if (name === "today") return { name: "today" };
+  if (name === "order_help") return { name: "order_help" };
+  if (name === "unmatched") return { name, days: Math.min(Math.max(Number(first) || 7, 1), 31) };
+  if (name === "abandoned") return { name, take: Math.min(Math.max(Number(first) || 10, 1), 50) };
+  if (name === "online_payments") return { name, take: Math.min(Math.max(Number(first) || 20, 1), 50) };
+  if (name === "payments") return { name, days: Math.min(Math.max(Number(first) || 7, 1), 31) };
   if (name === "order" && /^\d+$/.test(first)) return { name: "order", orderId: first };
   if (name === "lookup" && first) return { name: "lookup", reference: first };
   if (name === "issues") {
@@ -233,6 +250,46 @@ export function telegramConfirmationKeyboard(action: string, orderId: string) {
       { text: "Отмена", callback_data: "cancel" },
     ]],
   };
+}
+
+export function telegramMainMenu(allowed: boolean) {
+  if (!allowed) {
+    return {
+      text: "KAYER operations bot\n\nДоступ к операциям пока не открыт для этого чата.\n\nОтправьте /myid — он нужен, чтобы добавить чат в доступ.",
+    };
+  }
+  return {
+    text: [
+      "KAYER · операционная панель",
+      "",
+      "Выберите проверку ниже или просто отправьте номер заказа: UA1183.",
+    ].join("\n"),
+    replyMarkup: {
+      inline_keyboard: [
+        [
+          { text: "📊 Сегодня", callback_data: "today" },
+          { text: "🚨 Проблемы", callback_data: "issues|24|all" },
+        ],
+        [
+          { text: "💳 Банк без матча", callback_data: "unmatched|7" },
+          { text: "🔁 Сверить банк", callback_data: "payments|7" },
+        ],
+        [
+          { text: "🌐 Онлайн-оплаты", callback_data: "online_payments|20" },
+          { text: "🛒 Брошенные корзины", callback_data: "abandoned|10" },
+        ],
+        [
+          { text: "⚙️ Очереди", callback_data: "queue" },
+          { text: "🩺 Здоровье", callback_data: "health" },
+        ],
+        [{ text: "🔎 Как найти заказ", callback_data: "order_help" }],
+      ],
+    },
+  };
+}
+
+export function telegramMenuKeyboard() {
+  return [{ text: "⌂ Главное меню", callback_data: "menu" }];
 }
 
 export function telegramGroupChatIds(configured?: string) {
@@ -457,6 +514,7 @@ export async function telegramApi<T>(
 export function telegramHelpMessage(allowed: boolean) {
   const lines = [
     "KAYER operations bot",
+    "/menu — главная панель с быстрыми кнопками",
     "/myid — показать ID чата и пользователя",
   ];
   if (allowed) {

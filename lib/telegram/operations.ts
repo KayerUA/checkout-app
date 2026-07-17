@@ -11,6 +11,7 @@ import {
   getDiloshopSku,
   type DiloshopOrderState,
 } from "@/lib/telegram/diloshop-client";
+import { telegramMenuKeyboard } from "@/lib/telegram/bot";
 
 export type TelegramInlineKeyboard = {
   inline_keyboard: Array<Array<{
@@ -231,6 +232,7 @@ export async function buildOrderCard(referenceText: string, options?: { admin?: 
       }
     }
   }
+  inline_keyboard.push(telegramMenuKeyboard());
   return { text: lines.join("\n"), replyMarkup: { inline_keyboard } } satisfies TelegramOpsMessage;
 }
 
@@ -288,6 +290,7 @@ export async function buildIssuesSummary(hours = 24, filter?: string): Promise<T
     { text: `Открыть ${order}`, callback_data: `lookup|${order.replace(/^#/, "")}` },
   ]);
   inline_keyboard.push([{ text: "🔄 Обновить", callback_data: `issues|${hours}|${filter ?? "all"}` }]);
+  inline_keyboard.push(telegramMenuKeyboard());
   return { text: lines.join("\n"), replyMarkup: { inline_keyboard } };
 }
 
@@ -317,7 +320,7 @@ export async function buildTodaySummary(): Promise<TelegramOpsMessage> {
       `Diloshop queue: pending ${diloshop?.queue?.pending ?? "—"} · dead ${diloshop?.queue?.dead ?? "—"}`,
       `НП errors: ${diloshop?.np_issues?.length ?? "—"}`,
     ].join("\n"),
-    replyMarkup: { inline_keyboard: [[{ text: "Проблемы", callback_data: "issues|24|all" }]] },
+    replyMarkup: { inline_keyboard: [[{ text: "Проблемы", callback_data: "issues|24|all" }], telegramMenuKeyboard()] },
   };
 }
 
@@ -345,7 +348,7 @@ export async function buildHealthSummary(): Promise<TelegramOpsMessage> {
   );
   return {
     text: ["Состояние системы:", ...checks].join("\n"),
-    replyMarkup: { inline_keyboard: [[{ text: "🔄 Обновить", callback_data: "health" }]] },
+    replyMarkup: { inline_keyboard: [[{ text: "🔄 Обновить", callback_data: "health" }], telegramMenuKeyboard()] },
   };
 }
 
@@ -373,7 +376,7 @@ export async function buildQueueSummary(): Promise<TelegramOpsMessage> {
       `pending ${issues?.queue?.pending ?? "—"} · processing ${issues?.queue?.processing ?? "—"} · dead ${issues?.queue?.dead ?? "—"}`,
       oldest ? `Старейшая: job ${oldest.id} · ${oldest.status} · ${oldest.last_error ?? "без ошибки"}` : "Активных проблем не найдено.",
     ].join("\n"),
-    replyMarkup: { inline_keyboard: [[{ text: "🔄 Обновить", callback_data: "queue" }]] },
+    replyMarkup: { inline_keyboard: [[{ text: "🔄 Обновить", callback_data: "queue" }], telegramMenuKeyboard()] },
   };
 }
 
