@@ -80,7 +80,6 @@ export async function POST(request: NextRequest) {
       utm: body.utm,
       sourceUrl: body.sourceUrl,
       customAttributes: body.customAttributes,
-      ab: body.ab,
     });
 
     const { emitServerCheckoutEvent } = await import("@/lib/analytics/server");

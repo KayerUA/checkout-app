@@ -10,11 +10,10 @@
 
 ## Переключение
 
-1. В theme kayer.ua подключён `checkout-ab-intercept.js`
-2. App Proxy `/apps/checkout-ab` настроен
-3. Для beta-клиентов задан tag `custom_checkout_beta` или включён `audienceMode: "all"`
-4. Тестовый заказ на production с реальной картой или B2B рахунком
-5. Заказ появился в Shopify Admin с tags/metafields
+1. В theme kayer.ua подключён `kayer-checkout.js`
+2. App Proxy `/apps/kayer-checkout-auth` ведёт на `https://checkout.kayer.ua/apps/kayer-checkout-auth`
+3. Тестовый заказ на production с реальной картой или B2B рахунком
+4. Заказ появился в Shopify Admin с tags/metafields
 
 ## Мониторинг
 
@@ -26,9 +25,8 @@
 
 Если что-то сломалось:
 
-1. Поставить `CUSTOM_CHECKOUT_ENABLED=false`
-2. Или в theme выставить `audienceMode: "disabled"`
-3. Или закомментировать `<script src="...checkout-ab-intercept.js">` в theme.liquid
+1. Вернуть предыдущую версию `theme.liquid`
+2. Откатить последний production deployment Vercel
 
 ## После go-live (не срочно)
 

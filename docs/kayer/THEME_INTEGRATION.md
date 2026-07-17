@@ -1,24 +1,6 @@
 # Интеграция темы kayer.ua с external checkout
 
-## Рекомендуется: A/B router (Chekly vs custom)
-
-См. полную документацию: [CHECKOUT_AB.md](./CHECKOUT_AB.md)
-
-В `theme.liquid` перед `</body>`:
-
-```liquid
-<script src="https://checkout.kayer.ua/checkout-ab-intercept.js" defer></script>
-```
-
-Скрипт перехватывает checkout-кнопки и отправляет на `/apps/checkout-ab` (App Proxy).
-
-Для показа только выбранным клиентам используйте `window.KAYER_CHECKOUT_AB_CONFIG.audienceMode`; примеры есть в [CHECKOUT_AB.md](./CHECKOUT_AB.md).
-
-## Альтернатива: только custom checkout (без A/B)
-
-Если router не нужен, используйте `kayer-checkout.js` (см. ниже).
-
-## Шаг 1: Подключите скрипт (custom only)
+## Шаг 1: Подключите единый checkout
 
 В Shopify Admin → Online Store → Themes → Edit code → `theme.liquid`, перед `</body>`:
 
@@ -55,6 +37,7 @@ window.KayerCheckout.redirectToCheckout();
   window.KAYER_CHECKOUT_CONFIG = {
     checkoutApiUrl: 'https://checkout.kayer.ua',
     shopDomain: 'kayer.myshopify.com',
+    pricingTokenUrl: {% if customer %}'/apps/kayer-checkout-auth'{% else %}null{% endif %},
     customerEmail: {% if customer %}'{{ customer.email | escape }}'{% else %}''{% endif %},
     customerFirstName: {% if customer %}'{{ customer.first_name | escape }}'{% else %}''{% endif %},
     customerLastName: {% if customer %}'{{ customer.last_name | escape }}'{% else %}''{% endif %},
@@ -67,7 +50,7 @@ window.KayerCheckout.redirectToCheckout();
 ## Как это работает
 
 1. Скрипт читает `/cart.js` на kayer.ua
-2. Скрипт добавляет на cart/cart drawer блок “Потрібен рахунок для ФОП або компанії?” для клиентов, которым включён custom/router audience
+2. Скрипт добавляет на cart/cart drawer блок “Потрібен рахунок для ФОП або компанії?”
 3. Для ФОП/компаний сохраняет `buyer_type`, `payment_preference` и реквизиты в Shopify cart attributes через `/cart/update.js`
 4. POST `https://checkout.kayer.ua/api/public/checkout-sessions`
 5. Редирект на `/checkout/{token}`

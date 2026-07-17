@@ -63,7 +63,6 @@ export function mapCheckoutToOrderCreateInput(
 ) {
   const shippingPayload = (session.shippingPayload ?? {}) as NovaPoshtaShippingPayload;
   const sessionAttrs = (session.customAttributes ?? {}) as Record<string, unknown>;
-  const ab = (sessionAttrs.ab ?? {}) as Record<string, string>;
   const shippingLineTitle = session.shippingMethodCode?.startsWith("nova_poshta")
     ? "Нова Пошта"
     : session.shippingMethodCode ?? "Нова Пошта";
@@ -88,14 +87,6 @@ export function mapCheckoutToOrderCreateInput(
     const value = sessionAttrs[key];
     if (typeof value === "string" && value) customAttributes.push({ key, value });
   });
-
-  if (ab.experimentId) {
-    customAttributes.push(
-      { key: "ab_test", value: ab.experimentId },
-      { key: "ab_variant", value: ab.variant ?? "" },
-      { key: "ab_visitor_id", value: ab.visitorId ?? "" }
-    );
-  }
 
   for (const row of buildShopifyNovaPoshtaNoteAttributes(shippingPayload)) {
     customAttributes.push({ key: row.name, value: row.value });
@@ -177,13 +168,6 @@ export function mapCheckoutToOrderCreateInput(
       session.shippingProvider ?? "shipping",
       ...(sessionAttrs.buyer_type === "fop_company" ? ["B2B_FOP"] : []),
       ...(sessionAttrs.payment_preference === "bank_invoice" ? ["WAITING_IBAN_PAYMENT"] : []),
-      ...(ab.experimentId
-        ? [
-            `ab_${ab.experimentId}`,
-            ab.variant === "kayer_custom_v1" ? "ab_variant_custom" : "ab_variant_chekly",
-            ...(ab.variant === "kayer_custom_v1" ? ["checkout_custom_v1"] : []),
-          ]
-        : []),
     ],
     lineItems: session.lines.map((line, index) => {
       const lineBase = lineBases[index];

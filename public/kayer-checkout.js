@@ -9,64 +9,23 @@
       checkoutApiUrl: "https://checkout.kayer.ua",
       shopDomain: "kayer.myshopify.com",
       fallbackUrl: "/cart",
-      audienceMode: "all",
-      customerTags: [],
       customerEmail: "",
       customerId: "",
       customerFirstName: "",
       customerLastName: "",
       customerPhone: "",
-      allowedCustomerTags: [],
-      allowedCustomerEmails: [],
-      queryParam: "custom_checkout",
-      pricingTokenUrl: "/apps/checkout-ab?resource=pricing-token",
+      pricingTokenUrl: "/apps/kayer-checkout-auth",
       showB2BBlock: true,
     },
     window.KAYER_CHECKOUT_CONFIG || {}
   );
-  var FORCE_STORAGE_KEY = "kayer_force_checkout";
-  var LEGACY_FORCE_STORAGE_KEY = "kayer_force_custom_checkout";
   var PENDING_CLEAR_STORAGE_KEY = "kayer_pending_checkout_clear";
-
-  function asList(value) {
-    if (Array.isArray(value)) return value;
-    if (typeof value === "string" && value) {
-      return value.split(",").map(function (item) {
-        return item.trim();
-      });
-    }
-    return [];
-  }
 
   function normalize(value) {
     return String(value || "").trim().toLowerCase();
   }
 
-  function hasIntersection(left, right) {
-    var normalizedRight = asList(right).map(normalize);
-    return asList(left).some(function (item) {
-      return normalizedRight.indexOf(normalize(item)) >= 0;
-    });
-  }
-
   function isAudienceEligible() {
-    var params = new URLSearchParams(window.location.search);
-    var force = getForceCheckout();
-    if (force === "custom") return true;
-    if (params.get("force_checkout") === "shopify") return false;
-
-    if (config.audienceMode === "disabled") return false;
-    if (config.audienceMode === "all") return true;
-    if (config.audienceMode === "query_param") return false;
-
-    var tagMatch = hasIntersection(config.customerTags, config.allowedCustomerTags);
-    var emailMatch =
-      asList(config.allowedCustomerEmails).map(normalize).indexOf(normalize(config.customerEmail)) >= 0;
-
-    if (config.audienceMode === "customer_tags") return tagMatch;
-    if (config.audienceMode === "customer_emails") return emailMatch;
-    if (config.audienceMode === "customer_tags_or_emails") return tagMatch || emailMatch;
-
     return true;
   }
 
@@ -75,8 +34,6 @@
     return el.closest(
       [
         "[data-kayer-checkout]",
-        "[data-chekly]",
-        "[data-chekly-checkout]",
         "[data-checkout]",
         "[formaction*='checkout']",
         'button[name="checkout"]',
@@ -86,11 +43,8 @@
         'a[href$="/checkout"]',
         'a[href*="/checkout"]',
         'a[href*="/checkouts/"]',
-        'a[href*="chekly-app.com"]',
         'button[class*="checkout"]',
         'a[class*="checkout"]',
-        'button[class*="chekly"]',
-        'a[class*="chekly"]',
         '[role="button"][class*="checkout"]',
         '[role="button"][aria-label*="checkout"]',
         ".checkout-button",
@@ -132,18 +86,13 @@
     var name = normalize(el.getAttribute && el.getAttribute("name"));
     var isButtonLike =
       el.matches &&
-      el.matches("button, input, [role='button'], [data-checkout], [data-kayer-checkout], [data-chekly]");
+      el.matches("button, input, [role='button'], [data-checkout], [data-kayer-checkout]");
     return (
       isCheckoutHref(href) ||
-      href.indexOf("chekly") >= 0 ||
       action.indexOf("checkout") >= 0 ||
-      action.indexOf("chekly") >= 0 ||
       formaction.indexOf("checkout") >= 0 ||
-      formaction.indexOf("chekly") >= 0 ||
       className.indexOf("checkout") >= 0 ||
-      className.indexOf("chekly") >= 0 ||
       id.indexOf("checkout") >= 0 ||
-      id.indexOf("chekly") >= 0 ||
       name === "checkout" ||
       (isButtonLike && text.indexOf("checkout") >= 0) ||
       (isButtonLike && text.indexOf("check out") >= 0) ||
@@ -165,8 +114,6 @@
   function checkoutSelectors() {
     return [
       "[data-kayer-checkout]",
-      "[data-chekly]",
-      "[data-chekly-checkout]",
       "[data-checkout]",
       "[formaction*='checkout']",
       'button[name="checkout"]',
@@ -176,11 +123,8 @@
       'a[href$="/checkout"]',
       'a[href*="/checkout"]',
       'a[href*="/checkouts/"]',
-      'a[href*="chekly-app.com"]',
       'button[class*="checkout"]',
       'a[class*="checkout"]',
-      'button[class*="chekly"]',
-      'a[class*="chekly"]',
       '[role="button"][class*="checkout"]',
       '[role="button"][aria-label*="checkout"]',
       ".checkout-button",
@@ -190,63 +134,6 @@
       ".shopify-payment-button",
       ".shopify-payment-button__button",
     ];
-  }
-
-  function isForcedCustomCheckout() {
-    return getForceCheckout() === "custom";
-  }
-
-  function readUrlForceCheckout() {
-    var params = new URLSearchParams(window.location.search);
-    var force = params.get("force_checkout");
-    if (force === "custom") return "custom";
-    if (force === "shopify" || force === "native" || force === "chekly") return "shopify";
-    if (params.get(config.queryParam) === "1") return "custom";
-    return null;
-  }
-
-  function getStoredForceCheckout() {
-    try {
-      var raw = window.sessionStorage.getItem(FORCE_STORAGE_KEY);
-      if (!raw && window.sessionStorage.getItem(LEGACY_FORCE_STORAGE_KEY) === "1") {
-        return "custom";
-      }
-      if (!raw) return null;
-      var parsed = JSON.parse(raw);
-      if (!parsed || Date.now() - Number(parsed.ts || 0) > 2 * 60 * 60 * 1000) {
-        window.sessionStorage.removeItem(FORCE_STORAGE_KEY);
-        window.sessionStorage.removeItem(LEGACY_FORCE_STORAGE_KEY);
-        return null;
-      }
-      return parsed.value === "custom" ? parsed.value : null;
-    } catch {
-      return null;
-    }
-  }
-
-  function persistForceCheckoutFromUrl() {
-    var force = readUrlForceCheckout();
-    try {
-      if (force === "shopify") {
-        window.sessionStorage.removeItem(FORCE_STORAGE_KEY);
-        window.sessionStorage.removeItem(LEGACY_FORCE_STORAGE_KEY);
-        return;
-      }
-      if (force === "custom") {
-        window.sessionStorage.setItem(
-          FORCE_STORAGE_KEY,
-          JSON.stringify({ value: force, ts: Date.now() })
-        );
-        window.sessionStorage.setItem(LEGACY_FORCE_STORAGE_KEY, "1");
-      }
-    } catch {}
-  }
-
-  function getForceCheckout() {
-    var force = readUrlForceCheckout();
-    if (force === "custom") return force;
-    if (force === "shopify") return null;
-    return getStoredForceCheckout();
   }
 
   function shopifyRoot() {
@@ -545,10 +432,7 @@
     console.error("[KayerCheckout]", err);
     var message = formatCheckoutError(err);
     var fallback = config.fallbackUrl || "/cart";
-    var blockNativeFallback =
-      config.audienceMode === "all" ||
-      isForcedCustomCheckout() ||
-      isNativeCheckoutFallback(fallback);
+    var blockNativeFallback = isNativeCheckoutFallback(fallback);
     if (blockNativeFallback) {
       alert("Не вдалося відкрити checkout KAYER.\n" + message);
       return;
@@ -859,7 +743,7 @@
       if (form.dataset.kayerFormHardened) return;
       var action = normalize(form.getAttribute("action"));
       var hasCheckoutTrigger = Boolean(form.querySelector(checkoutSelectors().join(", ")));
-      if (action.indexOf("checkout") < 0 && action.indexOf("chekly") < 0 && !hasCheckoutTrigger) return;
+      if (action.indexOf("checkout") < 0 && !hasCheckoutTrigger) return;
 
       form.dataset.kayerFormHardened = "true";
       form.addEventListener("submit", interceptCheckoutSubmit, true);
@@ -894,7 +778,6 @@
         submitter.getAttribute("data-kayer-original-name") === "checkout");
     if (
       action.indexOf("checkout") < 0 &&
-      action.indexOf("chekly") < 0 &&
       !checkoutSubmitter &&
       !checkoutNamedSubmitter
     ) {
@@ -964,35 +847,14 @@
     }
   }
 
-  function shouldAutoOpenForcedCheckout() {
-    var params = new URLSearchParams(window.location.search);
-    if (getForceCheckout() !== "custom") return false;
-    if (params.get("kayer_no_auto") === "1") return false;
-    return window.location.pathname.indexOf("/cart") >= 0;
-  }
-
-  function scheduleForcedAutoOpen() {
-    if (!shouldAutoOpenForcedCheckout() || window.__kayerForcedAutoOpenScheduled) return;
-    window.__kayerForcedAutoOpenScheduled = true;
-
-    window.setTimeout(function () {
-      redirectToCheckout().catch(function (err) {
-        handleRedirectError(err, null);
-      });
-    }, 180);
-  }
-
-  // Chekly is loaded earlier in the Shopify theme. Window-level capture runs before
-  // document/body capture handlers, so forced KAYER checkout can still win.
+  // Capture checkout actions before theme handlers so KAYER remains the only checkout.
   window.addEventListener("click", interceptCheckoutEvent, true);
   document.addEventListener("click", interceptCheckoutEvent, true);
   window.addEventListener("submit", interceptCheckoutSubmit, true);
   document.addEventListener("submit", interceptCheckoutSubmit, true);
-  persistForceCheckoutFromUrl();
   clearCartIfRequested();
   clearCompletedCheckoutCart();
   installForcedCheckoutGuards();
-  scheduleForcedAutoOpen();
 
   window.KayerCheckout = {
     redirectToCheckout: redirectToCheckout,
@@ -1013,11 +875,9 @@
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", function () {
       bindButtons();
-      scheduleForcedAutoOpen();
     });
   } else {
     bindButtons();
-    scheduleForcedAutoOpen();
   }
 
   // Re-bind for dynamic cart drawers

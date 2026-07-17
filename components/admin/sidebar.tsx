@@ -5,7 +5,6 @@ import { usePathname } from "next/navigation";
 import {
   BarChart3,
   CreditCard,
-  FlaskConical,
   Landmark,
   LayoutDashboard,
   Menu,
@@ -25,7 +24,6 @@ const navItems = [
   { href: "/admin/shipping", label: "Доставка", icon: Truck },
   { href: "/admin/fiscal", label: "Фіскалізація", icon: Receipt },
   { href: "/admin/analytics", label: "Аналітика", icon: BarChart3 },
-  { href: "/admin/ab-test", label: "A/B checkout", icon: FlaskConical },
   { href: "/admin/abandoned", label: "Покинуті", icon: ShoppingCart },
   { href: "/admin/orders", label: "Замовлення", icon: Package },
   { href: "/admin/b2b-orders", label: "B2B-замовлення", icon: Landmark },

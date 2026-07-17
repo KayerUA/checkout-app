@@ -6,7 +6,7 @@ import {
 import { mapCheckoutToOrderCreateInput } from "@/lib/shopify/order-mapper";
 
 describe("Nova Poshta note attributes", () => {
-  it("builds Chekly-compatible delivery refs", () => {
+  it("builds Nova Poshta delivery refs", () => {
     const rows = buildShopifyNovaPoshtaNoteAttributes({
       cityRef: "city-ref-1",
       cityName: "Київ",

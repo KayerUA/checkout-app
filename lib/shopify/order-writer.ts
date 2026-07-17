@@ -144,8 +144,6 @@ function buildBaseCheckoutNoteAttributes(
   paidAttempt: PaymentAttempt,
   extra: Array<{ name: string; value: string }> = []
 ) {
-  const attrs = (session.customAttributes ?? {}) as Record<string, unknown>;
-  const ab = (attrs.ab ?? {}) as Record<string, string>;
   const base = [
     { name: "checkout_session_id", value: session.id },
     { name: "checkout_public_token", value: session.publicToken },
@@ -154,14 +152,6 @@ function buildBaseCheckoutNoteAttributes(
     { name: "cod_enabled", value: "false" },
     ...extra,
   ];
-
-  if (ab.experimentId) {
-    base.push(
-      { name: "ab_test", value: ab.experimentId },
-      { name: "ab_variant", value: ab.variant ?? "" },
-      { name: "ab_visitor_id", value: ab.visitorId ?? "" }
-    );
-  }
 
   return mergeCheckoutNoteAttributes(
     base,
@@ -304,7 +294,7 @@ export async function createShopifyOrderIdempotent(checkoutSessionId: string) {
     const created = response.data.orderCreate.order;
     const orderId = created.id.replace("gid://shopify/Order/", "");
 
-    // REST bridge for note_attributes. Diloshop/NP reads Chekly-compatible refs here.
+    // REST bridge for note_attributes consumed by Diloshop/NP.
     try {
       await shopifyAdminREST(shopifySession, `orders/${orderId}.json`, {
         method: "PUT",
@@ -375,34 +365,6 @@ export async function createShopifyOrderIdempotent(checkoutSessionId: string) {
       shopifyOrderGid: created.id,
       merchantId: session.merchantId,
     });
-
-    const sessionAttrs = (session.customAttributes ?? {}) as Record<string, unknown>;
-    const ab = (sessionAttrs.ab ?? {}) as Record<string, string>;
-    if (ab.experimentId && ab.visitorId && ab.variant) {
-      try {
-        const { logCheckoutAbEvent } = await import("@/lib/checkout-ab/events");
-        await logCheckoutAbEvent({
-          experimentId: ab.experimentId,
-          visitorId: ab.visitorId,
-          variant: ab.variant,
-          eventName: "shopify_order_created",
-          checkoutSessionId: session.id,
-          shopifyOrderId: created.id,
-          revenue: session.totalAmount / 100,
-          currency: session.currency,
-          email: session.buyerEmail,
-          phone: session.buyerPhone,
-          payload: { shopifyOrderName: created.name },
-        });
-      } catch (error) {
-        logWithCorrelation(
-          "warn",
-          "Checkout AB event failed",
-          { checkoutSessionId },
-          { error: error instanceof Error ? error.message : String(error) }
-        );
-      }
-    }
 
     return orderLink;
 }

@@ -12,7 +12,6 @@ import {
   type ResolvedCartLinePricing,
 } from "@/lib/checkout/cart-pricing";
 import {
-  fetchPartnerPricingContext,
   fetchPartnerPricingContextByGid,
   isPartnerProgramDiscountCode,
   normalizeCheckoutEmail,
@@ -273,12 +272,6 @@ export type CreateCheckoutSessionInput = {
   utm?: Record<string, string>;
   sourceUrl?: string;
   customAttributes?: Record<string, unknown>;
-  ab?: {
-    experimentId: string;
-    visitorId: string;
-    variant: string;
-    cartToken?: string;
-  };
 };
 
 function storefrontCustomerGid(rawId?: string | null): string | null {
@@ -287,7 +280,7 @@ function storefrontCustomerGid(rawId?: string | null): string | null {
   return trimmed.startsWith("gid://") ? trimmed : `gid://shopify/Customer/${trimmed}`;
 }
 
-async function resolvePartnerContextForMerchant(input: {
+export async function resolveVerifiedPartnerContextForMerchant(input: {
   merchantId: string;
   shopDomain?: string;
   storefrontPricingToken?: string;
@@ -315,15 +308,19 @@ async function resolvePartnerContextForMerchant(input: {
     if (fromVerifiedGid) return fromVerifiedGid;
   }
 
-  const customerGid = storefrontCustomerGid(input.storefrontCustomerId);
-  if (customerGid) {
-    const fromCustomerId = await fetchPartnerPricingContextByGid(shopifySession, customerGid);
-    if (fromCustomerId) return fromCustomerId;
-  }
-
-  const email = normalizeCheckoutEmail(input.storefrontCustomerEmail);
-  if (email) {
-    return fetchPartnerPricingContext(shopifySession, email);
+  const storefrontEmail = normalizeCheckoutEmail(input.storefrontCustomerEmail);
+  const storefrontGid = storefrontCustomerGid(input.storefrontCustomerId);
+  if (storefrontEmail && storefrontGid) {
+    const fromStorefrontIdentity = await fetchPartnerPricingContextByGid(
+      shopifySession,
+      storefrontGid
+    );
+    if (
+      fromStorefrontIdentity &&
+      normalizeCheckoutEmail(fromStorefrontIdentity.email) === storefrontEmail
+    ) {
+      return fromStorefrontIdentity;
+    }
   }
 
   return null;
@@ -332,12 +329,10 @@ async function resolvePartnerContextForMerchant(input: {
 async function resolvePartnerContextForSession(input: {
   merchantId: string;
   verifiedPartnerGid?: string | null;
-  verifiedPartnerEmail?: string | null;
 }): Promise<PartnerPricingContext | null> {
-  return resolvePartnerContextForMerchant({
+  return resolveVerifiedPartnerContextForMerchant({
     merchantId: input.merchantId,
     verifiedPartnerGid: input.verifiedPartnerGid,
-    storefrontCustomerEmail: input.verifiedPartnerEmail ?? undefined,
   });
 }
 
@@ -368,13 +363,9 @@ export async function ensureSessionLinePricing(publicToken: string) {
   const verifiedPartnerGid =
     typeof attrs.partnerCustomerGid === "string" ? attrs.partnerCustomerGid : null;
 
-  const verifiedPartnerEmail =
-    typeof attrs.verifiedPartnerEmail === "string" ? attrs.verifiedPartnerEmail : null;
-
   const partnerContext = await resolvePartnerContextForSession({
     merchantId: session.merchantId,
     verifiedPartnerGid,
-    verifiedPartnerEmail,
   });
 
   const repricedLines = await resolveAndPriceLines(
@@ -450,7 +441,7 @@ export async function createCheckoutSession(input: CreateCheckoutSessionInput) {
     shopDomain,
   });
 
-  const partnerContext = await resolvePartnerContextForMerchant({
+  const partnerContext = await resolveVerifiedPartnerContextForMerchant({
     merchantId: input.merchantId,
     shopDomain,
     storefrontPricingToken: input.storefrontPricingToken,
@@ -559,9 +550,12 @@ export async function createCheckoutSession(input: CreateCheckoutSessionInput) {
   const verifiedPartnerEmail =
     partnerContext?.email ??
     tokenIdentity.email ??
-    (normalizeCheckoutEmail(input.storefrontCustomerEmail) || null);
+    null;
   const verifiedPartnerGid =
     partnerContext?.customerGid ?? tokenIdentity.customerGid ?? null;
+  const buyerEmail =
+    verifiedPartnerEmail ??
+    (normalizeCheckoutEmail(input.storefrontCustomerEmail) || null);
   const storefrontCustomerFirstName = input.storefrontCustomerFirstName?.trim() || null;
   const storefrontCustomerLastName = input.storefrontCustomerLastName?.trim() || null;
   const storefrontCustomerPhone = input.storefrontCustomerPhone?.trim() || null;
@@ -596,7 +590,7 @@ export async function createCheckoutSession(input: CreateCheckoutSessionInput) {
       )
     : inputAttributes.cartDiscountSnapshot ?? null;
 
-  const cartToken = input.cartToken ?? input.ab?.cartToken;
+  const cartToken = input.cartToken;
   const sourceIdentifier = cartToken
     ? `chk_cart_${crypto
         .createHash("sha256")
@@ -624,7 +618,7 @@ export async function createCheckoutSession(input: CreateCheckoutSessionInput) {
       subtotal: totals.subtotal,
       discountAmount: totals.discountAmount,
       totalAmount: totals.totalAmount,
-      buyerEmail: verifiedPartnerEmail,
+      buyerEmail,
       buyerPhone: storefrontCustomerPhone,
       buyerFirstName: storefrontCustomerFirstName,
       buyerLastName: storefrontCustomerLastName,
@@ -633,8 +627,7 @@ export async function createCheckoutSession(input: CreateCheckoutSessionInput) {
         utm: input.utm ?? {},
         buyerIp: input.buyerIp ?? null,
         sourceUrl: input.sourceUrl ?? null,
-        ab: input.ab ?? null,
-        cartToken: input.cartToken ?? input.ab?.cartToken ?? null,
+        cartToken: input.cartToken ?? null,
         checkoutRecommendations: recommendations,
         verifiedPartnerEmail,
         partnerCustomerGid: verifiedPartnerGid,
@@ -699,8 +692,6 @@ export async function addCheckoutSessionLine(
     merchantId: session.merchantId,
     verifiedPartnerGid:
       typeof attrs.partnerCustomerGid === "string" ? attrs.partnerCustomerGid : null,
-    verifiedPartnerEmail:
-      typeof attrs.verifiedPartnerEmail === "string" ? attrs.verifiedPartnerEmail : null,
   });
   const [pricedLine] = await resolveAndPriceLines(
     session.merchantId,
@@ -962,7 +953,6 @@ export function serializePublicSession(
   if (!session) return null;
   const theme = (session.merchant.themeConfig ?? {}) as Record<string, string>;
   const attrs = (session.customAttributes ?? {}) as Record<string, unknown>;
-  const ab = (attrs.ab ?? null) as Record<string, string> | null;
   const savingsSummary = buildSavingsSummary(session, attrs);
   const editableAttributes = Object.fromEntries(
     [
@@ -1016,7 +1006,6 @@ export function serializePublicSession(
       ? attrs.checkoutRecommendations
       : [],
     theme,
-    ab,
     orderLink: session.orderLink
       ? {
           shopifyOrderName: session.orderLink.shopifyOrderName,

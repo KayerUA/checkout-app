@@ -1,6 +1,6 @@
 # UA Checkout — External Shopify Checkout for Ukraine
 
-Chekly-like external checkout for Shopify stores with Ukrainian payment providers (Monobank, LiqPay), Nova Poshta shipping, Checkbox fiscalization, and Shopify `orderCreate` integration.
+External checkout for Shopify stores with Ukrainian payment providers (Monobank, LiqPay), Nova Poshta shipping, Checkbox fiscalization, and Shopify `orderCreate` integration.
 
 ## Stack
 
@@ -176,7 +176,6 @@ Private — all rights reserved.
 | [docs/kayer/SHOPIFY_SETUP.md](docs/kayer/SHOPIFY_SETUP.md) | OAuth и установка app |
 | [docs/kayer/THEME_INTEGRATION.md](docs/kayer/THEME_INTEGRATION.md) | `kayer-checkout.js` + theme snippet |
 | [docs/kayer/E2E_TEST.md](docs/kayer/E2E_TEST.md) | Приёмочный тест |
-| [docs/kayer/CHECKOUT_AB.md](docs/kayer/CHECKOUT_AB.md) | A/B router Chekly vs custom |
 | [docs/kayer/B2B_LAUNCH_RUNBOOK.md](docs/kayer/B2B_LAUNCH_RUNBOOK.md) | B2B/FOP setup: Supabase, Shopify, Resend, bank, DiloShop |
 | [docs/kayer/GO_LIVE.md](docs/kayer/GO_LIVE.md) | Production checklist |
 

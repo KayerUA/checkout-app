@@ -148,20 +148,6 @@ export async function initPaymentForSession(publicToken: string, provider: Payme
     data: { status: "PAYMENT_PENDING", paymentProvider: provider },
   });
 
-  const sessionAttrs = (session.customAttributes ?? {}) as Record<string, unknown>;
-  const ab = (sessionAttrs.ab ?? {}) as Record<string, string>;
-  if (ab.experimentId && ab.visitorId && ab.variant) {
-    const { logCheckoutAbEvent } = await import("@/lib/checkout-ab/events");
-    await logCheckoutAbEvent({
-      experimentId: ab.experimentId,
-      visitorId: ab.visitorId,
-      variant: ab.variant,
-      eventName: "payment_started",
-      checkoutSessionId: session.id,
-      payload: { provider },
-    });
-  }
-
   return { attempt, ...result };
 }
 
@@ -307,25 +293,6 @@ export async function handlePaymentCallback(
           { checkoutSessionId: paymentAttempt.checkoutSessionId },
           { error: error instanceof Error ? error.message : String(error) }
         );
-      });
-    }
-
-    const sessionAttrs = (paymentAttempt.checkoutSession.customAttributes ?? {}) as Record<
-      string,
-      unknown
-    >;
-    const ab = (sessionAttrs.ab ?? {}) as Record<string, string>;
-    if (ab.experimentId && ab.visitorId && ab.variant) {
-      const { logCheckoutAbEvent } = await import("@/lib/checkout-ab/events");
-      await logCheckoutAbEvent({
-        experimentId: ab.experimentId,
-        visitorId: ab.visitorId,
-        variant: ab.variant,
-        eventName: "payment_success",
-        checkoutSessionId: paymentAttempt.checkoutSessionId,
-        revenue: paymentAttempt.amount / 100,
-        currency: paymentAttempt.checkoutSession.currency,
-        payload: { providerReference: parsed.providerReference },
       });
     }
 

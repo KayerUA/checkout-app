@@ -6,8 +6,8 @@
 
 ```
 kayer.ua cart/drawer
-  ↓ checkout-ab-intercept.js
-Shopify App Proxy /apps/checkout-ab
+  ↓ kayer-checkout.js
+POST checkout.kayer.ua/api/public/checkout-sessions
   ↓
 Custom checkout на checkout.kayer.ua
   ↓
@@ -118,13 +118,13 @@ Shopify Partner Dashboard или custom app setup → App proxy:
 | Поле | Значение |
 |---|---|
 | Subpath prefix | `apps` |
-| Subpath | `checkout-ab` |
-| Proxy URL | `https://checkout.kayer.ua/apps/checkout-ab` |
+| Subpath | `kayer-checkout-auth` |
+| Proxy URL | `https://checkout.kayer.ua/apps/kayer-checkout-auth` |
 
 Проверка:
 
 ```text
-https://kayer.ua/apps/checkout-ab?force_checkout=custom
+https://kayer.ua/apps/kayer-checkout-auth
 ```
 
 ## 4. Shopify webhooks
@@ -199,80 +199,34 @@ DOCUMENTS_FROM_EMAIL=docs@kayer.ua
 
 Домен `kayer.ua` или поддомен должен быть verified в Resend, иначе production email может не отправляться.
 
-## 7. Theme snippet: кому показывать checkout
+## 7. Theme snippet
 
-В Shopify theme перед `</body>` подключить только router script:
+В Shopify theme перед `</body>` подключить единый checkout script:
 
 ```liquid
 <script>
-  window.KAYER_CHECKOUT_AB_CONFIG = {
-    routerUrl: "/apps/checkout-ab",
-    fallbackUrl: "/checkout",
-    audienceMode: "customer_tags",
-    allowedCustomerTags: ["custom_checkout_beta"],
-    customerTags: [{% if customer %}{% for tag in customer.tags %}"{{ tag | escape }}"{% unless forloop.last %},{% endunless %}{% endfor %}{% endif %}],
+  window.KAYER_CHECKOUT_CONFIG = {
+    checkoutApiUrl: "https://checkout.kayer.ua",
+    shopDomain: {{ shop.permanent_domain | json }},
+    pricingTokenUrl: {% if customer %}"/apps/kayer-checkout-auth"{% else %}null{% endif %},
     customerEmail: {% if customer %}"{{ customer.email | escape }}"{% else %}""{% endif %},
     showB2BBlock: true
   };
 </script>
-<script src="https://checkout.kayer.ua/checkout-ab-intercept.js" defer></script>
+<script src="https://checkout.kayer.ua/kayer-checkout.js" defer></script>
 ```
 
-Потом в Shopify Admin → Customers добавить тестовым клиентам tag:
+Проверка:
 
 ```text
-custom_checkout_beta
+https://kayer.ua/cart
 ```
 
-### Варианты audienceMode
+## 8. Проверка единого checkout
 
-| Mode | Что делает |
-|---|---|
-| `all` | Все идут через router |
-| `disabled` | Никого не трогать |
-| `customer_tags` | Только клиенты с тегами |
-| `customer_emails` | Только emails из списка |
-| `customer_tags_or_emails` | Тег или email |
-| `query_param` | Только если в URL `?custom_checkout=1` |
-
-QA override:
-
-```text
-https://kayer.ua/cart?custom_checkout=1
-https://kayer.ua/cart?force_checkout=custom
-https://kayer.ua/cart?force_checkout=chekly
-```
-
-## 8. A/B rollout env
-
-Если аудитория уже выбрана theme snippet, внутри неё можно включить 100% custom:
-
-```env
-CUSTOM_CHECKOUT_ENABLED=true
-CUSTOM_WEIGHT=100
-CHEKLY_WEIGHT=0
-CHEKLY_CHECKOUT_URL=/checkout
-KAYER_SHOP_DOMAIN=kayer.myshopify.com
-```
-
-Для осторожного rollout:
-
-```env
-CUSTOM_WEIGHT=5
-CHEKLY_WEIGHT=95
-```
-
-Kill switch:
-
-```env
-CUSTOM_CHECKOUT_ENABLED=false
-```
-
-или в theme:
-
-```js
-audienceMode: "disabled"
-```
+Клик по любой checkout-кнопке должен создать сессию через public API и открыть
+`https://checkout.kayer.ua/checkout/{token}`. Для залогиненного партнёра запрос к
+`/apps/kayer-checkout-auth` должен вернуть подписанный pricing token.
 
 ## 9. Банк и сверка оплат
 
@@ -545,7 +499,6 @@ Shopify tags: PAYMENT_MATCHED, BANK_TRANSFER_PAID, DOCS_SENT
 |---|---|
 | Checkout UI | `https://checkout.kayer.ua/checkout/{token}` |
 | B2B admin | `https://checkout.kayer.ua/admin/b2b-orders` |
-| A/B metrics | `https://checkout.kayer.ua/admin/ab-test` |
 | Orders | `https://checkout.kayer.ua/admin/orders` |
 | Shipping | `https://checkout.kayer.ua/admin/shipping` |
 | Health | `https://checkout.kayer.ua/api/health` |
@@ -593,16 +546,8 @@ SHOPIFY_SHOP_DOMAIN
 
 ```text
 theme snippet
-customer tag
-App Proxy /apps/checkout-ab
-CUSTOM_CHECKOUT_ENABLED
-CUSTOM_WEIGHT
-```
-
-Для QA открыть:
-
-```text
-/cart?force_checkout=custom
+App Proxy /apps/kayer-checkout-auth
+Network: POST /api/public/checkout-sessions
 ```
 
 ### Сверка оплаты не сработала

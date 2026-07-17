@@ -69,7 +69,6 @@ type CheckoutData = {
   lines: CheckoutLine[];
   recommendations?: CheckoutRecommendation[];
   theme?: Record<string, string>;
-  ab?: Record<string, string> | null;
 };
 
 type City = { ref: string; name: string };
@@ -192,23 +191,6 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
   const contactLastNameDefault = data.buyerLastName ?? initialAttrs.customer_last_name ?? "";
   const contactEmailDefault = data.buyerEmail ?? initialAttrs.customer_email ?? initialAttrs.docs_email ?? "";
   const contactPhoneDefault = data.buyerPhone ?? initialAttrs.customer_phone ?? initialAttrs.docs_phone ?? "";
-
-  useEffect(() => {
-    const ab = data.ab;
-    if (!ab?.experimentId || !ab.visitorId || !ab.variant) return;
-    fetch("/api/checkout-ab/events", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        experimentId: ab.experimentId,
-        visitorId: ab.visitorId,
-        variant: ab.variant,
-        eventName: "checkout_loaded",
-        checkoutSessionId: data.publicToken,
-        payload: { page: "checkout_form" },
-      }),
-    }).catch(() => {});
-  }, [data.ab, data.publicToken]);
 
   const currentStep: 1 | 2 | 3 =
     !data.buyerPhone ? 1 : !data.shippingPayload?.branchRef ? 2 : 3;
@@ -371,20 +353,6 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
       });
       setData(updated);
       setBranchListOpen(false);
-      if (data.ab?.experimentId && data.ab.visitorId && data.ab.variant) {
-        fetch("/api/checkout-ab/events", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            experimentId: data.ab.experimentId,
-            visitorId: data.ab.visitorId,
-            variant: data.ab.variant,
-            eventName: "shipping_selected",
-            checkoutSessionId: data.publicToken,
-            payload: { branchRef: branch.ref },
-          }),
-        }).catch(() => {});
-      }
       await fetch(`/api/public/checkout-sessions/${data.publicToken}/reprice`, { method: "POST" });
       const refresh = await fetch(`/api/public/checkout-sessions/${data.publicToken}`);
       setData(await refresh.json());

@@ -130,15 +130,6 @@ export const publicCheckoutSessionCreateSchema = z
       .optional(),
     sourceUrl: z.string().url().max(2048).optional(),
     customAttributes: checkoutCreateAttributesSchema.optional(),
-    ab: z
-      .object({
-        experimentId: z.string().trim().max(120),
-        visitorId: z.string().trim().max(120),
-        variant: z.string().trim().max(120),
-        cartToken: z.string().trim().max(255).optional(),
-      })
-      .strict()
-      .optional(),
   })
   .strict();
 
