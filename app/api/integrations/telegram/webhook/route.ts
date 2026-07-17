@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { getEnv } from "@/lib/env";
 import { reconcilePendingPayments } from "@/lib/payments/reconciliation";
 import { reconcileBankPayments } from "@/lib/reconciliation/service";
+import { markAbandonedSessions } from "@/lib/checkout/session-service";
 import {
   parseTelegramCommand,
   summarizeBankReconciliation,
@@ -80,6 +81,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (command.name === "status") {
+      await markAbandonedSessions();
       const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
       const [activePending, inactivePending, paid24h, failed24h] = await Promise.all([
         prisma.paymentAttempt.count({

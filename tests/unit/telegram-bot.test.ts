@@ -97,6 +97,15 @@ describe("Telegram payments bot", () => {
           providerReference: "checkout-reference-123456",
         },
         { status: "skipped" },
+        {
+          status: "removed",
+          sessionStatus: "ABANDONED",
+          sourceIdentifier: "chk_cart_abandoned",
+          buyerFirstName: "Анна",
+          buyerLastName: "Тест",
+          buyerPhone: "+380501112233",
+          buyerEmail: "anna@example.com",
+        },
       ],
     });
     expect(message).toContain("Проверено: 4");
@@ -111,5 +120,7 @@ describe("Telegram payments bot", () => {
     expect(message).toContain("1 234,50 UAH");
     expect(message).toContain("заказ уже оплачен, это старая неоплаченная попытка");
     expect(message).toContain("ref …ference-1183");
+    expect(message).toContain("Удалено старых попыток: 1");
+    expect(message).toContain("Контакт сохранён: Анна Тест · +380501112233 · anna@example.com");
   });
 });

@@ -88,6 +88,10 @@ export function summarizePaymentReconciliation(result: {
     createdAt?: Date | string;
     providerState?: string;
     sessionStatus?: string;
+    buyerEmail?: string | null;
+    buyerPhone?: string | null;
+    buyerFirstName?: string | null;
+    buyerLastName?: string | null;
     providerReference?: string | null;
     error?: string;
     reason?: string;
@@ -115,6 +119,7 @@ export function summarizePaymentReconciliation(result: {
     `Оплачено: ${counts.get("PAID") ?? 0}`,
     `Активно ожидает оплаты: ${activePending}`,
     `Старых/неактивных попыток: ${inactivePending.length}`,
+    `Удалено старых попыток: ${counts.get("REMOVED") ?? 0}`,
     `Неуспешно: ${counts.get("FAILED") ?? 0}`,
     `Ошибки: ${counts.get("ERROR") ?? 0}`,
     `Пропущено: ${counts.get("SKIPPED") ?? 0}`,
@@ -158,6 +163,22 @@ export function summarizePaymentReconciliation(result: {
     rows.push(
       `${inactive ? "Старая попытка" : "Ожидает"} ${index + 1}: ${provider}${order}${amount}${createdAt}${providerState}${reference}`
     );
+  });
+  const removed = result.results.filter(
+    (row) => String(row.status ?? "").toUpperCase() === "REMOVED"
+  );
+  removed.slice(0, 10).forEach((row) => {
+    const order = row.shopifyOrderName
+      ? `Shopify ${row.shopifyOrderName}`
+      : row.sourceIdentifier || "checkout без номера";
+    if (row.sessionStatus === "ABANDONED") {
+      const name = [row.buyerFirstName, row.buyerLastName].filter(Boolean).join(" ") || "Без имени";
+      rows.push(
+        `Контакт сохранён: ${name} · ${row.buyerPhone || "телефон не указан"} · ${row.buyerEmail || "email не указан"} · ${order}`
+      );
+    } else {
+      rows.push(`Старая неоплаченная попытка удалена: ${order}`);
+    }
   });
   const errors = result.results.filter(
     (row) => String(row.status ?? "").toUpperCase() === "ERROR"

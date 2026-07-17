@@ -9,6 +9,8 @@ import {
   alertExistingPaidSessionsWithoutOrders,
   notifyPaymentWithoutOrder,
 } from "@/lib/telegram/ops-alerts";
+import { markAbandonedSessions } from "@/lib/checkout/session-service";
+import { shouldRemoveUnpaidAttempt } from "@/lib/payments/reconciliation-policy";
 
 type PendingAttempt = PaymentAttempt & {
   checkoutSession: {
@@ -17,6 +19,10 @@ type PendingAttempt = PaymentAttempt & {
     merchantId: string;
     currency: string;
     status: string;
+    buyerEmail: string | null;
+    buyerPhone: string | null;
+    buyerFirstName: string | null;
+    buyerLastName: string | null;
     sourceIdentifier: string | null;
     orderLink: { shopifyOrderName: string | null; shopifyOrderGid: string | null } | null;
     merchant: {
@@ -71,6 +77,33 @@ export async function reconcilePendingPaymentAttempt(attempt: PendingAttempt) {
     attempt.providerReference,
     decryptPaymentConfig(config.config as Record<string, string>)
   );
+  if (
+    shouldRemoveUnpaidAttempt({
+      provider: attempt.provider,
+      checkoutStatus: attempt.checkoutSession.status,
+      providerStatus: finalStatus?.status ?? null,
+    })
+  ) {
+    await prisma.paymentAttempt.delete({ where: { id: attempt.id } });
+    return {
+      paymentAttemptId: attempt.id,
+      checkoutSessionId: attempt.checkoutSessionId,
+      providerReference: attempt.providerReference,
+      provider: attempt.provider,
+      amount: attempt.amount,
+      currency: attempt.checkoutSession.currency,
+      createdAt: attempt.createdAt,
+      sourceIdentifier: attempt.checkoutSession.sourceIdentifier,
+      shopifyOrderName: attempt.checkoutSession.orderLink?.shopifyOrderName ?? null,
+      sessionStatus: attempt.checkoutSession.status,
+      buyerEmail: attempt.checkoutSession.buyerEmail,
+      buyerPhone: attempt.checkoutSession.buyerPhone,
+      buyerFirstName: attempt.checkoutSession.buyerFirstName,
+      buyerLastName: attempt.checkoutSession.buyerLastName,
+      status: "removed",
+      providerState: finalStatus?.status ?? "NOT_FOUND",
+    };
+  }
   if (!finalStatus) {
     return {
       paymentAttemptId: attempt.id,
@@ -168,6 +201,7 @@ export async function reconcilePendingPayments(input?: {
   checkoutSessionId?: string;
   take?: number;
 }) {
+  const abandonedSessions = await markAbandonedSessions();
   const attempts = await prisma.paymentAttempt.findMany({
     where: {
       status: "PENDING",
@@ -230,5 +264,5 @@ export async function reconcilePendingPayments(input?: {
     );
     return { checked: 0, alerted: 0, failed: true };
   });
-  return { checked: attempts.length, results, orphanAlerts };
+  return { checked: attempts.length, results, orphanAlerts, abandonedSessions };
 }

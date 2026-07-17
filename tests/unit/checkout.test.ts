@@ -9,7 +9,10 @@ import crypto from "node:crypto";
 import { calcTotals, formatMoney } from "@/lib/checkout/pricing";
 import { invoiceGoodsAmount } from "@/lib/documents/invoice";
 import { mapCheckoutToOrderCreateInput } from "@/lib/shopify/order-mapper";
-import { buildPaymentDescription } from "@/lib/payments/service";
+import {
+  buildPaymentDescription,
+  sourceIdentifierFromLiqPayReference,
+} from "@/lib/payments/service";
 import { requiredCheckoutEmailSchema } from "@/lib/checkout/public-input";
 
 describe("LiqPay verification", () => {
@@ -109,6 +112,13 @@ describe("Payment description", () => {
         publicToken: "public-token",
       })
     ).toBe("Оплата замовлення № chk_test_123 — KAYER");
+  });
+
+  it("recovers a checkout source identifier from a LiqPay reference", () => {
+    expect(
+      sourceIdentifierFromLiqPayReference("chk_cart_08d4c7b03b9ddaf514a3c400b119ad5d_1784278052172")
+    ).toBe("chk_cart_08d4c7b03b9ddaf514a3c400b119ad5d");
+    expect(sourceIdentifierFromLiqPayReference("opaque-monobank-reference")).toBeNull();
   });
 });
 

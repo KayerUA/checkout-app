@@ -10,7 +10,10 @@ import type { PaymentProvider, PaymentStatus, Prisma } from "@prisma/client";
 import { repriceCheckoutSession } from "@/lib/checkout/session-service";
 import { assertPaymentIntegrity } from "@/lib/payments/integrity";
 import { decryptPaymentConfig } from "@/lib/payments/config-secrets";
-import { notifyPaymentWithoutOrder } from "@/lib/telegram/ops-alerts";
+import {
+  notifyDuplicateOnlinePayment,
+  notifyPaymentWithoutOrder,
+} from "@/lib/telegram/ops-alerts";
 
 function getCallbackUrl(provider: PaymentProvider) {
   if (provider === "LIQPAY") return getLiqPayCallbackUrl();
@@ -42,6 +45,11 @@ function extractUnverifiedProviderReference(
   }
 
   return null;
+}
+
+export function sourceIdentifierFromLiqPayReference(reference: string) {
+  const match = reference.match(/^(chk_[A-Za-z0-9_-]+)_\d{13}$/);
+  return match?.[1] ?? null;
 }
 
 export async function ensureShopifyOrderCreation(checkoutSessionId: string) {
@@ -166,7 +174,7 @@ export async function handlePaymentCallback(
   const providerReference = extractUnverifiedProviderReference(provider, rawBody);
   if (!providerReference) throw new Error("Payment reference not found");
 
-  const paymentAttempt = await prisma.paymentAttempt.findUnique({
+  let paymentAttempt = await prisma.paymentAttempt.findUnique({
     where: {
       provider_providerReference: {
         provider,
@@ -185,9 +193,22 @@ export async function handlePaymentCallback(
       },
     },
   });
-  if (!paymentAttempt) throw new Error("Payment attempt not found");
+  const recoveredSession = paymentAttempt
+    ? null
+    : provider === "LIQPAY"
+      ? await prisma.checkoutSession.findUnique({
+          where: {
+            sourceIdentifier: sourceIdentifierFromLiqPayReference(providerReference) ?? "",
+          },
+          include: {
+            merchant: { include: { paymentConfigs: true } },
+          },
+        })
+      : null;
+  const checkoutSession = paymentAttempt?.checkoutSession ?? recoveredSession;
+  if (!checkoutSession) throw new Error("Payment attempt not found");
 
-  const configRecord = paymentAttempt.checkoutSession.merchant.paymentConfigs.find(
+  const configRecord = checkoutSession.merchant.paymentConfigs.find(
     (config) => config.provider === provider && config.isEnabled
   );
   if (!configRecord) throw new Error("Payment config not enabled for merchant");
@@ -202,7 +223,7 @@ export async function handlePaymentCallback(
   );
 
   if (!parsed) throw new Error("Invalid callback");
-  if (parsed.providerReference !== paymentAttempt.providerReference) {
+  if (parsed.providerReference !== providerReference) {
     throw new Error("Callback payment reference mismatch");
   }
 
@@ -218,11 +239,30 @@ export async function handlePaymentCallback(
   }
 
   assertPaymentIntegrity({
-    expectedAmount: paymentAttempt.amount,
+    expectedAmount: paymentAttempt?.amount ?? checkoutSession.totalAmount,
     actualAmount: parsed.amount,
-    expectedCurrency: paymentAttempt.checkoutSession.currency,
+    expectedCurrency: checkoutSession.currency,
     actualCurrency: parsed.currency,
   });
+
+  if (!paymentAttempt) {
+    paymentAttempt = await prisma.paymentAttempt.create({
+      data: {
+        checkoutSessionId: checkoutSession.id,
+        provider,
+        providerReference,
+        amount: checkoutSession.totalAmount,
+        status: "PENDING",
+      },
+      include: {
+        checkoutSession: {
+          include: {
+            merchant: { include: { paymentConfigs: true } },
+          },
+        },
+      },
+    });
+  }
 
   const { recordWebhookDelivery } = await import("@/lib/idempotency");
   const isNew = await recordWebhookDelivery({
@@ -271,6 +311,32 @@ export async function handlePaymentCallback(
   });
 
   if (newStatus === "PAID") {
+    const orderWasAlreadyPaid = ["PAID", "COMPLETED"].includes(
+      paymentAttempt.checkoutSession.status
+    );
+    if (orderWasAlreadyPaid) {
+      await notifyDuplicateOnlinePayment({
+        provider,
+        amount: paymentAttempt.amount,
+        currency: paymentAttempt.checkoutSession.currency,
+        checkoutSessionId: paymentAttempt.checkoutSessionId,
+        sourceIdentifier: paymentAttempt.checkoutSession.sourceIdentifier,
+        providerReference: paymentAttempt.providerReference,
+      }).catch((error) => {
+        logWithCorrelation(
+          "error",
+          "Duplicate online payment Telegram alert failed",
+          { checkoutSessionId: paymentAttempt.checkoutSessionId },
+          { error: error instanceof Error ? error.message : String(error) }
+        );
+      });
+      return {
+        status: newStatus,
+        checkoutSessionId: paymentAttempt.checkoutSessionId,
+        duplicatePayment: true,
+      };
+    }
+
     await prisma.checkoutSession.update({
       where: { id: paymentAttempt.checkoutSessionId },
       data: { status: "PAID" },
