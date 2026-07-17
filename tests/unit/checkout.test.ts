@@ -10,6 +10,7 @@ import { calcTotals, formatMoney } from "@/lib/checkout/pricing";
 import { invoiceGoodsAmount } from "@/lib/documents/invoice";
 import { mapCheckoutToOrderCreateInput } from "@/lib/shopify/order-mapper";
 import { buildPaymentDescription } from "@/lib/payments/service";
+import { requiredCheckoutEmailSchema } from "@/lib/checkout/public-input";
 
 describe("LiqPay verification", () => {
   it("verifies valid signature", () => {
@@ -111,6 +112,14 @@ describe("Payment description", () => {
   });
 });
 
+describe("Checkout contact validation", () => {
+  it("requires a valid buyer email before payment", () => {
+    expect(requiredCheckoutEmailSchema.safeParse("buyer@example.com").success).toBe(true);
+    expect(requiredCheckoutEmailSchema.safeParse("").success).toBe(false);
+    expect(requiredCheckoutEmailSchema.safeParse(null).success).toBe(false);
+  });
+});
+
 describe("Idempotency transitions", () => {
   it("allows DRAFT to READY", async () => {
     const { canTransition } = await import("@/lib/checkout/state-machine");
@@ -184,6 +193,14 @@ describe("B2B invoice checkout", () => {
     );
 
     expect(order.shippingLines).toEqual([]);
+    expect(order.customer).toEqual({
+      toUpsert: {
+        email: "docs@example.com",
+        phone: "+380501111111",
+        firstName: "Test",
+        lastName: "Buyer",
+      },
+    });
   });
 });
 

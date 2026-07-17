@@ -81,6 +81,12 @@ export function summarizePaymentReconciliation(result: {
   results: Array<{
     status?: string;
     shopifyOrderName?: string | null;
+    sourceIdentifier?: string | null;
+    provider?: string;
+    amount?: number;
+    currency?: string;
+    createdAt?: Date | string;
+    providerState?: string;
     providerReference?: string | null;
     error?: string;
     reason?: string;
@@ -106,6 +112,39 @@ export function summarizePaymentReconciliation(result: {
   if (createdOrders.length) {
     rows.push(`Shopify: ${createdOrders.slice(0, 10).join(", ")}`);
   }
+  const pending = result.results.filter(
+    (row) => String(row.status ?? "").toUpperCase() === "PENDING"
+  );
+  pending.slice(0, 10).forEach((row, index) => {
+    const order = row.shopifyOrderName
+      ? `Shopify ${row.shopifyOrderName}`
+      : `Shopify-заказ не создан · ${row.sourceIdentifier || "checkout без номера"}`;
+    const provider = row.provider ? `${row.provider} · ` : "";
+    const amount = typeof row.amount === "number"
+      ? ` · ${new Intl.NumberFormat("uk-UA", {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        }).format(row.amount / 100)} ${row.currency || "UAH"}`
+      : "";
+    const createdAt = row.createdAt
+      ? ` · ${new Intl.DateTimeFormat("uk-UA", {
+          day: "2-digit",
+          month: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          timeZone: "Europe/Kyiv",
+        }).format(new Date(row.createdAt))}`
+      : "";
+    const providerState = row.providerState === "NOT_FOUND"
+      ? " · провайдер не нашёл оплаченную операцию"
+      : " · провайдер ещё не подтвердил оплату";
+    const reference = row.providerReference
+      ? ` · ref …${row.providerReference.slice(-12)}`
+      : "";
+    rows.push(
+      `Ожидает ${index + 1}: ${provider}${order}${amount}${createdAt}${providerState}${reference}`
+    );
+  });
   const errors = result.results.filter(
     (row) => String(row.status ?? "").toUpperCase() === "ERROR"
   );

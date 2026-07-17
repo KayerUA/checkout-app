@@ -522,7 +522,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
               </div>
               <div className="space-y-2 sm:col-span-2">
                 <Label htmlFor="email">Email</Label>
-                <Input id="email" name="email" type="email" defaultValue={contactEmailDefault} placeholder="email@example.com" required={buyerType === "fop_company"} />
+                <Input id="email" name="email" type="email" defaultValue={contactEmailDefault} placeholder="email@example.com" required />
               </div>
 
               <div className="space-y-3 rounded-[1.2rem] border bg-secondary/35 p-3 sm:col-span-2 sm:rounded-2xl sm:p-4">

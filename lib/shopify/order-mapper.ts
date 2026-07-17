@@ -115,11 +115,27 @@ export function mapCheckoutToOrderCreateInput(
     lineBases,
     hasExplicitDiscountCode ? 0 : sessionCartDiscount
   );
+  const buyerEmail = session.buyerEmail?.trim() || undefined;
+  const buyerPhone = session.buyerPhone?.trim() || undefined;
+  const buyerFirstName = session.buyerFirstName?.trim() || undefined;
+  const buyerLastName = session.buyerLastName?.trim() || undefined;
 
   return {
     currency: session.currency,
-    email: session.buyerEmail ?? undefined,
-    phone: session.buyerPhone ?? undefined,
+    email: buyerEmail,
+    phone: buyerPhone,
+    ...((buyerEmail || buyerPhone)
+      ? {
+          customer: {
+            toUpsert: {
+              email: buyerEmail,
+              phone: buyerPhone,
+              firstName: buyerFirstName,
+              lastName: buyerLastName,
+            },
+          },
+        }
+      : {}),
     financialStatus: options?.financialStatus ?? "PAID",
     sourceIdentifier: session.sourceIdentifier ?? session.id,
     sourceName: options?.sourceName ?? "ua_external_checkout",
@@ -187,9 +203,9 @@ export function mapCheckoutToOrderCreateInput(
     };
     }),
     shippingAddress: {
-      firstName: session.buyerFirstName ?? "",
-      lastName: session.buyerLastName ?? "",
-      phone: session.buyerPhone ?? undefined,
+      firstName: buyerFirstName ?? "",
+      lastName: buyerLastName ?? "",
+      phone: buyerPhone,
       address1: shippingPayload.branchName ?? shippingPayload.address ?? "",
       city: shippingPayload.cityName ?? "",
       countryCode: "UA",

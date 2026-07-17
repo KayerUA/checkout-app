@@ -80,7 +80,16 @@ describe("Telegram payments bot", () => {
       checked: 4,
       results: [
         { status: "PAID", shopifyOrderName: "#UA1200" },
-        { status: "PENDING" },
+        {
+          status: "PENDING",
+          provider: "LIQPAY",
+          shopifyOrderName: "#UA1183",
+          amount: 123_450,
+          currency: "UAH",
+          createdAt: "2026-07-17T10:30:00.000Z",
+          providerState: "PENDING",
+          providerReference: "liqpay-reference-1183",
+        },
         {
           status: "error",
           error: "Payment amount mismatch",
@@ -95,5 +104,9 @@ describe("Telegram payments bot", () => {
     expect(message).toContain("Ошибка 1: Payment amount mismatch");
     expect(message).toContain("ref …rence-123456");
     expect(message).toContain("Shopify: #UA1200");
+    expect(message).toContain("Ожидает 1: LIQPAY · Shopify #UA1183");
+    expect(message).toContain("1 234,50 UAH");
+    expect(message).toContain("провайдер ещё не подтвердил оплату");
+    expect(message).toContain("ref …ference-1183");
   });
 });

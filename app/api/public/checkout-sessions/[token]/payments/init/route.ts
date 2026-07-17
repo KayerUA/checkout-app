@@ -6,6 +6,7 @@ import { prisma } from "@/lib/db";
 import { z } from "zod";
 import { checkRateLimit, rateLimitHeaders } from "@/lib/rate-limit";
 import { apiErrorResponse } from "@/lib/api/errors";
+import { requiredCheckoutEmailSchema } from "@/lib/checkout/public-input";
 
 const bodySchema = z.object({
   provider: z.enum(["LIQPAY", "BANK_INVOICE"]),
@@ -29,6 +30,16 @@ export async function POST(
       );
     }
     const body = bodySchema.parse(await request.json());
+    const session = await prisma.checkoutSession.findUnique({ where: { publicToken: token } });
+    if (!session) {
+      return NextResponse.json({ error: "Сесію оформлення не знайдено" }, { status: 404 });
+    }
+    if (!requiredCheckoutEmailSchema.safeParse(session.buyerEmail).success) {
+      return NextResponse.json(
+        { error: "Вкажіть коректний email, щоб оформити замовлення" },
+        { status: 400 }
+      );
+    }
     if (body.provider === "BANK_INVOICE") {
       const order = await createBankInvoiceShopifyOrderIdempotent(token);
       await ensureB2BInvoiceForCheckoutSession(token);
@@ -38,7 +49,6 @@ export async function POST(
         redirectUrl: `/checkout/${token}/thank-you`,
       });
     }
-    const session = await prisma.checkoutSession.findUnique({ where: { publicToken: token } });
     const attrs = (session?.customAttributes ?? {}) as Record<string, unknown>;
     if (attrs.buyer_type === "fop_company") {
       return NextResponse.json(

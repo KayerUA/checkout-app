@@ -3,12 +3,13 @@ import { z } from "zod";
 const shortText = z.string().trim().max(160);
 const nullableShortText = shortText.nullable();
 const moneyCents = z.number().int().nonnegative().max(100_000_000);
+export const requiredCheckoutEmailSchema = z.string().trim().email().max(254);
 
 const email = z
   .string()
   .trim()
   .max(254)
-  .refine((value) => value === "" || z.string().email().safeParse(value).success, {
+  .refine((value) => value === "" || requiredCheckoutEmailSchema.safeParse(value).success, {
     message: "Invalid email",
   })
   .nullable();
