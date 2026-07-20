@@ -151,7 +151,7 @@ async function callbackResponse(update: TelegramUpdate) {
       await telegramApi(env.TG_BOT_TOKEN!, "sendDocument", {
         chat_id: chatId,
         document: invoice.url,
-        caption: `Рахунок ${invoice.number} · Shopify ${parsed.orderId}`,
+        caption: `Рахунок ${invoice.number} · ${invoice.orderName}`,
       });
       await auditTelegram({
         userId,

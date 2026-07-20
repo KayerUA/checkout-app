@@ -6,6 +6,7 @@ import type { B2BDocumentInput } from "@/lib/b2b/types";
 
 export type TelegramInvoiceDownload = {
   shopifyOrderId: string;
+  orderName: string;
   number: string;
   url: string;
   filename: string;
@@ -17,13 +18,25 @@ export async function resolveInvoicePdfForTelegram(
   const id = String(shopifyOrderId).trim();
   if (!/^\d+$/.test(id)) return { error: "Некорректный Shopify order id" };
 
-  const invoice = await prisma.b2BDocument.findFirst({
-    where: { shopifyOrderId: id, type: "invoice" },
-    orderBy: { createdAt: "asc" },
-  });
+  const [invoice, b2bOrder, orderLink] = await Promise.all([
+    prisma.b2BDocument.findFirst({
+      where: { shopifyOrderId: id, type: "invoice" },
+      orderBy: { createdAt: "asc" },
+    }),
+    prisma.b2BOrder.findUnique({
+      where: { shopifyOrderId: id },
+      select: { shopifyOrderName: true },
+    }),
+    prisma.orderLink.findFirst({
+      where: { shopifyOrderGid: `gid://shopify/Order/${id}` },
+      select: { shopifyOrderName: true },
+    }),
+  ]);
   if (!invoice?.number) {
     return { error: "Счёт для этого заказа ещё не создан в B2B documents" };
   }
+  const orderName =
+    (b2bOrder?.shopifyOrderName || orderLink?.shopifyOrderName || "").trim() || `UA order ${id}`;
 
   const storagePath = `${id}/invoice-${invoice.number}.pdf`;
   let url = await freshDocumentDownloadUrl({
@@ -62,6 +75,7 @@ export async function resolveInvoicePdfForTelegram(
 
   return {
     shopifyOrderId: id,
+    orderName,
     number: invoice.number,
     url,
     filename: `${invoice.number}.pdf`,
