@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { createInvoicePdf } from "@/lib/documents/invoice-pdf";
+import { isPrismaUniqueConstraintError } from "@/lib/documents/b2b-document";
 import { invoicePaymentPurpose, renderInvoiceHtml } from "@/lib/documents/templates";
 import { uploadPrivateDocument } from "@/lib/supabase/storage";
 import { fetchDilovodInvoiceNamesBySku, resolveLineInvoiceTitle } from "@/lib/shopify/variant-invoice-names";
@@ -36,6 +37,17 @@ export function generateInvoiceNumber(sequence: number, date = new Date()) {
   return `KAYER-UA-${date.getFullYear()}-${String(sequence).padStart(6, "0")}`;
 }
 
+async function nextInvoiceSequenceNumber(date = new Date()) {
+  const yearStart = new Date(date.getFullYear(), 0, 1);
+  const count = await prisma.b2BDocument.count({
+    where: {
+      type: "invoice",
+      createdAt: { gte: yearStart },
+    },
+  });
+  return generateInvoiceNumber(count + 1, date);
+}
+
 export async function getOrCreateInvoiceDocument(
   order: ShopifyOrderPayload,
   buyer: FopOrderAttributes,
@@ -55,15 +67,7 @@ export async function getOrCreateInvoiceDocument(
     };
   }
 
-  const sequence = await prisma.b2BDocument.count({
-    where: {
-      type: "invoice",
-      createdAt: {
-        gte: new Date(new Date().getFullYear(), 0, 1),
-      },
-    },
-  });
-  const invoiceNumber = existing?.number ?? generateInvoiceNumber(sequence + 1);
+  const invoiceNumber = existing?.number ?? (await nextInvoiceSequenceNumber());
   const invoiceDate = existing?.createdAt ?? new Date();
   const paymentPurpose = invoicePaymentPurpose(invoiceNumber, invoiceDate, order.name);
   const documentLines = await invoiceDocumentLines(
@@ -89,26 +93,56 @@ export async function getOrCreateInvoiceDocument(
     body: pdf,
   });
 
-  const document = existing
-    ? await prisma.b2BDocument.update({
-        where: { id: existing.id },
-        data: {
-          number: invoiceNumber,
-          status: "CREATED",
-          pdfUrl,
-          metadata: { paymentPurpose, html, input },
-        },
-      })
-    : await prisma.b2BDocument.create({
-        data: {
-          shopifyOrderId,
-          type: "invoice",
-          number: invoiceNumber,
-          status: "CREATED",
-          pdfUrl,
-          metadata: { paymentPurpose, html, input },
-        },
-      });
+  if (existing) {
+    const document = await prisma.b2BDocument.update({
+      where: { id: existing.id },
+      data: {
+        number: invoiceNumber,
+        status: "CREATED",
+        pdfUrl,
+        metadata: { paymentPurpose, html, input },
+      },
+    });
+    return { document, pdf, paymentPurpose, created: true };
+  }
 
-  return { document, pdf, paymentPurpose, created: true };
+  try {
+    const document = await prisma.b2BDocument.create({
+      data: {
+        shopifyOrderId,
+        type: "invoice",
+        number: invoiceNumber,
+        status: "CREATED",
+        pdfUrl,
+        metadata: { paymentPurpose, html, input },
+      },
+    });
+    return { document, pdf, paymentPurpose, created: true };
+  } catch (error) {
+    // Concurrent orders/create for the same Shopify order (P2002 on shopify_order_id+type+number).
+    if (!isPrismaUniqueConstraintError(error)) throw error;
+    const document = await prisma.b2BDocument.findFirst({
+      where: { shopifyOrderId, type: "invoice" },
+      orderBy: { createdAt: "asc" },
+    });
+    if (!document) throw error;
+    const updated = await prisma.b2BDocument.update({
+      where: { id: document.id },
+      data: {
+        status: "CREATED",
+        pdfUrl: document.pdfUrl || pdfUrl,
+        metadata: { paymentPurpose, html, input },
+      },
+    });
+    return {
+      document: updated,
+      pdf: null,
+      paymentPurpose: invoicePaymentPurpose(
+        updated.number ?? invoiceNumber,
+        updated.createdAt,
+        order.name
+      ),
+      created: false,
+    };
+  }
 }
