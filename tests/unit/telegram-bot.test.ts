@@ -114,6 +114,10 @@ describe("Telegram payments bot", () => {
       action: "retry-np",
       orderId: "123456789",
     });
+    expect(parseTelegramCallback("send-invoice|11015715324228")).toEqual({
+      name: "send-invoice",
+      orderId: "11015715324228",
+    });
     expect(parseTelegramCallback("order|oops")).toEqual({ name: "unknown" });
     expect(parseTelegramCallback("unmatched|90")).toEqual({ name: "unmatched", days: 31 });
     expect(parseTelegramCallback("online_payments|200")).toEqual({ name: "online_payments", take: 50 });

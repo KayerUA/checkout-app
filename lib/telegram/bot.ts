@@ -210,6 +210,7 @@ export type TelegramCallback =
   | { name: "order_help" }
   | { name: "order"; orderId: string }
   | { name: "lookup"; reference: string }
+  | { name: "send-invoice"; orderId: string }
   | { name: "issues"; hours: number; filter: string }
   | { name: "health" }
   | { name: "queue" }
@@ -231,6 +232,9 @@ export function parseTelegramCallback(data: string): TelegramCallback {
   if (name === "payments") return { name, days: Math.min(Math.max(Number(first) || 7, 1), 31) };
   if (name === "order" && /^\d+$/.test(first)) return { name: "order", orderId: first };
   if (name === "lookup" && first) return { name: "lookup", reference: first };
+  if (name === "send-invoice" && /^\d+$/.test(first)) {
+    return { name: "send-invoice", orderId: first };
+  }
   if (name === "issues") {
     return { name: "issues", hours: Math.min(Math.max(Number(first) || 24, 1), 720), filter: second || "all" };
   }

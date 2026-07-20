@@ -217,7 +217,12 @@ export async function notifyExternalOpsAlert(input: {
     input.message.replace(/\s+/g, " ").slice(0, 1200),
   ].filter(Boolean).join("\n");
   const replyMarkup = input.shopifyOrderId
-    ? { inline_keyboard: [[{ text: "Открыть заказ", callback_data: `order|${input.shopifyOrderId}` }]] }
+    ? {
+        inline_keyboard: [
+          [{ text: "Открыть заказ", callback_data: `order|${input.shopifyOrderId}` }],
+          [{ text: "📄 Скачать счёт", callback_data: `send-invoice|${input.shopifyOrderId}` }],
+        ],
+      }
     : undefined;
   const results = await Promise.allSettled(
     chatIds.map((chatId) =>

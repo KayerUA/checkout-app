@@ -220,6 +220,17 @@ export async function buildOrderCard(referenceText: string, options?: { admin?: 
   }
   if (ttn) links.push({ text: "Трекинг НП", url: `https://novaposhta.ua/tracking/?cargo_number=${encodeURIComponent(ttn)}` });
   if (links.length) inline_keyboard.push(links);
+
+  const invoiceDoc = documents.find((doc) => doc.type === "invoice" && doc.number);
+  if (shopifyOrderId && invoiceDoc) {
+    inline_keyboard.push([
+      {
+        text: `📄 Скачать счёт ${invoiceDoc.number}`,
+        callback_data: `send-invoice|${shopifyOrderId}`,
+      },
+    ]);
+  }
+
   if (shopifyOrderId) {
     inline_keyboard.push([{ text: "🔄 Обновить карточку", callback_data: `order|${shopifyOrderId}` }]);
     if (options?.admin) {

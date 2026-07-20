@@ -105,3 +105,45 @@ async function createSignedDocumentUrl(env: ReturnType<typeof getEnv>, bucket: s
   const signedPath = data.signedURL ?? data.signedUrl;
   return signedPath ? `${env.SUPABASE_URL}/storage/v1${signedPath}` : `supabase://${bucket}/${path}`;
 }
+
+/** Fresh signed HTTPS URL for an object path in the documents bucket. */
+export async function signPrivateDocumentPath(path: string): Promise<string | null> {
+  const env = getEnv();
+  if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) return null;
+  const clean = path.replace(/^\/+/, "");
+  if (!clean) return null;
+  const url = await createSignedDocumentUrl(env, env.SUPABASE_DOCUMENTS_BUCKET, clean);
+  return url.startsWith("http") ? url : null;
+}
+
+/**
+ * Prefer re-signing a known storage path; fall back to an existing http(s) URL.
+ * Supports paths stored as full Supabase signed URLs.
+ */
+export async function freshDocumentDownloadUrl(input: {
+  path?: string | null;
+  pdfUrl?: string | null;
+}): Promise<string | null> {
+  const pathHint = (input.path ?? "").trim();
+  if (pathHint && !pathHint.startsWith("http") && !pathHint.startsWith("mock://")) {
+    const signed = await signPrivateDocumentPath(pathHint);
+    if (signed) return signed;
+  }
+
+  const pdfUrl = (input.pdfUrl ?? "").trim();
+  if (!pdfUrl.startsWith("http")) return null;
+
+  const env = getEnv();
+  const bucket = env.SUPABASE_DOCUMENTS_BUCKET;
+  const marker = `/storage/v1/object/sign/${bucket}/`;
+  const idx = pdfUrl.indexOf(marker);
+  if (idx >= 0) {
+    const rest = pdfUrl.slice(idx + marker.length);
+    const objectPath = decodeURIComponent(rest.split("?")[0] ?? "");
+    if (objectPath) {
+      const signed = await signPrivateDocumentPath(objectPath);
+      if (signed) return signed;
+    }
+  }
+  return pdfUrl;
+}

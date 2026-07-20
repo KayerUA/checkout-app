@@ -33,6 +33,7 @@ import {
   formatDiloshopActionResult,
   type TelegramOpsMessage,
 } from "@/lib/telegram/operations";
+import { resolveInvoicePdfForTelegram } from "@/lib/telegram/invoice-download";
 import { runDiloshopOrderAction } from "@/lib/telegram/diloshop-client";
 import {
   auditTelegram,
@@ -138,6 +139,43 @@ async function callbackResponse(update: TelegramUpdate) {
   }
   if (parsed.name === "cancel") {
     await editMessage(env.TG_BOT_TOKEN!, chatId, messageId, "Действие отменено.");
+    return;
+  }
+  if (parsed.name === "send-invoice") {
+    try {
+      const invoice = await resolveInvoicePdfForTelegram(parsed.orderId);
+      if ("error" in invoice) {
+        await sendMessage(env.TG_BOT_TOKEN!, chatId, `Не удалось скачать счёт: ${invoice.error}`);
+        return;
+      }
+      await telegramApi(env.TG_BOT_TOKEN!, "sendDocument", {
+        chat_id: chatId,
+        document: invoice.url,
+        caption: `Рахунок ${invoice.number} · Shopify ${parsed.orderId}`,
+      });
+      await auditTelegram({
+        userId,
+        chatId,
+        command: "send-invoice",
+        status: "OK",
+        shopifyOrderId: parsed.orderId,
+        message: invoice.number,
+      }).catch(() => {});
+    } catch (error) {
+      await auditTelegram({
+        userId,
+        chatId,
+        command: "send-invoice",
+        status: "ERROR",
+        shopifyOrderId: parsed.orderId,
+        error,
+      }).catch(() => {});
+      await sendMessage(
+        env.TG_BOT_TOKEN!,
+        chatId,
+        `Не удалось скачать счёт: ${error instanceof Error ? error.message : String(error)}`.slice(0, 500)
+      );
+    }
     return;
   }
   if (parsed.name === "confirm") {
