@@ -20,7 +20,11 @@ export function isUaRegionalDistributorMarket(market?: string | null): boolean {
   return UA_REGIONAL_DISTRIBUTOR_MARKETS.has((market ?? "").trim().toUpperCase());
 }
 
-/** UA regional distributors pay contextual market catalog prices — no extra % at checkout. */
+/**
+ * UA regional distributors (KHARKIV/LVIV/LUTSK): partner % is baked into unit price
+ * from Admin retail + rules. Never apply PARTNER-* discount codes on top.
+ * (Name kept for call sites; does not mean "Admin catalog is already buy price".)
+ */
 export function partnerMarketUsesCatalogCheckoutPrice(market?: string | null): boolean {
   return isUaRegionalDistributorMarket(market);
 }
@@ -29,16 +33,35 @@ export function isPartnerProgramDiscountCode(code?: string | null): boolean {
   return /^PARTNER-/i.test(String(code ?? "").trim());
 }
 
+/**
+ * Cart.js is not a pricing source for UA regional partners — Admin retail + rules only.
+ * For other markets, prefer the cart final (discounted) unit when present.
+ */
 export function partnerCartSnapshotUnitPrice(input: {
   market?: string | null;
   finalUnitPriceCents?: number | null;
   originalUnitPriceCents?: number | null;
+  /** When set with regional market, ignore cart amounts entirely. */
+  catalogUnitPriceCents?: number | null;
+  rules?: PartnerDiscountRule[];
+  collectionHandles?: string[];
 }): number {
+  if (
+    partnerMarketUsesCatalogCheckoutPrice(input.market) &&
+    typeof input.catalogUnitPriceCents === "number" &&
+    input.catalogUnitPriceCents > 0 &&
+    input.rules &&
+    input.collectionHandles
+  ) {
+    return partnerUnitPriceFromCatalog(
+      input.catalogUnitPriceCents,
+      input.rules,
+      input.collectionHandles,
+      input.market
+    );
+  }
   const finalPrice = Math.max(0, Math.round(input.finalUnitPriceCents ?? 0));
   const originalPrice = Math.max(0, Math.round(input.originalUnitPriceCents ?? 0));
-  if (partnerMarketUsesCatalogCheckoutPrice(input.market) && originalPrice > 0) {
-    return originalPrice;
-  }
   return finalPrice || originalPrice;
 }
 
@@ -130,12 +153,12 @@ export function partnerUnitPriceFromCatalog(
   catalogCents: number,
   rules: PartnerDiscountRule[],
   collectionHandles: string[],
-  market?: string | null
+  _market?: string | null
 ): number {
   const catalog = Math.max(0, Math.round(catalogCents));
-  if (partnerMarketUsesCatalogCheckoutPrice(market)) return catalog;
   const pct = bestPartnerDiscountPct(rules, collectionHandles);
   if (pct <= 0) return catalog;
+  // Same rounding as historical UA partner lines (965.00 × 0.65 → 627.25).
   return Math.max(0, Math.round(catalog * (1 - pct / 100)));
 }
 

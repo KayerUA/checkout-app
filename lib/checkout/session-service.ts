@@ -15,8 +15,6 @@ import {
   fetchPartnerPricingContextByGid,
   isPartnerProgramDiscountCode,
   normalizeCheckoutEmail,
-  partnerCartSnapshotUnitPrice,
-  partnerMarketUsesCatalogCheckoutPrice,
   partnerUnitPriceFromCatalog,
   type PartnerPricingContext,
 } from "@/lib/checkout/partner-pricing";
@@ -151,20 +149,8 @@ export async function resolveAndPriceLines(
     let unitPrice = catalogUnitPrice;
     let pricingSource: "catalog" | "partner_rules" | "shopify_cart" = "catalog";
 
-    if (
-      options?.forceCartSnapshot &&
-      typeof line.unitPriceCents === "number" &&
-      line.unitPriceCents > 0
-    ) {
-      unitPrice = partnerContext
-        ? partnerCartSnapshotUnitPrice({
-            market: partnerContext.market,
-            finalUnitPriceCents: line.unitPriceCents,
-            originalUnitPriceCents: line.originalUnitPriceCents,
-          })
-        : Math.round(line.unitPriceCents);
-      pricingSource = partnerContext ? "partner_rules" : "shopify_cart";
-    } else if (partnerContext) {
+    if (partnerContext) {
+      // Source of truth: Admin retail × partner rules. Ignore cart.js (retail or already-buy).
       unitPrice = partnerUnitPriceFromCatalog(
         catalogUnitPrice,
         partnerContext.rules,
@@ -172,6 +158,13 @@ export async function resolveAndPriceLines(
         partnerContext.market
       );
       pricingSource = "partner_rules";
+    } else if (
+      options?.forceCartSnapshot &&
+      typeof line.unitPriceCents === "number" &&
+      line.unitPriceCents > 0
+    ) {
+      unitPrice = Math.round(line.unitPriceCents);
+      pricingSource = "shopify_cart";
     } else if (options?.useRetailCartHints !== false) {
       const cartPricing = applyCartUnitPriceHint({
         catalogUnitPriceCents: catalogUnitPrice,
@@ -211,8 +204,10 @@ export async function resolveAndPriceLines(
           null,
         catalogUnitPriceCents: catalogUnitPrice,
         cartUnitPriceCents: line.unitPriceCents ?? null,
+        partnerUnitPriceCents: partnerContext ? unitPrice : null,
         pricingSource,
         partnerCustomerGid: partnerContext?.customerGid ?? null,
+        partnerMarket: partnerContext?.market ?? null,
       },
     };
   });
@@ -483,13 +478,8 @@ export async function createCheckoutSession(input: CreateCheckoutSessionInput) {
       : "";
   delete inputAttributes.appliedDiscountCode;
 
-  const partnerUsesCatalogCheckout =
-    Boolean(partnerContext) &&
-    partnerMarketUsesCatalogCheckoutPrice(partnerContext?.market);
-  if (
-    partnerUsesCatalogCheckout &&
-    isPartnerProgramDiscountCode(requestedDiscountCode)
-  ) {
+  // Partner % is baked into unit prices — never stack PARTNER-* as a checkout promo.
+  if (partnerContext && isPartnerProgramDiscountCode(requestedDiscountCode)) {
     requestedDiscountCode = "";
     if (
       typeof input.cartItemsSubtotalCents === "number" &&
@@ -498,6 +488,12 @@ export async function createCheckoutSession(input: CreateCheckoutSessionInput) {
     ) {
       input.cartTotalCents = input.cartItemsSubtotalCents;
     }
+  }
+
+  if (!partnerContext && isPartnerProgramDiscountCode(requestedDiscountCode)) {
+    throw new CheckoutDiscountError(
+      "Партнерську знижку не підтверджено. Увійдіть у акаунт партнера і спробуйте знову."
+    );
   }
 
   let validatedDiscountCode = "";
@@ -796,8 +792,10 @@ export async function repriceCheckoutSession(publicToken: string, shippingAmount
   await ensureSessionLinePricing(publicToken);
   const session = await getCheckoutSessionByToken(publicToken);
   const attrs = (session?.customAttributes ?? {}) as Record<string, unknown>;
-  if (typeof attrs.appliedDiscountCode === "string" && attrs.appliedDiscountCode.trim()) {
-    await applyCheckoutDiscountCode(publicToken, attrs.appliedDiscountCode);
+  const code =
+    typeof attrs.appliedDiscountCode === "string" ? attrs.appliedDiscountCode.trim() : "";
+  if (code && !isPartnerProgramDiscountCode(code)) {
+    await applyCheckoutDiscountCode(publicToken, code);
   }
   return recalcCheckoutSessionTotals(publicToken, shippingAmount);
 }
@@ -901,6 +899,11 @@ export async function applyCheckoutDiscountCode(publicToken: string, rawCode: st
   const code = normalizeDiscountCode(rawCode);
   if (!code) {
     throw new CheckoutDiscountError("Введіть промокод");
+  }
+  if (isPartnerProgramDiscountCode(code)) {
+    throw new CheckoutDiscountError(
+      "Партнерська знижка застосовується автоматично після входу. Промокод PARTNER не потрібен."
+    );
   }
 
   const discount = await fetchCheckoutDiscountByCode(session.merchantId, code);

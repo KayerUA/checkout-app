@@ -3,6 +3,7 @@ import { ZodError } from "zod";
 import { log } from "@/lib/logger";
 import { UnauthorizedError } from "@/lib/session";
 import { PaymentIntegrityError } from "@/lib/payments/integrity";
+import { CheckoutDiscountError } from "@/lib/checkout/discount-code";
 
 export function apiErrorResponse(
   error: unknown,
@@ -22,6 +23,10 @@ export function apiErrorResponse(
 
   if (error instanceof PaymentIntegrityError) {
     return NextResponse.json({ error: "Payment verification failed" }, { status: 409 });
+  }
+
+  if (error instanceof CheckoutDiscountError) {
+    return NextResponse.json({ error: error.message }, { status: 400 });
   }
 
   if (error instanceof Error && error.message === "Session not found") {

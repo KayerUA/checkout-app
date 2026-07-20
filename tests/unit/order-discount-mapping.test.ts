@@ -88,11 +88,12 @@ describe("Shopify cart discount mapping", () => {
     expect("discountCode" in order).toBe(false);
   });
 
-  it("does not write PARTNER discount code for UA regional catalog-price markets", () => {
+  it("does not write PARTNER discount code onto Shopify orders", () => {
     const session = sessionWithDiscount("PARTNER-24109539885380");
     session.customAttributes = {
       appliedDiscountCode: "PARTNER-24109539885380",
       partnerMarket: "KHARKIV",
+      pricingMode: "partner_rules",
     };
 
     const order = mapCheckoutToOrderCreateInput(session, null);
@@ -102,5 +103,7 @@ describe("Shopify cart discount mapping", () => {
       key: "discount_code",
       value: "PARTNER-24109539885380",
     });
+    expect(order.customAttributes).toContainEqual({ key: "partnerMarket", value: "KHARKIV" });
+    expect(order.customAttributes).toContainEqual({ key: "pricingMode", value: "partner_rules" });
   });
 });

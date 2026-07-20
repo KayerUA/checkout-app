@@ -167,8 +167,8 @@ describe("B2B invoice checkout", () => {
         totalAmount: 10000,
         buyerEmail: "docs@example.com",
         buyerPhone: "+380501111111",
-        buyerFirstName: "Test",
-        buyerLastName: "Buyer",
+        buyerFirstName: "Тест",
+        buyerLastName: "Покупець",
         shippingMethodCode: "nova_poshta_branch",
         shippingProvider: "nova_poshta",
         shippingPayload: { branchRef: "np-1", branchName: "Відділення 1", cityName: "Київ" },
@@ -207,8 +207,8 @@ describe("B2B invoice checkout", () => {
       toUpsert: {
         email: "docs@example.com",
         phone: "+380501111111",
-        firstName: "Test",
-        lastName: "Buyer",
+        firstName: "Тест",
+        lastName: "Покупець",
       },
     });
   });

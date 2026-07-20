@@ -3,10 +3,7 @@ import {
   buildShopifyNovaPoshtaNoteAttributes,
   type NovaPoshtaShippingPayload,
 } from "@/lib/shipping/shopify-np-note-attributes";
-import {
-  isPartnerProgramDiscountCode,
-  partnerMarketUsesCatalogCheckoutPrice,
-} from "@/lib/checkout/partner-pricing";
+import { isPartnerProgramDiscountCode } from "@/lib/checkout/partner-pricing";
 import { normalizeUaPersonName } from "@/lib/checkout/ua-person-name";
 
 const ORDER_CREATE_MUTATION = `
@@ -84,6 +81,8 @@ export function mapCheckoutToOrderCreateInput(
     "docs_email",
     "docs_phone",
     "accounting_comment",
+    "partnerMarket",
+    "pricingMode",
   ].forEach((key) => {
     const value = sessionAttrs[key];
     if (typeof value === "string" && value) customAttributes.push({ key, value });
@@ -97,12 +96,10 @@ export function mapCheckoutToOrderCreateInput(
     typeof sessionAttrs.appliedDiscountCode === "string"
       ? sessionAttrs.appliedDiscountCode.trim()
       : "";
-  const partnerMarket =
-    typeof sessionAttrs.partnerMarket === "string" ? sessionAttrs.partnerMarket : "";
-  const skipPartnerDiscountCode =
-    partnerMarketUsesCatalogCheckoutPrice(partnerMarket) &&
-    isPartnerProgramDiscountCode(appliedDiscountCode);
-  const effectiveDiscountCode = skipPartnerDiscountCode ? "" : appliedDiscountCode;
+  // Partner % is in line unit prices — never write PARTNER-* onto Shopify orders.
+  const effectiveDiscountCode = isPartnerProgramDiscountCode(appliedDiscountCode)
+    ? ""
+    : appliedDiscountCode;
   if (effectiveDiscountCode) {
     customAttributes.push({ key: "discount_code", value: effectiveDiscountCode });
   }
