@@ -33,6 +33,7 @@ import {
 } from "@/lib/checkout/discount-code";
 import { calcTotals } from "@/lib/checkout/pricing";
 import { assertTransition } from "@/lib/checkout/state-machine";
+import { normalizeUaPersonName } from "@/lib/checkout/ua-person-name";
 import type { CheckoutStatus, PaymentProvider, Prisma } from "@prisma/client";
 import type { CheckoutSessionPatch } from "@/lib/checkout/public-input";
 
@@ -556,8 +557,10 @@ export async function createCheckoutSession(input: CreateCheckoutSessionInput) {
   const buyerEmail =
     verifiedPartnerEmail ??
     (normalizeCheckoutEmail(input.storefrontCustomerEmail) || null);
-  const storefrontCustomerFirstName = input.storefrontCustomerFirstName?.trim() || null;
-  const storefrontCustomerLastName = input.storefrontCustomerLastName?.trim() || null;
+  const storefrontCustomerFirstName =
+    normalizeUaPersonName(input.storefrontCustomerFirstName?.trim() || null) ?? null;
+  const storefrontCustomerLastName =
+    normalizeUaPersonName(input.storefrontCustomerLastName?.trim() || null) ?? null;
   const storefrontCustomerPhone = input.storefrontCustomerPhone?.trim() || null;
 
   const recommendations = await getCheckoutRecommendations(
@@ -757,8 +760,14 @@ export async function updateCheckoutSession(
     data: {
       buyerEmail: data.buyerEmail,
       buyerPhone: data.buyerPhone,
-      buyerFirstName: data.buyerFirstName,
-      buyerLastName: data.buyerLastName,
+      buyerFirstName:
+        data.buyerFirstName !== undefined
+          ? normalizeUaPersonName(data.buyerFirstName) ?? null
+          : undefined,
+      buyerLastName:
+        data.buyerLastName !== undefined
+          ? normalizeUaPersonName(data.buyerLastName) ?? null
+          : undefined,
       shippingMethodCode: data.shippingMethodCode,
       shippingProvider: data.shippingProvider,
       paymentProvider: data.paymentProvider as PaymentProvider | undefined,

@@ -7,6 +7,7 @@ import {
   isPartnerProgramDiscountCode,
   partnerMarketUsesCatalogCheckoutPrice,
 } from "@/lib/checkout/partner-pricing";
+import { normalizeUaPersonName } from "@/lib/checkout/ua-person-name";
 
 const ORDER_CREATE_MUTATION = `
   mutation OrderCreateExternal($order: OrderCreateOrderInput!, $options: OrderCreateOptionsInput) {
@@ -117,8 +118,10 @@ export function mapCheckoutToOrderCreateInput(
   );
   const buyerEmail = session.buyerEmail?.trim() || undefined;
   const buyerPhone = session.buyerPhone?.trim() || undefined;
-  const buyerFirstName = session.buyerFirstName?.trim() || undefined;
-  const buyerLastName = session.buyerLastName?.trim() || undefined;
+  const buyerFirstName =
+    normalizeUaPersonName(session.buyerFirstName?.trim() || undefined) || undefined;
+  const buyerLastName =
+    normalizeUaPersonName(session.buyerLastName?.trim() || undefined) || undefined;
 
   return {
     currency: session.currency,
