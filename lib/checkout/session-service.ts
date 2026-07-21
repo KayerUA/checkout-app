@@ -32,6 +32,8 @@ import {
 import { calcTotals } from "@/lib/checkout/pricing";
 import { assertTransition } from "@/lib/checkout/state-machine";
 import { normalizeUaPersonName } from "@/lib/checkout/ua-person-name";
+import { normalizeUaPhone } from "@/lib/checkout/phone";
+import { assertCheckoutReadyForFulfillment } from "@/lib/checkout/fulfillment-validation";
 import type { CheckoutStatus, PaymentProvider, Prisma } from "@prisma/client";
 import type { CheckoutSessionPatch } from "@/lib/checkout/public-input";
 
@@ -618,7 +620,7 @@ export async function createCheckoutSession(input: CreateCheckoutSessionInput) {
       discountAmount: totals.discountAmount,
       totalAmount: totals.totalAmount,
       buyerEmail,
-      buyerPhone: storefrontCustomerPhone,
+      buyerPhone: normalizeUaPhone(storefrontCustomerPhone) ?? null,
       buyerFirstName: storefrontCustomerFirstName,
       buyerLastName: storefrontCustomerLastName,
       customAttributes: {
@@ -749,6 +751,17 @@ export async function updateCheckoutSession(
 
   if (data.status && data.status !== existing.status) {
     assertTransition(existing.status, data.status);
+  }
+  if (data.status === "READY") {
+    assertCheckoutReadyForFulfillment({
+      buyerEmail: data.buyerEmail ?? existing.buyerEmail,
+      buyerPhone: data.buyerPhone ?? existing.buyerPhone,
+      buyerFirstName: data.buyerFirstName ?? existing.buyerFirstName,
+      buyerLastName: data.buyerLastName ?? existing.buyerLastName,
+      shippingProvider: data.shippingProvider ?? existing.shippingProvider,
+      shippingMethodCode: data.shippingMethodCode ?? existing.shippingMethodCode,
+      shippingPayload: data.shippingPayload ?? existing.shippingPayload,
+    });
   }
 
   return prisma.checkoutSession.update({

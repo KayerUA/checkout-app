@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { formatMoney } from "@/lib/checkout/pricing";
+import { normalizeUaPhone } from "@/lib/checkout/phone";
 import type { SavingsSummary } from "@/lib/checkout/savings-summary";
 import { cn } from "@/lib/utils";
 import {
@@ -92,13 +93,13 @@ function validateCompanyBillingFields(form: FormData) {
   const companyName = String(form.get("fop_name") ?? "").trim();
   const taxId = cleanDigits(form.get("fop_tax_id"));
   const docsEmail = String(form.get("docs_email") || form.get("email") || "").trim();
-  const docsPhone = cleanDigits(form.get("docs_phone") || form.get("phone"));
+  const docsPhone = normalizeUaPhone(String(form.get("docs_phone") || form.get("phone") || ""));
   const legalAddress = String(form.get("fop_legal_address") ?? "").trim();
 
   if (companyName.length < 3) return "Вкажіть назву компанії або ПІБ ФОП.";
   if (![8, 10].includes(taxId.length)) return "ЄДРПОУ має містити 8 цифр, ІПН або РНОКПП — 10 цифр.";
   if (!docsEmail.includes("@")) return "Вкажіть коректний email для документів.";
-  if (docsPhone.length < 10) return "Вкажіть коректний телефон для документів.";
+  if (!docsPhone) return "Вкажіть український номер для документів у форматі +380XXXXXXXXX.";
   if (legalAddress.length < 8) return "Вкажіть юридичну адресу.";
 
   return null;
@@ -265,12 +266,18 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
     setError(null);
     const form = new FormData(e.currentTarget);
     const docsEmail = String(form.get("docs_email") || form.get("email") || "");
+    const phone = normalizeUaPhone(String(form.get("phone") || ""));
     const effectivePaymentPreference =
       buyerType === "fop_company" ? "bank_invoice" : paymentPreference;
     const selectedPaymentProvider =
       effectivePaymentPreference === "bank_invoice" ? "BANK_INVOICE" : "LIQPAY";
 
     try {
+      if (!phone) {
+        setError("Вкажіть український номер у форматі +380 XX XXX XX XX.");
+        setLoading(false);
+        return;
+      }
       if (buyerType === "fop_company") {
         const validationError = validateCompanyBillingFields(form);
         if (validationError) {
@@ -282,7 +289,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
 
       await saveSession({
         buyerEmail: form.get("email"),
-        buyerPhone: form.get("phone"),
+        buyerPhone: phone,
         buyerFirstName: form.get("firstName"),
         buyerLastName: form.get("lastName"),
         shippingProvider: "nova_poshta",
@@ -295,7 +302,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
           fop_tax_id: form.get("fop_tax_id"),
           fop_legal_address: form.get("fop_legal_address"),
           docs_email: docsEmail,
-          docs_phone: form.get("docs_phone") || form.get("phone"),
+          docs_phone: normalizeUaPhone(String(form.get("docs_phone") || phone)) ?? phone,
           accounting_comment: form.get("accounting_comment"),
         },
         status: "READY",
@@ -518,7 +525,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
               </div>
               <div className="space-y-2 sm:col-span-2">
                 <Label htmlFor="phone">Телефон</Label>
-                <Input id="phone" name="phone" type="tel" defaultValue={contactPhoneDefault} placeholder="+380 XX XXX XX XX" required />
+                <Input id="phone" name="phone" type="tel" inputMode="tel" autoComplete="tel" defaultValue={contactPhoneDefault} placeholder="+380 XX XXX XX XX" title="Український номер: +380 XX XXX XX XX" required />
               </div>
               <div className="space-y-2 sm:col-span-2">
                 <Label htmlFor="email">Email</Label>

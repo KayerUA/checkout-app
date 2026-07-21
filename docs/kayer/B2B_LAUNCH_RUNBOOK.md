@@ -208,7 +208,8 @@ DOCUMENTS_FROM_EMAIL=docs@kayer.ua
   window.KAYER_CHECKOUT_CONFIG = {
     checkoutApiUrl: "https://checkout.kayer.ua",
     shopDomain: {{ shop.permanent_domain | json }},
-    pricingTokenUrl: {% if customer %}"/apps/kayer-checkout-auth"{% else %}null{% endif %},
+    pricingTokenUrl: "/apps/kayer-checkout-auth",
+    customerId: {% if customer %}"{{ customer.id }}"{% else %}""{% endif %},
     customerEmail: {% if customer %}"{{ customer.email | escape }}"{% else %}""{% endif %},
     showB2BBlock: true
   };

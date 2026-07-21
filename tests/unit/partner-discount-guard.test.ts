@@ -10,7 +10,7 @@ function resolvePartnerDiscountCodeInput(input: {
   partnerContext: { market?: string } | null;
   requestedDiscountCode: string;
 }): string {
-  let code = input.requestedDiscountCode;
+  const code = input.requestedDiscountCode;
   if (input.partnerContext && isPartnerProgramDiscountCode(code)) {
     return "";
   }

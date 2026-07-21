@@ -11,6 +11,7 @@ export type TelegramCommand = {
     | "myid"
     | "payments"
     | "online_payments"
+    | "recover_checkout"
     | "abandoned"
     | "status"
     | "order"
@@ -58,6 +59,7 @@ export function parseTelegramCommand(text: string): TelegramCommand {
       take: Number.isFinite(requestedTake) ? Math.min(Math.max(requestedTake, 1), 50) : 20,
     };
   }
+  if (command === "/recover_checkout") return { name: "recover_checkout", arg };
   if (command === "/abandoned") {
     const requestedTake = Number.parseInt(rawTake, 10);
     return {
@@ -104,6 +106,7 @@ export const telegramGroupBotCommands = [
   { command: "queue", description: "Очереди Checkout и Diloshop" },
   { command: "payments", description: "Сверить оплаты по банковской выписке" },
   { command: "online_payments", description: "Проверить LiqPay/Monobank" },
+  { command: "recover_checkout", description: "Повторить Shopify-заказ из checkout" },
   { command: "unmatched", description: "Банковские оплаты без матча" },
   { command: "abandoned", description: "Показать незавершённые checkout" },
   { command: "help", description: "Показать команды" },
@@ -219,7 +222,12 @@ export type TelegramCallback =
   | { name: "cancel" }
   | { name: "unknown" };
 
-const telegramOrderActionNames = new Set(["retry-dilovod", "retry-np", "refresh-np"]);
+const telegramOrderActionNames = new Set([
+  "retry-dilovod",
+  "retry-np",
+  "refresh-np",
+  "recover-shopify-order",
+]);
 
 export function parseTelegramCallback(data: string): TelegramCallback {
   const [name, first = "", second = ""] = data.split("|", 3);
@@ -240,7 +248,10 @@ export function parseTelegramCallback(data: string): TelegramCallback {
   }
   if (name === "health") return { name: "health" };
   if (name === "queue") return { name: "queue" };
-  if ((name === "confirm" || name === "run") && telegramOrderActionNames.has(first) && /^\d+$/.test(second)) {
+  const validTarget = first === "recover-shopify-order"
+    ? /^c[a-z0-9]{10,}$/i.test(second)
+    : /^\d+$/.test(second);
+  if ((name === "confirm" || name === "run") && telegramOrderActionNames.has(first) && validTarget) {
     return { name, action: first, orderId: second };
   }
   if (name === "cancel") return { name: "cancel" };
@@ -530,6 +541,7 @@ export function telegramHelpMessage(allowed: boolean) {
       "/queue — очереди Checkout/Diloshop",
       "/payments [1-31] — сверить оплаты по банковской выписке",
       "/online_payments [1-50] — проверить LiqPay/Monobank",
+      "/recover_checkout ID|source — аварийно повторить Shopify-заказ (только admin)",
       "/unmatched [1-31] — банковские оплаты без матча",
       "/abandoned [1-50] — показать незавершённые checkout с контактами",
       "/np, /b2b, /cashin, /refund UA1183 — детали заказа",

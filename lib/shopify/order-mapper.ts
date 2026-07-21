@@ -4,6 +4,7 @@ import {
   type NovaPoshtaShippingPayload,
 } from "@/lib/shipping/shopify-np-note-attributes";
 import { isPartnerProgramDiscountCode } from "@/lib/checkout/partner-pricing";
+import { normalizePhoneForShopify } from "@/lib/checkout/phone";
 import { normalizeUaPersonName } from "@/lib/checkout/ua-person-name";
 
 const ORDER_CREATE_MUTATION = `
@@ -114,7 +115,7 @@ export function mapCheckoutToOrderCreateInput(
     hasExplicitDiscountCode ? 0 : sessionCartDiscount
   );
   const buyerEmail = session.buyerEmail?.trim() || undefined;
-  const buyerPhone = session.buyerPhone?.trim() || undefined;
+  const buyerPhone = normalizePhoneForShopify(session.buyerPhone);
   const buyerFirstName =
     normalizeUaPersonName(session.buyerFirstName?.trim() || undefined) || undefined;
   const buyerLastName =

@@ -10,6 +10,7 @@ import type { PaymentProvider, PaymentStatus, Prisma } from "@prisma/client";
 import { repriceCheckoutSession } from "@/lib/checkout/session-service";
 import { assertPaymentIntegrity } from "@/lib/payments/integrity";
 import { decryptPaymentConfig } from "@/lib/payments/config-secrets";
+import { assertCheckoutReadyForFulfillment } from "@/lib/checkout/fulfillment-validation";
 import {
   notifyDuplicateOnlinePayment,
   notifyPaymentWithoutOrder,
@@ -116,6 +117,7 @@ export async function initPaymentForSession(publicToken: string, provider: Payme
   if (!session) throw new Error("Session not found");
   if (session.totalAmount <= 0) throw new Error("Invalid amount");
   if (session.status !== "READY") throw new Error("Checkout is not ready for payment");
+  assertCheckoutReadyForFulfillment(session);
 
   const config = session.merchant.paymentConfigs.find(
     (c) => c.provider === provider && c.isEnabled

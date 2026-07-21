@@ -37,7 +37,8 @@ window.KayerCheckout.redirectToCheckout();
   window.KAYER_CHECKOUT_CONFIG = {
     checkoutApiUrl: 'https://checkout.kayer.ua',
     shopDomain: 'kayer.myshopify.com',
-    pricingTokenUrl: {% if customer %}'/apps/kayer-checkout-auth'{% else %}null{% endif %},
+    pricingTokenUrl: '/apps/kayer-checkout-auth',
+    customerId: {% if customer %}'{{ customer.id }}'{% else %}''{% endif %},
     customerEmail: {% if customer %}'{{ customer.email | escape }}'{% else %}''{% endif %},
     customerFirstName: {% if customer %}'{{ customer.first_name | escape }}'{% else %}''{% endif %},
     customerLastName: {% if customer %}'{{ customer.last_name | escape }}'{% else %}''{% endif %},

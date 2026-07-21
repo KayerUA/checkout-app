@@ -25,6 +25,10 @@ describe("Telegram payments bot", () => {
       name: "online_payments",
       take: 50,
     });
+    expect(parseTelegramCommand("/recover_checkout cmrtaic1e000110jlx7qz1g4f")).toEqual({
+      name: "recover_checkout",
+      arg: "cmrtaic1e000110jlx7qz1g4f",
+    });
     expect(parseTelegramCommand("/status")).toEqual({ name: "status" });
     expect(parseTelegramCommand("/start")).toEqual({ name: "menu" });
     expect(parseTelegramCommand("/menu")).toEqual({ name: "menu" });
@@ -121,7 +125,13 @@ describe("Telegram payments bot", () => {
     expect(parseTelegramCallback("order|oops")).toEqual({ name: "unknown" });
     expect(parseTelegramCallback("unmatched|90")).toEqual({ name: "unmatched", days: 31 });
     expect(parseTelegramCallback("online_payments|200")).toEqual({ name: "online_payments", take: 50 });
-    expect(telegramMainMenu(true).replyMarkup.inline_keyboard).toHaveLength(5);
+    expect(parseTelegramCallback("confirm|recover-shopify-order|cmrtaic1e000110jlx7qz1g4f")).toEqual({
+      name: "confirm",
+      action: "recover-shopify-order",
+      orderId: "cmrtaic1e000110jlx7qz1g4f",
+    });
+    const menu = telegramMainMenu(true);
+    expect(menu.replyMarkup?.inline_keyboard).toHaveLength(5);
   });
 
   it("formats a payment-without-order alert without customer secrets", () => {

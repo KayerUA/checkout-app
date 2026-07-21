@@ -193,15 +193,21 @@ export async function notifyExternalOpsAlert(input: {
   shopifyOrderId?: string | null;
   message: string;
   metadata?: Record<string, unknown>;
+  /** Omit the time window for a transaction-specific alert that must be sent once. */
+  dedupeWindowHours?: number | null;
 }) {
   const step = `${input.source}:${input.eventType}:${input.shopifyOrderId || "global"}`;
-  const dedupeSince = new Date(Date.now() - 12 * 60 * 60 * 1000);
+  const dedupeWindowHours = input.dedupeWindowHours === undefined
+    ? 12
+    : input.dedupeWindowHours;
   const alreadySent = await prisma.automationLog.findFirst({
     where: {
       eventType: "external_ops_alert",
       step,
       status: "ALERT_SENT",
-      createdAt: { gte: dedupeSince },
+      ...(dedupeWindowHours === null
+        ? {}
+        : { createdAt: { gte: new Date(Date.now() - dedupeWindowHours * 60 * 60 * 1000) } }),
     },
     select: { id: true },
   });

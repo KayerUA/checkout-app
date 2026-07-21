@@ -26,6 +26,8 @@ import {
   buildMappingGapsSummary,
   buildOrderCard,
   buildQueueSummary,
+  prepareShopifyOrderRecovery,
+  recoverShopifyOrderFromCheckout,
   buildSkuSummary,
   buildTodaySummary,
   buildUnmatchedSummary,
@@ -183,8 +185,11 @@ async function callbackResponse(update: TelegramUpdate) {
       await sendMessage(env.TG_BOT_TOKEN!, chatId, "Эта операция доступна только администратору.");
       return;
     }
+    const targetLabel = parsed.action === "recover-shopify-order"
+      ? `checkout ${parsed.orderId}`
+      : `Shopify order ${parsed.orderId}`;
     await sendMessage(env.TG_BOT_TOKEN!, chatId, {
-      text: `Подтвердите действие ${parsed.action} для Shopify order ${parsed.orderId}.`,
+      text: `Подтвердите действие ${parsed.action} для ${targetLabel}.`,
       replyMarkup: telegramConfirmationKeyboard(parsed.action, parsed.orderId),
     });
     return;
@@ -196,24 +201,38 @@ async function callbackResponse(update: TelegramUpdate) {
     }
     await editMessage(env.TG_BOT_TOKEN!, chatId, messageId, "Операция выполняется…");
     try {
-      const result = await withTelegramLock(
-        `action:${parsed.action}:${parsed.orderId}`,
-        () => runDiloshopOrderAction(
-          parsed.action as "retry-dilovod" | "retry-np" | "refresh-np",
-          parsed.orderId
-        )
-      );
+      let resultText: string;
+      if (parsed.action === "recover-shopify-order") {
+        const result = await withTelegramLock(
+          `action:${parsed.action}:${parsed.orderId}`,
+          () => recoverShopifyOrderFromCheckout(parsed.orderId)
+        );
+        resultText = `Shopify-заказ восстановлен: ${result.shopifyOrderName ?? result.shopifyOrderGid}.`;
+      } else {
+        const result = await withTelegramLock(
+          `action:${parsed.action}:${parsed.orderId}`,
+          () => runDiloshopOrderAction(
+            parsed.action as "retry-dilovod" | "retry-np" | "refresh-np",
+            parsed.orderId
+          )
+        );
+        resultText = formatDiloshopActionResult(parsed.action, result);
+      }
       await auditTelegram({
         userId,
         chatId,
         command: `action:${parsed.action}`,
         status: "OK",
         shopifyOrderId: parsed.orderId,
-        message: formatDiloshopActionResult(parsed.action, result),
+        message: resultText,
       }).catch(() => {});
-      const card = await buildOrderCard(parsed.orderId, { admin });
-      card.text = `${formatDiloshopActionResult(parsed.action, result)}\n\n${card.text}`;
-      await editMessage(env.TG_BOT_TOKEN!, chatId, messageId, card);
+      if (parsed.action === "recover-shopify-order") {
+        await editMessage(env.TG_BOT_TOKEN!, chatId, messageId, resultText);
+      } else {
+        const card = await buildOrderCard(parsed.orderId, { admin });
+        card.text = `${resultText}\n\n${card.text}`;
+        await editMessage(env.TG_BOT_TOKEN!, chatId, messageId, card);
+      }
     } catch (error) {
       const detail = error instanceof Error && error.message === "ALREADY_RUNNING"
         ? "Эта операция уже выполняется."
@@ -296,6 +315,27 @@ async function commandResponse(update: TelegramUpdate) {
   }
   if (!allowed) {
     await sendMessage(env.TG_BOT_TOKEN!, chatId, `Доступ запрещён. Chat ID: ${chatId}.`);
+    return;
+  }
+  if (command.name === "recover_checkout") {
+    if (!admin) {
+      await sendMessage(env.TG_BOT_TOKEN!, chatId, "Эта операция доступна только администратору.");
+      return;
+    }
+    const recovery = await prepareShopifyOrderRecovery(command.arg ?? "");
+    if (typeof recovery.error === "string") {
+      await sendMessage(env.TG_BOT_TOKEN!, chatId, recovery.error);
+      return;
+    }
+    await sendMessage(env.TG_BOT_TOKEN!, chatId, {
+      text: [
+        "Аварийное восстановление Shopify-заказа:",
+        `Checkout: ${recovery.checkoutSessionId}`,
+        `Источник: ${recovery.sourceIdentifier ?? "—"}`,
+        `Подтверждённая оплата: ${recovery.amount}`,
+      ].join("\n"),
+      replyMarkup: telegramConfirmationKeyboard("recover-shopify-order", recovery.checkoutSessionId),
+    });
     return;
   }
   if (!(await claimTelegramCooldown(userId, command.name))) {

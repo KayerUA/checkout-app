@@ -6,9 +6,11 @@ import {
   ORDER_CREATE_MUTATION,
 } from "@/lib/shopify/order-mapper";
 import { repriceCheckoutSession } from "@/lib/checkout/session-service";
+import { checkoutFulfillmentIssues, assertCheckoutReadyForFulfillment } from "@/lib/checkout/fulfillment-validation";
 import { assertPaymentIntegrity } from "@/lib/payments/integrity";
 import { enqueueJob, QUEUE_NAMES } from "@/lib/queue";
 import { logWithCorrelation } from "@/lib/logger";
+import { notifyExternalOpsAlert } from "@/lib/telegram/ops-alerts";
 import { normalizeB2BAttributes, validateFopFields } from "@/lib/b2b/attributes";
 import {
   mergeCheckoutNoteAttributes,
@@ -164,9 +166,23 @@ async function dispatchNovaPoshtaFallback(
   input: {
     checkoutSessionId: string;
     shopifyOrderGid: string;
+    session: SessionForOrder;
   }
 ) {
   const orderId = input.shopifyOrderGid.replace("gid://shopify/Order/", "");
+  const issues = checkoutFulfillmentIssues(input.session);
+  if (issues.length) {
+    await notifyExternalOpsAlert({
+      source: "checkout",
+      eventType: "nova_poshta_preflight",
+      severity: "warning",
+      shopifyOrderId: orderId,
+      message: `ТТН не створюю: ${issues.join(", ")}. Оновіть дані checkout і повторіть НП.`,
+      metadata: { checkoutSessionId: input.checkoutSessionId, issues },
+      dedupeWindowHours: null,
+    }).catch(() => {});
+    return;
+  }
 
   try {
     const {
@@ -224,6 +240,7 @@ export async function createShopifyOrderIdempotent(checkoutSessionId: string) {
       await dispatchNovaPoshtaFallback(shopifySession, {
         checkoutSessionId: session.id,
         shopifyOrderGid: placeholder.shopifyOrderGid,
+        session,
       });
       return placeholder;
     }
@@ -249,6 +266,7 @@ export async function createShopifyOrderIdempotent(checkoutSessionId: string) {
       await dispatchNovaPoshtaFallback(shopifySession, {
         checkoutSessionId: session.id,
         shopifyOrderGid: existingShopifyOrder.id,
+        session,
       });
       return orderLink;
     }
@@ -325,6 +343,7 @@ export async function createShopifyOrderIdempotent(checkoutSessionId: string) {
     await dispatchNovaPoshtaFallback(shopifySession, {
       checkoutSessionId: session.id,
       shopifyOrderGid: created.id,
+      session,
     });
 
     await prisma.merchant.update({
@@ -380,6 +399,7 @@ export async function createBankInvoiceShopifyOrderIdempotent(publicToken: strin
     throw new Error("Bank invoice order requires B2B/ФОП attributes");
   }
   validateFopFields(attrs);
+  assertCheckoutReadyForFulfillment(session);
 
   const shopifySession = await getMerchantShopifySession(session.merchantId);
   if (!shopifySession) throw new Error("Shopify session not found");

@@ -1,9 +1,28 @@
 import { z } from "zod";
+import { normalizeUaPhone } from "@/lib/checkout/phone";
 
 const shortText = z.string().trim().max(160);
 const nullableShortText = shortText.nullable();
 const moneyCents = z.number().int().nonnegative().max(100_000_000);
 export const requiredCheckoutEmailSchema = z.string().trim().email().max(254);
+
+const uaPhone = z.string().trim().min(1).max(32).transform((value, context) => {
+  const normalized = normalizeUaPhone(value);
+  if (normalized) return normalized;
+  context.addIssue({ code: "custom", message: "Вкажіть український номер у форматі +380XXXXXXXXX" });
+  return z.NEVER;
+});
+const nullableUaPhone = uaPhone.nullable();
+const optionalDocumentPhone = z.string().trim().max(32).transform((value, context) => {
+  if (!value) return "";
+  const normalized = normalizeUaPhone(value);
+  if (normalized) return normalized;
+  context.addIssue({ code: "custom", message: "Вкажіть український номер у форматі +380XXXXXXXXX" });
+  return z.NEVER;
+}).nullable().optional();
+const optionalStorefrontPhone = z.string().trim().max(32).transform((value) =>
+  normalizeUaPhone(value) ?? undefined
+).optional();
 
 const email = z
   .string()
@@ -44,7 +63,7 @@ export const editableCheckoutAttributesSchema = z
     fop_tax_id: z.string().trim().max(20).nullable().optional(),
     fop_legal_address: z.string().trim().max(500).nullable().optional(),
     docs_email: email.optional(),
-    docs_phone: z.string().trim().max(32).nullable().optional(),
+    docs_phone: optionalDocumentPhone,
     accounting_comment: z.string().trim().max(1000).nullable().optional(),
   })
   .strict();
@@ -52,7 +71,7 @@ export const editableCheckoutAttributesSchema = z
 export const checkoutSessionPatchSchema = z
   .object({
     buyerEmail: email.optional(),
-    buyerPhone: z.string().trim().max(32).nullable().optional(),
+    buyerPhone: nullableUaPhone.optional(),
     buyerFirstName: nullableShortText.optional(),
     buyerLastName: nullableShortText.optional(),
     shippingMethodCode: z.enum(["nova_poshta_branch", "nova_poshta_locker"]).optional(),
@@ -88,7 +107,7 @@ const checkoutCreateAttributesSchema = editableCheckoutAttributesSchema.extend({
   customer_email: email.optional(),
   customer_first_name: nullableShortText.optional(),
   customer_last_name: nullableShortText.optional(),
-  customer_phone: z.string().trim().max(32).nullable().optional(),
+  customer_phone: optionalStorefrontPhone,
   cartDiscountSnapshot: cartDiscountSnapshotSchema.optional(),
   appliedDiscountCode: z.string().trim().min(1).max(64).optional(),
 });
@@ -117,7 +136,7 @@ export const publicCheckoutSessionCreateSchema = z
     ),
     storefrontCustomerFirstName: shortText.optional(),
     storefrontCustomerLastName: shortText.optional(),
-    storefrontCustomerPhone: z.string().trim().max(32).optional(),
+    storefrontCustomerPhone: optionalStorefrontPhone,
     storefrontPricingToken: z.preprocess(
       (value) => (value == null || value === "" ? undefined : value),
       z.string().min(10).max(4096).optional()

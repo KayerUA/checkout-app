@@ -4,6 +4,7 @@ import { log } from "@/lib/logger";
 import { UnauthorizedError } from "@/lib/session";
 import { PaymentIntegrityError } from "@/lib/payments/integrity";
 import { CheckoutDiscountError } from "@/lib/checkout/discount-code";
+import { CheckoutFulfillmentValidationError } from "@/lib/checkout/fulfillment-validation";
 
 export function apiErrorResponse(
   error: unknown,
@@ -27,6 +28,10 @@ export function apiErrorResponse(
 
   if (error instanceof CheckoutDiscountError) {
     return NextResponse.json({ error: error.message }, { status: 400 });
+  }
+
+  if (error instanceof CheckoutFulfillmentValidationError) {
+    return NextResponse.json({ error: error.message, issues: error.issues }, { status: 400 });
   }
 
   if (error instanceof Error && error.message === "Session not found") {

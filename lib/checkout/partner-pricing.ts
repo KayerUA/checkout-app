@@ -153,8 +153,9 @@ export function partnerUnitPriceFromCatalog(
   catalogCents: number,
   rules: PartnerDiscountRule[],
   collectionHandles: string[],
-  _market?: string | null
+  market?: string | null
 ): number {
+  void market;
   const catalog = Math.max(0, Math.round(catalogCents));
   const pct = bestPartnerDiscountPct(rules, collectionHandles);
   if (pct <= 0) return catalog;

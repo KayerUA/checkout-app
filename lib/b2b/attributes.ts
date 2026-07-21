@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { FopOrderAttributes, ShopifyOrderPayload } from "@/lib/b2b/types";
+import { normalizeUaPhone } from "@/lib/checkout/phone";
 
 const b2bAttributeSchema = z.object({
   buyer_type: z.enum(["individual", "fop_company"]).default("individual"),
@@ -43,7 +44,7 @@ export function getB2BAttributesFromOrder(order: ShopifyOrderPayload): FopOrderA
 export function validateFopFields(attrs: FopOrderAttributes) {
   if (attrs.buyer_type !== "fop_company") return;
   const taxId = (attrs.fop_tax_id ?? "").replace(/\D/g, "");
-  const docsPhone = (attrs.docs_phone ?? "").replace(/\D/g, "");
+  const docsPhone = normalizeUaPhone(attrs.docs_phone);
   const missing = [
     ["fop_name", attrs.fop_name],
     ["fop_tax_id", taxId],
@@ -64,8 +65,8 @@ export function validateFopFields(attrs: FopOrderAttributes) {
     throw new Error("Company billing name is too short");
   }
 
-  if (docsPhone.length < 10) {
-    throw new Error("Documents phone is invalid");
+  if (!docsPhone) {
+    throw new Error("Documents phone must be a Ukrainian number in +380XXXXXXXXX format");
   }
 
   if ((attrs.fop_legal_address ?? "").trim().length < 8) {

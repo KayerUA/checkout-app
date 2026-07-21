@@ -19,6 +19,9 @@
     },
     window.KAYER_CHECKOUT_CONFIG || {}
   );
+  // The App Proxy safely returns { loggedIn: false } for guests. Do not allow a
+  // stale theme config with `pricingTokenUrl: null` to drop partner identity.
+  if (!config.pricingTokenUrl) config.pricingTokenUrl = "/apps/kayer-checkout-auth";
   var PENDING_CLEAR_STORAGE_KEY = "kayer_pending_checkout_clear";
 
   function normalize(value) {

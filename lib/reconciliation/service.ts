@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import { getBankStatementProvider } from "@/lib/bank";
 import { buildBankReconciliationCandidates, ensureB2BOrderRecord } from "@/lib/reconciliation/candidates";
 import { matchBankTransaction } from "@/lib/reconciliation/matcher";
+import { liqPayAcquiringSourceIdentifier } from "@/lib/reconciliation/online-acquiring";
 import { B2B_TAGS } from "@/lib/b2b/constants";
 import { getOrderAttributes, normalizeB2BAttributes } from "@/lib/b2b/attributes";
 import { writeAutomationLog } from "@/lib/b2b/log";
@@ -122,6 +123,69 @@ async function saveBankTransaction(tx: BankTransaction) {
     },
     update: {},
   });
+}
+
+async function reconcileLiqPayAcquiringTransaction(tx: BankTransaction) {
+  const sourceIdentifier = liqPayAcquiringSourceIdentifier(tx);
+  if (!sourceIdentifier) return null;
+
+  const session = await prisma.checkoutSession.findUnique({
+    where: { sourceIdentifier },
+    select: {
+      id: true,
+      status: true,
+      orderLink: { select: { shopifyOrderGid: true, shopifyOrderName: true } },
+    },
+  });
+
+  if (session?.orderLink?.shopifyOrderGid) {
+    await prisma.bankPayment.update({
+      where: { transactionId: tx.transaction_id },
+      data: {
+        // Production DB constrains status to the legacy set. The matching
+        // method carries the more precise "already settled online" meaning.
+        status: "MATCHED",
+        matchingMethod: "liqpay_soid_order_exists",
+        matchedShopifyOrderId: session.orderLink.shopifyOrderGid.replace("gid://shopify/Order/", ""),
+      },
+    });
+    return {
+      transactionId: tx.transaction_id,
+      status: "SKIPPED" as const,
+      reason: "liqpay_online_payment_already_linked",
+      shopifyOrderName: session.orderLink.shopifyOrderName,
+    };
+  }
+
+  await prisma.bankPayment.update({
+    where: { transactionId: tx.transaction_id },
+    data: {
+      status: "NEEDS_REVIEW",
+      matchingMethod: session
+        ? "liqpay_soid_checkout_without_order"
+        : "liqpay_soid_checkout_missing",
+    },
+  });
+  await notifyExternalOpsAlert({
+    source: "bank",
+    eventType: `liqpay_checkout_review_${tx.transaction_id.slice(-8)}`,
+    severity: "warning",
+    message: [
+      `LiqPay acquiring потребує перевірки: ${tx.amount.toFixed(2)} ${tx.currency}`,
+      `SOID: ${sourceIdentifier}`,
+      session
+        ? `Checkout: ${session.id} · Shopify-заказ відсутній`
+        : "Checkout за SOID не знайдено",
+      `Transaction: …${tx.transaction_id.slice(-12)}`,
+    ].join(" · "),
+    metadata: { bankTransactionId: tx.transaction_id, sourceIdentifier },
+    dedupeWindowHours: null,
+  }).catch(() => {});
+  return {
+    transactionId: tx.transaction_id,
+    status: "NEEDS_REVIEW" as const,
+    reason: session ? "liqpay_checkout_without_order" : "liqpay_checkout_missing",
+  };
 }
 
 async function syncOrderLinkPaymentStatus(shopifyOrderId: string, orderStatus: string) {
@@ -509,6 +573,14 @@ export async function reconcileBankTransactions(
   const results = [];
   for (const tx of transactions) {
     const saved = await saveBankTransaction(tx);
+    if (saved.matchingMethod === "liqpay_soid_order_exists") {
+      results.push({
+        transactionId: tx.transaction_id,
+        status: "SKIPPED",
+        reason: "ignored_online_payment",
+      });
+      continue;
+    }
     if (saved.status === "MATCHED") {
       const order =
         openOrders.find((candidate) => candidate.shopifyOrderId === saved.matchedShopifyOrderId) ??
@@ -559,6 +631,12 @@ export async function reconcileBankTransactions(
       continue;
     }
 
+    const onlineAcquiring = await reconcileLiqPayAcquiringTransaction(tx);
+    if (onlineAcquiring) {
+      results.push(onlineAcquiring);
+      continue;
+    }
+
     try {
       const match = matchBankTransaction(tx, candidates);
       if (!match.candidate) {
@@ -575,6 +653,7 @@ export async function reconcileBankTransactions(
             `Transaction: …${tx.transaction_id.slice(-12)}`,
           ].filter(Boolean).join(" · "),
           metadata: { bankTransactionId: tx.transaction_id },
+          dedupeWindowHours: null,
         }).catch(() => {});
         continue;
       }
@@ -651,6 +730,7 @@ export async function reconcileBankTransactions(
           shopifyOrderId: match.candidate.shopifyOrderId,
           message: `Платёж требует проверки: ${tx.amount.toFixed(2)} ${tx.currency} · ${match.reason} · transaction …${tx.transaction_id.slice(-12)}`,
           metadata: { bankTransactionId: tx.transaction_id },
+          dedupeWindowHours: null,
         }).catch(() => {});
       }
     } catch (error) {

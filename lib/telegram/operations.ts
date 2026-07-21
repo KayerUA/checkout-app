@@ -12,6 +12,8 @@ import {
   type DiloshopOrderState,
 } from "@/lib/telegram/diloshop-client";
 import { telegramMenuKeyboard } from "@/lib/telegram/bot";
+import { createShopifyOrderIdempotent } from "@/lib/shopify/order-writer";
+import { checkoutFulfillmentIssues } from "@/lib/checkout/fulfillment-validation";
 
 export type TelegramInlineKeyboard = {
   inline_keyboard: Array<Array<{
@@ -25,6 +27,60 @@ export type TelegramOpsMessage = {
   text: string;
   replyMarkup?: TelegramInlineKeyboard;
 };
+
+async function isResolvedNovaPoshtaFallbackError(error: {
+  eventType: string | null;
+  step: string | null;
+  shopifyOrderId: string | null;
+}) {
+  if (
+    error.eventType !== "diloshop/nova-poshta" ||
+    error.step !== "fallback_dispatch" ||
+    !error.shopifyOrderId
+  ) {
+    return false;
+  }
+  const order = await findShopifyOpsOrder(error.shopifyOrderId).catch(() => null);
+  return Boolean(order?.fulfillments?.some((fulfillment) =>
+    fulfillment.trackingInfo?.some((tracking) => Boolean(tracking.number))
+  ));
+}
+
+export async function prepareShopifyOrderRecovery(reference: string) {
+  const value = reference.trim();
+  if (!value) return { error: "Укажите Checkout ID или source identifier." } as const;
+  const session = await prisma.checkoutSession.findFirst({
+    where: {
+      OR: [{ id: value }, { sourceIdentifier: value }],
+    },
+    include: { paymentAttempts: { orderBy: { createdAt: "desc" } }, orderLink: true },
+  });
+  if (!session) return { error: "Checkout не найден." } as const;
+  if (session.orderLink?.shopifyOrderGid) {
+    return { error: `Shopify-заказ уже существует: ${session.orderLink.shopifyOrderName ?? session.orderLink.shopifyOrderGid}.` } as const;
+  }
+  const paid = session.paymentAttempts.find((attempt) => attempt.status === "PAID");
+  if (!paid) return { error: "У checkout нет подтверждённой оплаты — восстановление запрещено." } as const;
+  const issues = checkoutFulfillmentIssues(session);
+  if (issues.length) {
+    return { error: `Сначала исправьте данные получателя: ${issues.join(", ")}.` } as const;
+  }
+  return {
+    checkoutSessionId: session.id,
+    sourceIdentifier: session.sourceIdentifier,
+    amount: cents(paid.amount, session.currency),
+  } as const;
+}
+
+export async function recoverShopifyOrderFromCheckout(checkoutSessionId: string) {
+  const order = await createShopifyOrderIdempotent(checkoutSessionId);
+  return {
+    checkoutSessionId,
+    shopifyOrderGid: order.shopifyOrderGid,
+    shopifyOrderName: order.shopifyOrderName,
+    status: order.orderStatus,
+  };
+}
 
 function money(value: number | string | null | undefined, currency = "UAH") {
   const amount = typeof value === "string" ? Number(value) : Number(value ?? 0);
@@ -275,6 +331,10 @@ export async function buildIssuesSummary(hours = 24, filter?: string): Promise<T
     }),
     getDiloshopIssues(hours, 20).catch(() => null),
   ]);
+  const resolvedAutomationErrors = await Promise.all(
+    automationErrors.map((error) => isResolvedNovaPoshtaFallbackError(error))
+  );
+  const activeAutomationErrors = automationErrors.filter((_, index) => !resolvedAutomationErrors[index]);
   const show = (name: string) => !filter || filter === "all" || filter === name;
   const lines = [`Проблемы за ${hours} ч:`];
   if (show("payments")) {
@@ -290,12 +350,12 @@ export async function buildIssuesSummary(hours = 24, filter?: string): Promise<T
     );
   }
   if (show("np")) lines.push(`НП errors: ${diloshop?.np_issues?.length ?? "недоступен"}`);
-  lines.push(`Checkout automation errors: ${automationErrors.length}`);
+  lines.push(`Checkout automation errors: ${activeAutomationErrors.length}`);
   const orders = Array.from(
     new Set(partial.map((row) => row.shopifyOrderName).filter(Boolean))
   ).slice(0, 8) as string[];
-  if (automationErrors.length) {
-    lines.push("", ...automationErrors.slice(0, 5).map((row) => `• ${row.step ?? row.eventType}: ${(row.errorMessage ?? row.message ?? "ошибка").slice(0, 180)}`));
+  if (activeAutomationErrors.length) {
+    lines.push("", ...activeAutomationErrors.slice(0, 5).map((row) => `• ${row.step ?? row.eventType}: ${(row.errorMessage ?? row.message ?? "ошибка").slice(0, 180)}`));
   }
   const inline_keyboard = orders.map((order) => [
     { text: `Открыть ${order}`, callback_data: `lookup|${order.replace(/^#/, "")}` },
