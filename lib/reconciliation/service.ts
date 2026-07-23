@@ -90,6 +90,7 @@ function paymentPayloadWithMatching(input: {
   rawPayload: unknown;
   matchingMethod: string;
   matchingConfidence: number;
+  matchingDetails?: Record<string, unknown>;
 }) {
   const raw = input.rawPayload;
   const base =
@@ -101,6 +102,7 @@ function paymentPayloadWithMatching(input: {
     _reconciliation: {
       matching_method: input.matchingMethod,
       matching_confidence: input.matchingConfidence,
+      ...(input.matchingDetails ? { matching_details: input.matchingDetails } : {}),
     },
   } as Prisma.InputJsonValue;
 }
@@ -681,6 +683,13 @@ export async function reconcileBankTransactions(
     try {
       const match = matchBankTransaction(tx, candidates);
       if (match.status === "NEEDS_REVIEW" && !match.candidate) {
+        const multiOrder = "candidates" in match && Array.isArray(match.candidates)
+          ? {
+              candidates: match.candidates,
+              expectedAmount: "expectedAmount" in match ? match.expectedAmount : null,
+              amountDifference: "amountDifference" in match ? match.amountDifference : null,
+            }
+          : null;
         await clearStaleAmbiguousOrderReview({
           transactionId: tx.transaction_id,
           staleOrderId: saved.matchedShopifyOrderId,
@@ -699,16 +708,59 @@ export async function reconcileBankTransactions(
               rawPayload: tx.raw_payload,
               matchingMethod: match.reason,
               matchingConfidence: match.confidence,
+              ...(multiOrder
+                ? {
+                    matchingDetails: {
+                      candidates: multiOrder.candidates.map((candidate) => ({
+                        shopifyOrderId: candidate.shopifyOrderId,
+                        shopifyOrderName: candidate.shopifyOrderName ?? null,
+                        invoiceNumber: candidate.invoiceNumber ?? null,
+                        amount: candidate.amount,
+                        currency: candidate.currency,
+                        fopTaxId: candidate.fopTaxId ?? null,
+                      })),
+                      expectedAmount: multiOrder.expectedAmount,
+                      amountDifference: multiOrder.amountDifference,
+                    },
+                  }
+                : {}),
             }),
           },
         });
         results.push({ transactionId: tx.transaction_id, status: "NEEDS_REVIEW", reason: match.reason });
+        const multiOrderMessage = multiOrder
+          ? [
+              `Платёж за несколько B2B-счетов: ${tx.amount.toFixed(2)} ${tx.currency}`,
+              `Основание: в назначении указаны номера заказов; у всех совпадает Tax ID плательщика`,
+              ...multiOrder.candidates.map(
+                (candidate) =>
+                  `${candidate.shopifyOrderName ?? candidate.shopifyOrderId}: ${candidate.amount.toFixed(2)} ${candidate.currency}${candidate.invoiceNumber ? ` · ${candidate.invoiceNumber}` : ""}`
+              ),
+              `Сумма счетов: ${Number(multiOrder.expectedAmount ?? 0).toFixed(2)} ${tx.currency}`,
+              multiOrder.amountDifference
+                ? `Расхождение: ${Number(multiOrder.amountDifference).toFixed(2)} ${tx.currency}`
+                : "Сумма совпадает: можно распределить после ручного подтверждения.",
+              `Transaction: …${tx.transaction_id.slice(-12)}`,
+            ].join("\n")
+          : `Платёж требует проверки: ${tx.amount.toFixed(2)} ${tx.currency} · ${match.reason} · Shopify-заказ не выбран · transaction …${tx.transaction_id.slice(-12)}`;
         await notifyExternalOpsAlert({
           source: "bank",
           eventType: `needs_review_${tx.transaction_id.slice(-8)}`,
           severity: "warning",
-          message: `Платёж требует проверки: ${tx.amount.toFixed(2)} ${tx.currency} · ${match.reason} · Shopify-заказ не выбран · transaction …${tx.transaction_id.slice(-12)}`,
+          message: multiOrderMessage,
           metadata: { bankTransactionId: tx.transaction_id },
+          ...(multiOrder
+            ? {
+                replyMarkup: {
+                  inline_keyboard: multiOrder.candidates.map((candidate) => [
+                    {
+                      text: `Открыть ${candidate.shopifyOrderName ?? candidate.shopifyOrderId}`,
+                      callback_data: `order|${candidate.shopifyOrderId}`,
+                    },
+                  ]),
+                },
+              }
+            : {}),
           dedupeWindowHours: null,
         }).catch(() => {});
         continue;

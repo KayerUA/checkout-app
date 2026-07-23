@@ -3,6 +3,7 @@ import {
   extractBareOrderNumberHints,
   extractInvoiceNumber,
   extractOrderNumberHints,
+  findMultiOrderPaymentProposal,
   matchBankTransaction,
   normalizeTaxIdentifier,
   parseShopifyOrderName,
@@ -276,6 +277,30 @@ describe("B2B bank reconciliation matcher", () => {
       reason: "ambiguous_order_number_hint",
       candidate: null,
     });
+  });
+
+  it("proposes multiple explicitly named orders only for the same payer tax id", () => {
+    const candidatesForSplit = [
+      { ...ua1155Candidates[0], shopifyOrderId: "first", shopifyOrderName: "#UA1213", amount: 19529 },
+      { ...ua1155Candidates[0], shopifyOrderId: "second", shopifyOrderName: "#UA1215", amount: 11826 },
+    ];
+    const tx = {
+      ...baseTx,
+      amount: 31355,
+      payer_tax_id: "1234567890",
+      payment_description: "Оплата за замовлення UA1213 та UA1215",
+    };
+    expect(findMultiOrderPaymentProposal(tx, candidatesForSplit)).toMatchObject({
+      expectedAmount: 31355,
+      amountDifference: 0,
+      candidates: [{ shopifyOrderName: "#UA1213" }, { shopifyOrderName: "#UA1215" }],
+    });
+    expect(
+      findMultiOrderPaymentProposal(
+        tx,
+        [{ ...candidatesForSplit[0], fopTaxId: "9999999999" }, candidatesForSplit[1]]
+      )
+    ).toBeNull();
   });
 
   it("normalizes punctuation in tax identifiers", () => {

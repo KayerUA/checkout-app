@@ -193,6 +193,7 @@ export async function notifyExternalOpsAlert(input: {
   shopifyOrderId?: string | null;
   message: string;
   metadata?: Record<string, unknown>;
+  replyMarkup?: { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> };
   /** Omit the time window for a transaction-specific alert that must be sent once. */
   dedupeWindowHours?: number | null;
 }) {
@@ -222,14 +223,14 @@ export async function notifyExternalOpsAlert(input: {
     input.shopifyOrderId ? `Shopify order ID: ${input.shopifyOrderId}` : null,
     input.message.replace(/\s+/g, " ").slice(0, 1200),
   ].filter(Boolean).join("\n");
-  const replyMarkup = input.shopifyOrderId
+  const replyMarkup = input.replyMarkup ?? (input.shopifyOrderId
     ? {
         inline_keyboard: [
           [{ text: "Открыть заказ", callback_data: `order|${input.shopifyOrderId}` }],
           [{ text: "📄 Скачать счёт", callback_data: `send-invoice|${input.shopifyOrderId}` }],
         ],
       }
-    : undefined;
+    : undefined);
   const results = await Promise.allSettled(
     chatIds.map((chatId) =>
       telegramApi(env.TG_BOT_TOKEN!, "sendMessage", {

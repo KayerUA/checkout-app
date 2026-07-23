@@ -16,6 +16,13 @@ export type ParsedOrderRef = {
   numeric: number;
 };
 
+export type MultiOrderPaymentProposal = {
+  candidates: MatchCandidate[];
+  expectedAmount: number;
+  amountDifference: number;
+  payerTaxId: string;
+};
+
 function normalizeName(value?: string | null) {
   return (value ?? "")
     .toLowerCase()
@@ -143,6 +150,48 @@ function findCandidatesByParsedHints(hints: ParsedOrderRef[], candidates: MatchC
   });
 }
 
+/**
+ * A bank purpose that explicitly names two or more different UA order
+ * references may describe one payment for several invoices. Do not turn a
+ * numeric collision (for example #1215 and #UA1215) into such a proposal:
+ * every written reference must resolve to exactly one full UA order number.
+ */
+export function findMultiOrderPaymentProposal(
+  tx: BankTransaction,
+  candidates: MatchCandidate[]
+): MultiOrderPaymentProposal | null {
+  const hints = extractOrderNumberHints(tx.payment_description);
+  const payerTaxId = normalizeTaxIdentifier(tx.payer_tax_id);
+  if (hints.length < 2 || !payerTaxId) return null;
+
+  const selected = hints.map((hint) =>
+    candidates.filter((candidate) => parseShopifyOrderName(candidate.shopifyOrderName)?.full === hint.full)
+  );
+  if (selected.some((matches) => matches.length !== 1)) return null;
+
+  const orders = selected.map(([candidate]) => candidate);
+  if (new Set(orders.map((candidate) => candidate.shopifyOrderId)).size !== orders.length) return null;
+  if (
+    orders.some(
+      (candidate) =>
+        candidate.currency !== tx.currency ||
+        !taxIdentifiersEqual(tx.payer_tax_id, candidate.fopTaxId)
+    )
+  ) {
+    return null;
+  }
+
+  const expectedAmount = Number(
+    orders.reduce((total, candidate) => total + candidate.amount, 0).toFixed(2)
+  );
+  return {
+    candidates: orders,
+    expectedAmount,
+    amountDifference: Number((Number(tx.amount.toFixed(2)) - expectedAmount).toFixed(2)),
+    payerTaxId,
+  };
+}
+
 function amountsEqual(left: number, right: number) {
   return Math.abs(Number(left.toFixed(2)) - Number(right.toFixed(2))) < 0.01;
 }
@@ -204,6 +253,22 @@ export function matchBankTransaction(tx: BankTransaction, candidates: MatchCandi
       reason: "invoice_number_exact_amount",
       invoiceNumber,
     });
+  }
+
+  const multiOrder = findMultiOrderPaymentProposal(tx, candidates);
+  if (multiOrder) {
+    return {
+      status: "NEEDS_REVIEW" as const,
+      confidence: Math.abs(multiOrder.amountDifference) < 0.01 ? 0.99 : 0.95,
+      candidate: null,
+      candidates: multiOrder.candidates,
+      expectedAmount: multiOrder.expectedAmount,
+      amountDifference: multiOrder.amountDifference,
+      reason:
+        Math.abs(multiOrder.amountDifference) < 0.01
+          ? "multiple_order_hints_same_payer_exact_amount"
+          : "multiple_order_hints_same_payer_amount_difference",
+    };
   }
 
   const hintedMatches = findCandidatesByOrderHints(tx.payment_description, candidates);
