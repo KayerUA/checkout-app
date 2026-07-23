@@ -235,7 +235,10 @@ export function matchBankTransaction(tx: BankTransaction, candidates: MatchCandi
     return {
       status: "NEEDS_REVIEW" as const,
       confidence: 0.8,
-      candidate: hintedMatches[0],
+      // There is deliberately no candidate here. Picking the first matching
+      // order makes an ambiguous bank reference look like a review for that
+      // specific order, and can block an unrelated B2B checkout.
+      candidate: null,
       reason: "ambiguous_order_number_hint",
     };
   }
@@ -261,7 +264,7 @@ export function matchBankTransaction(tx: BankTransaction, candidates: MatchCandi
     return {
       status: "NEEDS_REVIEW" as const,
       confidence: 0.8,
-      candidate: bareMatches[0],
+      candidate: null,
       reason: "ambiguous_numeric_order_number_for_tax_id",
     };
   }

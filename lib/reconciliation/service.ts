@@ -639,6 +639,34 @@ export async function reconcileBankTransactions(
 
     try {
       const match = matchBankTransaction(tx, candidates);
+      if (match.status === "NEEDS_REVIEW" && !match.candidate) {
+        await prisma.bankPayment.update({
+          where: { transactionId: tx.transaction_id },
+          data: {
+            status: "NEEDS_REVIEW",
+            // An ambiguous hint is a review for the payment itself, not for
+            // an arbitrary order that happened to be returned first.
+            matchedShopifyOrderId: null,
+            matchingMethod: match.reason,
+            matchConfidence: match.confidence,
+            rawPayload: paymentPayloadWithMatching({
+              rawPayload: tx.raw_payload,
+              matchingMethod: match.reason,
+              matchingConfidence: match.confidence,
+            }),
+          },
+        });
+        results.push({ transactionId: tx.transaction_id, status: "NEEDS_REVIEW", reason: match.reason });
+        await notifyExternalOpsAlert({
+          source: "bank",
+          eventType: `needs_review_${tx.transaction_id.slice(-8)}`,
+          severity: "warning",
+          message: `Платёж требует проверки: ${tx.amount.toFixed(2)} ${tx.currency} · ${match.reason} · Shopify-заказ не выбран · transaction …${tx.transaction_id.slice(-12)}`,
+          metadata: { bankTransactionId: tx.transaction_id },
+          dedupeWindowHours: null,
+        }).catch(() => {});
+        continue;
+      }
       if (!match.candidate) {
         results.push({ transactionId: tx.transaction_id, status: "NEW" });
         await notifyExternalOpsAlert({

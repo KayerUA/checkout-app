@@ -259,6 +259,25 @@ describe("B2B bank reconciliation matcher", () => {
     expect(match.status).toBe("NEEDS_REVIEW");
   });
 
+  it("does not attach an ambiguous order hint to the first matching order", () => {
+    const match = matchBankTransaction(
+      {
+        ...baseTx,
+        amount: 31355,
+        payment_description: "Оплата замовлення 1215",
+      },
+      [
+        { ...ua1155Candidates[0], shopifyOrderId: "first", shopifyOrderName: "#UA1215", amount: 11826 },
+        { ...ua1155Candidates[0], shopifyOrderId: "second", shopifyOrderName: "#1215", amount: 25000 },
+      ]
+    );
+    expect(match).toMatchObject({
+      status: "NEEDS_REVIEW",
+      reason: "ambiguous_order_number_hint",
+      candidate: null,
+    });
+  });
+
   it("normalizes punctuation in tax identifiers", () => {
     expect(normalizeTaxIdentifier(" UA-12 34/56 ")).toBe("UA123456");
   });
