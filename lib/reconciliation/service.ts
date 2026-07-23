@@ -745,7 +745,12 @@ export async function reconcileBankTransactions(
           : `Платёж требует проверки: ${tx.amount.toFixed(2)} ${tx.currency} · ${match.reason} · Shopify-заказ не выбран · transaction …${tx.transaction_id.slice(-12)}`;
         await notifyExternalOpsAlert({
           source: "bank",
-          eventType: `needs_review_${tx.transaction_id.slice(-8)}`,
+          // Keep this separate from the generic review alert so a transaction
+          // that was already reported can still publish its richer split-order
+          // proposal after the matcher learns all referenced invoices.
+          eventType: multiOrder
+            ? `multi_order_review_${tx.transaction_id.slice(-8)}`
+            : `needs_review_${tx.transaction_id.slice(-8)}`,
           severity: "warning",
           message: multiOrderMessage,
           metadata: { bankTransactionId: tx.transaction_id },
