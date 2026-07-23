@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getEnv } from "@/lib/env";
 import { reconcilePendingPayments } from "@/lib/payments/reconciliation";
-import { reconcileBankPayments } from "@/lib/reconciliation/service";
+import { applyManualBankPaymentProposal, reconcileBankPayments } from "@/lib/reconciliation/service";
 import { markAbandonedSessions } from "@/lib/checkout/session-service";
 import {
   parseTelegramCallback,
@@ -196,6 +196,8 @@ async function callbackResponse(update: TelegramUpdate) {
     }
     const targetLabel = parsed.action === "recover-shopify-order"
       ? `checkout ${parsed.orderId}`
+      : parsed.action === "apply-bank-proposal"
+        ? "вибраних B2B-рахунків"
       : `Shopify order ${parsed.orderId}`;
     await sendMessage(env.TG_BOT_TOKEN!, chatId, {
       text: `Подтвердите действие ${parsed.action} для ${targetLabel}.`,
@@ -217,6 +219,18 @@ async function callbackResponse(update: TelegramUpdate) {
           () => recoverShopifyOrderFromCheckout(parsed.orderId)
         );
         resultText = `Shopify-заказ восстановлен: ${result.shopifyOrderName ?? result.shopifyOrderGid}.`;
+      } else if (parsed.action === "apply-bank-proposal") {
+        const result = await withTelegramLock(
+          `action:${parsed.action}:${parsed.orderId}`,
+          () => applyManualBankPaymentProposal({ bankPaymentId: parsed.orderId, toleranceUah: 1 })
+        );
+        resultText = result.alreadyApplied
+          ? "Цей банківський платіж уже був розподілений."
+          : [
+              `Платіж розподілено: ${Number(result.expectedAmount ?? 0).toFixed(2)} UAH.`,
+              `Допустиме округлення: ${Number(result.difference ?? 0).toFixed(2)} UAH.`,
+              ...(result.results ?? []).map((row) => `${row.order ?? "замовлення"}: ${row.status}`),
+            ].join("\n");
       } else {
         const result = await withTelegramLock(
           `action:${parsed.action}:${parsed.orderId}`,
@@ -235,7 +249,7 @@ async function callbackResponse(update: TelegramUpdate) {
         shopifyOrderId: parsed.orderId,
         message: resultText,
       }).catch(() => {});
-      if (parsed.action === "recover-shopify-order") {
+      if (parsed.action === "recover-shopify-order" || parsed.action === "apply-bank-proposal") {
         await editMessage(env.TG_BOT_TOKEN!, chatId, messageId, resultText);
       } else {
         const card = await buildOrderCard(parsed.orderId, { admin });

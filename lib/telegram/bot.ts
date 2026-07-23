@@ -227,6 +227,7 @@ const telegramOrderActionNames = new Set([
   "retry-np",
   "refresh-np",
   "recover-shopify-order",
+  "apply-bank-proposal",
 ]);
 
 export function parseTelegramCallback(data: string): TelegramCallback {
@@ -250,6 +251,8 @@ export function parseTelegramCallback(data: string): TelegramCallback {
   if (name === "queue") return { name: "queue" };
   const validTarget = first === "recover-shopify-order"
     ? /^c[a-z0-9]{10,}$/i.test(second)
+    : first === "apply-bank-proposal"
+      ? /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(second)
     : /^\d+$/.test(second);
   if ((name === "confirm" || name === "run") && telegramOrderActionNames.has(first) && validTarget) {
     return { name, action: first, orderId: second };

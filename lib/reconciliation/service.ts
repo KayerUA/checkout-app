@@ -107,6 +107,49 @@ function paymentPayloadWithMatching(input: {
   } as Prisma.InputJsonValue;
 }
 
+type ManualBankAllocation = { shopifyOrderId: string; amount: number };
+
+function manualAllocations(rawPayload: unknown): ManualBankAllocation[] {
+  if (!rawPayload || typeof rawPayload !== "object" || Array.isArray(rawPayload)) return [];
+  const reconciliation = (rawPayload as Record<string, unknown>)._reconciliation;
+  if (!reconciliation || typeof reconciliation !== "object" || Array.isArray(reconciliation)) return [];
+  const values = reconciliation as Record<string, unknown>;
+  const matchingDetails = values.matching_details;
+  const allocations = values.manual_allocations ?? (
+    matchingDetails && typeof matchingDetails === "object" && !Array.isArray(matchingDetails)
+      ? (matchingDetails as Record<string, unknown>).manual_allocations
+      : undefined
+  );
+  if (!Array.isArray(allocations)) return [];
+  return allocations.flatMap((allocation) => {
+    if (!allocation || typeof allocation !== "object" || Array.isArray(allocation)) return [];
+    const value = allocation as Record<string, unknown>;
+    const shopifyOrderId = String(value.shopifyOrderId ?? "");
+    const amount = Number(value.amount);
+    return shopifyOrderId && Number.isFinite(amount) && amount > 0
+      ? [{ shopifyOrderId, amount: Number(amount.toFixed(2)) }]
+      : [];
+  });
+}
+
+async function recordedBankAmountForOrder(shopifyOrderId: string, currency: string) {
+  const payments = await prisma.bankPayment.findMany({
+    where: { status: "MATCHED", currency },
+    select: { matchedShopifyOrderId: true, amount: true, rawPayload: true },
+  });
+  return Number(
+    payments.reduce((total, payment) => {
+      const allocated = manualAllocations(payment.rawPayload).find(
+        (allocation) => allocation.shopifyOrderId === shopifyOrderId
+      );
+      if (allocated) return total + allocated.amount;
+      return payment.matchedShopifyOrderId === shopifyOrderId
+        ? total + Number(payment.amount)
+        : total;
+    }, 0).toFixed(2)
+  );
+}
+
 async function saveBankTransaction(tx: BankTransaction) {
   return prisma.bankPayment.upsert({
     where: { transactionId: tx.transaction_id },
@@ -289,9 +332,23 @@ async function attachBankPaymentAndCalculateProgress(input: {
       },
       _sum: { amount: true },
     });
+    // A manually confirmed transfer may be allocated across several orders.
+    // These source records have no single matched order, so add their shares
+    // explicitly while staying inside this transaction.
+    const splitSources = await db.bankPayment.findMany({
+      where: { matchedShopifyOrderId: null, status: "MATCHED", currency: input.tx.currency },
+      select: { rawPayload: true },
+    });
+    const manualAmount = splitSources.reduce(
+      (total, source) => total + (manualAllocations(source.rawPayload).find(
+        (allocation) => allocation.shopifyOrderId === input.order.shopifyOrderId
+      )?.amount ?? 0),
+      0
+    );
+    const paidAmount = Number((Number(aggregate._sum.amount ?? 0) + manualAmount).toFixed(2));
     const progress = calculateBankPaymentProgress(
       input.expectedAmount,
-      Number(aggregate._sum.amount ?? 0)
+      paidAmount
     );
 
     await db.b2BOrder.update({
@@ -307,6 +364,120 @@ async function attachBankPaymentAndCalculateProgress(input: {
     });
     return progress;
   }, { isolationLevel: "Serializable" });
+}
+
+/** Apply a human-confirmed multi-order bank transfer. A tolerance is recorded
+ * explicitly; it is never treated as an unlabelled overpayment. */
+export async function applyManualBankPaymentProposal(input: {
+  bankPaymentId: string;
+  toleranceUah?: number;
+}) {
+  const payment = await prisma.bankPayment.findUnique({ where: { id: input.bankPaymentId } });
+  if (!payment) throw new Error("Банківський платіж не знайдено.");
+  if (payment.matchingMethod === "manual_multi_order_allocation") {
+    return { alreadyApplied: true, transactionId: payment.transactionId };
+  }
+  if (payment.status !== "NEEDS_REVIEW") {
+    throw new Error("Цей платіж уже не очікує ручного розподілу.");
+  }
+  const raw = payment.rawPayload as Record<string, unknown> | null;
+  const reconciliation = raw?._reconciliation as Record<string, unknown> | undefined;
+  const details = reconciliation?.matching_details as Record<string, unknown> | undefined;
+  const proposed = Array.isArray(details?.candidates) ? details.candidates : [];
+  const orderIds = proposed.flatMap((candidate) => {
+    const id = candidate && typeof candidate === "object"
+      ? String((candidate as Record<string, unknown>).shopifyOrderId ?? "")
+      : "";
+    return /^\d+$/.test(id) ? [id] : [];
+  });
+  if (orderIds.length < 2) throw new Error("Для платежу не збережено набір рахунків.");
+
+  const { candidates, openOrders, invoiceByOrder } = await buildBankReconciliationCandidates();
+  const selected = orderIds.map((id) => candidates.find((candidate) => candidate.shopifyOrderId === id));
+  if (selected.some((candidate) => !candidate)) throw new Error("Один зі счетів уже не очікує оплату.");
+  const rows = selected as NonNullable<(typeof selected)[number]>[];
+  if (rows.some((candidate) => candidate.currency !== payment.currency)) {
+    throw new Error("Валюта платежу та рахунків не збігається.");
+  }
+  const expectedAmount = Number(rows.reduce((sum, candidate) => sum + candidate.amount, 0).toFixed(2));
+  const difference = Number((Number(payment.amount) - expectedAmount).toFixed(2));
+  const tolerance = input.toleranceUah ?? 1;
+  if (Math.abs(difference) > tolerance) {
+    throw new Error(`Сума вибраних рахунків відрізняється на ${difference.toFixed(2)} UAH.`);
+  }
+
+  const allocations = rows.map((candidate) => ({
+    shopifyOrderId: candidate.shopifyOrderId,
+    amount: candidate.amount,
+  }));
+  await prisma.bankPayment.update({
+    where: { id: payment.id },
+    data: {
+      status: "MATCHED",
+      matchedShopifyOrderId: null,
+      matchingMethod: "manual_multi_order_allocation",
+      matchConfidence: 1,
+      rawPayload: paymentPayloadWithMatching({
+        rawPayload: payment.rawPayload,
+        matchingMethod: "manual_multi_order_allocation",
+        matchingConfidence: 1,
+        matchingDetails: {
+          manual_allocations: allocations,
+          expectedAmount,
+          paymentAmount: Number(payment.amount),
+          roundingDifference: difference,
+          toleranceUah: tolerance,
+        },
+      }),
+    },
+  });
+
+  const tx: BankTransaction = {
+    provider: payment.provider,
+    transaction_id: payment.transactionId,
+    transaction_date: payment.transactionDate,
+    payer_name: payment.payerName ?? undefined,
+    payer_tax_id: payment.payerTaxId ?? undefined,
+    amount: Number(payment.amount),
+    currency: payment.currency,
+    payment_description: payment.paymentDescription ?? undefined,
+    raw_payload: payment.rawPayload ?? {},
+  };
+  const results = [];
+  for (const candidate of rows) {
+    const order = openOrders.find((row) => row.shopifyOrderId === candidate.shopifyOrderId) ??
+      await ensureB2BOrderRecord({ shopifyOrderId: candidate.shopifyOrderId });
+    if (!order) throw new Error(`B2B запис для ${candidate.shopifyOrderName ?? candidate.shopifyOrderId} не знайдено.`);
+    const progress = calculateBankPaymentProgress(
+      candidate.amount,
+      await recordedBankAmountForOrder(candidate.shopifyOrderId, payment.currency)
+    );
+    await prisma.b2BOrder.update({
+      where: { shopifyOrderId: order.shopifyOrderId },
+      data: {
+        expectedAmount: progress.expectedAmount,
+        paidAmount: progress.paidAmount,
+        remainingAmount: progress.remainingAmount,
+        paymentStatus: progress.status,
+        status: progress.isFullyPaid ? "PAYMENT_MATCHED" : "PARTIALLY_PAID",
+      },
+    });
+    if (!progress.isFullyPaid) {
+      await applyPartialBankPaymentState({ tx, order, progress });
+      results.push({ order: order.shopifyOrderName, status: progress.status });
+      continue;
+    }
+    const shopifyPayment = await applyFullyPaidBankPaymentState({ tx, order, progress });
+    await completeBankPaymentSideEffects({
+      tx,
+      order,
+      invoiceNumber: invoiceByOrder.get(order.shopifyOrderId)?.number,
+      progress,
+      presentation: shopifyPayment.presentation,
+    });
+    results.push({ order: order.shopifyOrderName, status: shopifyPayment.presentation.status });
+  }
+  return { alreadyApplied: false, transactionId: payment.transactionId, expectedAmount, difference, results };
 }
 
 async function applyPartialBankPaymentState(input: {
@@ -757,12 +928,15 @@ export async function reconcileBankTransactions(
           ...(multiOrder
             ? {
                 replyMarkup: {
-                  inline_keyboard: multiOrder.candidates.map((candidate) => [
-                    {
-                      text: `Открыть ${candidate.shopifyOrderName ?? candidate.shopifyOrderId}`,
-                      callback_data: `order|${candidate.shopifyOrderId}`,
-                    },
-                  ]),
+                  inline_keyboard: [
+                    ...multiOrder.candidates.map((candidate) => [
+                      {
+                        text: `Открыть ${candidate.shopifyOrderName ?? candidate.shopifyOrderId}`,
+                        callback_data: `order|${candidate.shopifyOrderId}`,
+                      },
+                    ]),
+                    [{ text: "✅ Розподілити на ці рахунки", callback_data: `confirm|apply-bank-proposal|${saved.id}` }],
+                  ],
                 },
               }
             : {}),

@@ -130,6 +130,11 @@ describe("Telegram payments bot", () => {
       action: "recover-shopify-order",
       orderId: "cmrtaic1e000110jlx7qz1g4f",
     });
+    expect(parseTelegramCallback("confirm|apply-bank-proposal|7c66b6d9-3f5f-4fb8-b012-4d8fd1ef6f6c")).toEqual({
+      name: "confirm",
+      action: "apply-bank-proposal",
+      orderId: "7c66b6d9-3f5f-4fb8-b012-4d8fd1ef6f6c",
+    });
     const menu = telegramMainMenu(true);
     expect(menu.replyMarkup?.inline_keyboard).toHaveLength(5);
   });
