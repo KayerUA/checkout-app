@@ -196,9 +196,24 @@ async function callbackResponse(update: TelegramUpdate) {
     const candidates = exists ? previous.filter((row) => String(row.shopifyOrderId) !== order.shopifyOrderId) : [...previous, { shopifyOrderId: order.shopifyOrderId, shopifyOrderName: order.shopifyOrderName, amount: Number(order.expectedAmount ?? order.orderTotalAmount ?? 0), currency: order.orderCurrency ?? payment.currency }];
     await prisma.bankPayment.update({ where: { id: payment.id }, data: { rawPayload: { ...raw, _reconciliation: { ...recon, matching_details: { ...details, candidates } } } as Prisma.InputJsonValue } });
     const selectedTotal = candidates.reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
+    const selectableOrders = payment.payerTaxId
+      ? await prisma.b2BOrder.findMany({
+          where: { fopTaxId: payment.payerTaxId, status: { in: ["WAITING_BANK_PAYMENT", "NEEDS_REVIEW", "INVOICE_SENT"] } },
+          orderBy: { createdAt: "asc" },
+          take: 20,
+        })
+      : [];
+    const selectedIds = new Set(candidates.map((row) => String(row.shopifyOrderId)));
     await editMessage(env.TG_BOT_TOKEN!, chatId, messageId, {
       text: `Вибрано: ${candidates.map((row) => row.shopifyOrderName ?? row.shopifyOrderId).join(", ") || "нічого"}\nСума вибраного: ${selectedTotal.toFixed(2)} ${payment.currency}\nПлатіж: ${Number(payment.amount).toFixed(2)} ${payment.currency}`,
-      replyMarkup: { inline_keyboard: [[{ text: "✅ Підтвердити розподіл", callback_data: `confirm|apply-bank-proposal|${payment.id}` }], [{ text: "← До платежів", callback_data: "bank_review" }]] },
+      replyMarkup: { inline_keyboard: [
+        ...selectableOrders.map((candidate) => [{
+          text: `${selectedIds.has(candidate.shopifyOrderId) ? "✅" : "☐"} ${candidate.shopifyOrderName ?? candidate.shopifyOrderId} · ${candidate.expectedAmount ?? candidate.orderTotalAmount} UAH`,
+          callback_data: `bank_select|${payment.id}|${candidate.shopifyOrderId}`,
+        }]),
+        [{ text: "✅ Підтвердити розподіл", callback_data: `confirm|apply-bank-proposal|${payment.id}` }],
+        [{ text: "← До платежів", callback_data: "bank_review" }],
+      ] },
     });
     return;
   }

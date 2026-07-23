@@ -135,8 +135,13 @@ describe("Telegram payments bot", () => {
       action: "apply-bank-proposal",
       orderId: "7c66b6d9-3f5f-4fb8-b012-4d8fd1ef6f6c",
     });
+    expect(parseTelegramCallback("bank_select|7c66b6d9-3f5f-4fb8-b012-4d8fd1ef6f6c|11022101643588")).toEqual({
+      name: "bank_select",
+      paymentId: "7c66b6d9-3f5f-4fb8-b012-4d8fd1ef6f6c",
+      orderId: "11022101643588",
+    });
     const menu = telegramMainMenu(true);
-    expect(menu.replyMarkup?.inline_keyboard).toHaveLength(5);
+    expect(menu.replyMarkup?.inline_keyboard).toHaveLength(6);
   });
 
   it("formats a payment-without-order alert without customer secrets", () => {
