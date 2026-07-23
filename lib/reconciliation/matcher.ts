@@ -212,7 +212,7 @@ export function findSamePayerAmountBundle(
   candidates: MatchCandidate[],
   toleranceUah = 1
 ): MultiOrderPaymentProposal | null {
-  const payerTaxId = normalizeTaxIdentifier(tx.payer_tax_id) || (() => {
+  const payerTaxIds = normalizeTaxIdentifier(tx.payer_tax_id) ? [normalizeTaxIdentifier(tx.payer_tax_id)] : (() => {
     // Some bank exports omit the payer tax id. When the purpose still points
     // to one open invoice, use that invoice's counterparty solely to propose
     // a review bundle; confirmation remains manual.
@@ -223,29 +223,32 @@ export function findSamePayerAmountBundle(
           .filter(Boolean)
       )
     );
-    return hintedTaxIds.length === 1 ? hintedTaxIds[0] : "";
+    return hintedTaxIds;
   })();
-  if (!payerTaxId) return null;
-  const pool = candidates.filter(
-    (candidate) =>
-      candidate.currency === tx.currency &&
-      candidate.amount > 0 &&
-      normalizeTaxIdentifier(candidate.fopTaxId) === payerTaxId
-  );
-  const bundles: MatchCandidate[][] = [];
-  for (let first = 0; first < pool.length; first += 1) {
-    for (let second = first + 1; second < pool.length; second += 1) {
-      bundles.push([pool[first], pool[second]]);
-      for (let third = second + 1; third < pool.length; third += 1) {
-        bundles.push([pool[first], pool[second], pool[third]]);
+  if (!payerTaxIds.length) return null;
+  const bundles: Array<{ orders: MatchCandidate[]; payerTaxId: string }> = [];
+  for (const payerTaxId of payerTaxIds) {
+    const pool = candidates.filter(
+      (candidate) =>
+        candidate.currency === tx.currency &&
+        candidate.amount > 0 &&
+        normalizeTaxIdentifier(candidate.fopTaxId) === payerTaxId
+    );
+    for (let first = 0; first < pool.length; first += 1) {
+      for (let second = first + 1; second < pool.length; second += 1) {
+        bundles.push({ orders: [pool[first], pool[second]], payerTaxId });
+        for (let third = second + 1; third < pool.length; third += 1) {
+          bundles.push({ orders: [pool[first], pool[second], pool[third]], payerTaxId });
+        }
       }
     }
   }
   const matched = bundles
-    .map((orders) => {
+    .map(({ orders, payerTaxId }) => {
       const expectedAmount = Number(orders.reduce((total, order) => total + order.amount, 0).toFixed(2));
       return {
         orders,
+        payerTaxId,
         expectedAmount,
         amountDifference: Number((Number(tx.amount.toFixed(2)) - expectedAmount).toFixed(2)),
       };
@@ -257,7 +260,7 @@ export function findSamePayerAmountBundle(
     candidates: matched[0].orders,
     expectedAmount: matched[0].expectedAmount,
     amountDifference: matched[0].amountDifference,
-    payerTaxId,
+    payerTaxId: matched[0].payerTaxId,
   };
 }
 

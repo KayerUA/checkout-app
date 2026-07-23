@@ -340,6 +340,18 @@ describe("B2B bank reconciliation matcher", () => {
     ]);
   });
 
+  it("tries each hinted counterparty and keeps the only amount-compatible bundle", () => {
+    const bundle = findSamePayerAmountBundle(
+      { ...baseTx, amount: 31355, payer_tax_id: undefined, payment_description: "Оплата за 1215" },
+      [
+        { ...ua1155Candidates[0], shopifyOrderId: "first", shopifyOrderName: "#UA1213", amount: 19529.75, fopTaxId: "1234567890" },
+        { ...ua1155Candidates[0], shopifyOrderId: "second", shopifyOrderName: "#UA1215", amount: 11826, fopTaxId: "1234567890" },
+        { ...ua1155Candidates[0], shopifyOrderId: "wrong", shopifyOrderName: "#1215", amount: 1000, fopTaxId: "9999999999" },
+      ]
+    );
+    expect(bundle?.payerTaxId).toBe("1234567890");
+  });
+
   it("normalizes punctuation in tax identifiers", () => {
     expect(normalizeTaxIdentifier(" UA-12 34/56 ")).toBe("UA123456");
   });
