@@ -212,6 +212,7 @@ export type TelegramCallback =
   | { name: "unmatched"; days: number }
   | { name: "bank_review" }
   | { name: "bank_payment"; paymentId: string }
+  | { name: "bank_select"; paymentId: string; orderId: string }
   | { name: "abandoned"; take: number }
   | { name: "online_payments"; take: number }
   | { name: "payments"; days: number }
@@ -243,6 +244,7 @@ export function parseTelegramCallback(data: string): TelegramCallback {
   if (name === "unmatched") return { name, days: Math.min(Math.max(Number(first) || 7, 1), 31) };
   if (name === "bank_review") return { name };
   if (name === "bank_payment" && /^[0-9a-f-]{36}$/i.test(first)) return { name, paymentId: first };
+  if (name === "bank_select" && /^[0-9a-f-]{36}$/i.test(first) && /^\d+$/.test(second)) return { name, paymentId: first, orderId: second };
   if (name === "abandoned") return { name, take: Math.min(Math.max(Number(first) || 10, 1), 50) };
   if (name === "online_payments") return { name, take: Math.min(Math.max(Number(first) || 20, 1), 50) };
   if (name === "payments") return { name, days: Math.min(Math.max(Number(first) || 7, 1), 31) };

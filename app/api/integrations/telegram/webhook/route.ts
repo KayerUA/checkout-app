@@ -37,6 +37,7 @@ import {
 } from "@/lib/telegram/operations";
 import { resolveInvoicePdfForTelegram } from "@/lib/telegram/invoice-download";
 import { runDiloshopOrderAction } from "@/lib/telegram/diloshop-client";
+import type { Prisma } from "@prisma/client";
 import {
   auditTelegram,
   claimTelegramCooldown,
@@ -161,6 +162,9 @@ async function callbackResponse(update: TelegramUpdate) {
   if (parsed.name === "bank_payment") {
     const payment = await prisma.bankPayment.findUnique({ where: { id: parsed.paymentId } });
     if (!payment) { await editMessage(env.TG_BOT_TOKEN!, chatId, messageId, "Платіж не знайдено."); return; }
+    const orders = payment.payerTaxId
+      ? await prisma.b2BOrder.findMany({ where: { fopTaxId: payment.payerTaxId, status: { in: ["WAITING_BANK_PAYMENT", "NEEDS_REVIEW", "INVOICE_SENT"] } }, orderBy: { createdAt: "asc" }, take: 20 })
+      : [];
     await editMessage(env.TG_BOT_TOKEN!, chatId, messageId, {
       text: [
         "Ручний розбір банківського платежу",
@@ -170,7 +174,31 @@ async function callbackResponse(update: TelegramUpdate) {
         `Призначення: ${payment.paymentDescription ?? "—"}`,
         `Transaction: …${payment.transactionId.slice(-12)}`,
       ].join("\n"),
-      replyMarkup: { inline_keyboard: [[{ text: "← До платежів", callback_data: "bank_review" }]] },
+      replyMarkup: { inline_keyboard: [
+        ...orders.map((order) => [{ text: `${order.shopifyOrderName ?? order.shopifyOrderId} · ${order.expectedAmount ?? order.orderTotalAmount} UAH`, callback_data: `bank_select|${payment.id}|${order.shopifyOrderId}` }]),
+        [{ text: "← До платежів", callback_data: "bank_review" }],
+      ] },
+    });
+    return;
+  }
+  if (parsed.name === "bank_select") {
+    const payment = await prisma.bankPayment.findUnique({ where: { id: parsed.paymentId } });
+    const order = await prisma.b2BOrder.findUnique({ where: { shopifyOrderId: parsed.orderId } });
+    if (!payment || !order) { await editMessage(env.TG_BOT_TOKEN!, chatId, messageId, "Платіж або замовлення не знайдено."); return; }
+    const raw = payment.rawPayload && typeof payment.rawPayload === "object" && !Array.isArray(payment.rawPayload)
+      ? payment.rawPayload as Record<string, unknown> : {};
+    const recon = raw._reconciliation && typeof raw._reconciliation === "object" && !Array.isArray(raw._reconciliation)
+      ? raw._reconciliation as Record<string, unknown> : {};
+    const details = recon.matching_details && typeof recon.matching_details === "object" && !Array.isArray(recon.matching_details)
+      ? recon.matching_details as Record<string, unknown> : {};
+    const previous = Array.isArray(details.candidates) ? details.candidates.filter((row) => row && typeof row === "object") as Record<string, unknown>[] : [];
+    const exists = previous.some((row) => String(row.shopifyOrderId) === order.shopifyOrderId);
+    const candidates = exists ? previous.filter((row) => String(row.shopifyOrderId) !== order.shopifyOrderId) : [...previous, { shopifyOrderId: order.shopifyOrderId, shopifyOrderName: order.shopifyOrderName, amount: Number(order.expectedAmount ?? order.orderTotalAmount ?? 0), currency: order.orderCurrency ?? payment.currency }];
+    await prisma.bankPayment.update({ where: { id: payment.id }, data: { rawPayload: { ...raw, _reconciliation: { ...recon, matching_details: { ...details, candidates } } } as Prisma.InputJsonValue } });
+    const selectedTotal = candidates.reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
+    await editMessage(env.TG_BOT_TOKEN!, chatId, messageId, {
+      text: `Вибрано: ${candidates.map((row) => row.shopifyOrderName ?? row.shopifyOrderId).join(", ") || "нічого"}\nСума вибраного: ${selectedTotal.toFixed(2)} ${payment.currency}\nПлатіж: ${Number(payment.amount).toFixed(2)} ${payment.currency}`,
+      replyMarkup: { inline_keyboard: [[{ text: "✅ Підтвердити розподіл", callback_data: `confirm|apply-bank-proposal|${payment.id}` }], [{ text: "← До платежів", callback_data: "bank_review" }]] },
     });
     return;
   }
