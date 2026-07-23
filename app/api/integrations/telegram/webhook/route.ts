@@ -141,6 +141,39 @@ async function callbackResponse(update: TelegramUpdate) {
     await editMessage(env.TG_BOT_TOKEN!, chatId, messageId, telegramMainMenu(true));
     return;
   }
+  if (parsed.name === "bank_review") {
+    const payments = await prisma.bankPayment.findMany({
+      where: { status: "NEEDS_REVIEW" }, orderBy: { transactionDate: "desc" }, take: 20,
+    });
+    await editMessage(env.TG_BOT_TOKEN!, chatId, messageId, {
+      text: payments.length
+        ? ["Платежі для ручного розбору:", ...payments.map((payment) =>
+          `• ${payment.amount} ${payment.currency} · ${payment.payerName ?? "платник невідомий"} · …${payment.transactionId.slice(-8)}`
+        )].join("\n")
+        : "Платежів для ручного розбору немає.",
+      replyMarkup: { inline_keyboard: [
+        ...payments.map((payment) => [{ text: `${payment.amount} ${payment.currency} · …${payment.transactionId.slice(-8)}`, callback_data: `bank_payment|${payment.id}` }]),
+        [{ text: "⌂ Головне меню", callback_data: "menu" }],
+      ] },
+    });
+    return;
+  }
+  if (parsed.name === "bank_payment") {
+    const payment = await prisma.bankPayment.findUnique({ where: { id: parsed.paymentId } });
+    if (!payment) { await editMessage(env.TG_BOT_TOKEN!, chatId, messageId, "Платіж не знайдено."); return; }
+    await editMessage(env.TG_BOT_TOKEN!, chatId, messageId, {
+      text: [
+        "Ручний розбір банківського платежу",
+        `Сума: ${payment.amount} ${payment.currency}`,
+        `Платник: ${payment.payerName ?? "—"}`,
+        `ІПН: ${payment.payerTaxId ?? "—"}`,
+        `Призначення: ${payment.paymentDescription ?? "—"}`,
+        `Transaction: …${payment.transactionId.slice(-12)}`,
+      ].join("\n"),
+      replyMarkup: { inline_keyboard: [[{ text: "← До платежів", callback_data: "bank_review" }]] },
+    });
+    return;
+  }
   if (parsed.name === "order_help") {
     await editMessage(env.TG_BOT_TOKEN!, chatId, messageId, {
       text: "Отправьте номер заказа отдельным сообщением — например UA1183.\n\nТакже работают /order UA1183, /customer +380… и /sku LUX-COY.",

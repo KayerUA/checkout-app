@@ -20,6 +20,7 @@ export type TelegramCommand = {
     | "health"
     | "queue"
     | "unmatched"
+    | "bank_review"
     | "np"
     | "b2b"
     | "cashin"
@@ -87,6 +88,7 @@ export function parseTelegramCommand(text: string): TelegramCommand {
     const requestedDays = Number.parseInt(rawTake, 10);
     return { name: "unmatched", days: Number.isFinite(requestedDays) ? Math.min(Math.max(requestedDays, 1), 31) : 7 };
   }
+  if (command === "/bank_review") return { name: "bank_review" };
   if (command === "/sku") return { name: "sku", arg };
   if (command === "/customer") return { name: "customer", arg };
   if (command === "/webhooks") {
@@ -108,6 +110,7 @@ export const telegramGroupBotCommands = [
   { command: "online_payments", description: "Проверить LiqPay/Monobank" },
   { command: "recover_checkout", description: "Повторить Shopify-заказ из checkout" },
   { command: "unmatched", description: "Банковские оплаты без матча" },
+  { command: "bank_review", description: "Ручной разбор банковских оплат" },
   { command: "abandoned", description: "Показать незавершённые checkout" },
   { command: "help", description: "Показать команды" },
 ];
@@ -207,6 +210,8 @@ export type TelegramCallback =
   | { name: "menu" }
   | { name: "today" }
   | { name: "unmatched"; days: number }
+  | { name: "bank_review" }
+  | { name: "bank_payment"; paymentId: string }
   | { name: "abandoned"; take: number }
   | { name: "online_payments"; take: number }
   | { name: "payments"; days: number }
@@ -236,6 +241,8 @@ export function parseTelegramCallback(data: string): TelegramCallback {
   if (name === "today") return { name: "today" };
   if (name === "order_help") return { name: "order_help" };
   if (name === "unmatched") return { name, days: Math.min(Math.max(Number(first) || 7, 1), 31) };
+  if (name === "bank_review") return { name };
+  if (name === "bank_payment" && /^[0-9a-f-]{36}$/i.test(first)) return { name, paymentId: first };
   if (name === "abandoned") return { name, take: Math.min(Math.max(Number(first) || 10, 1), 50) };
   if (name === "online_payments") return { name, take: Math.min(Math.max(Number(first) || 20, 1), 50) };
   if (name === "payments") return { name, days: Math.min(Math.max(Number(first) || 7, 1), 31) };
@@ -292,6 +299,7 @@ export function telegramMainMenu(allowed: boolean) {
           { text: "💳 Банк без матча", callback_data: "unmatched|7" },
           { text: "🔁 Сверить банк", callback_data: "payments|7" },
         ],
+        [{ text: "🧾 Ручной разбор платежей", callback_data: "bank_review" }],
         [
           { text: "🌐 Онлайн-оплаты", callback_data: "online_payments|20" },
           { text: "🛒 Брошенные корзины", callback_data: "abandoned|10" },
