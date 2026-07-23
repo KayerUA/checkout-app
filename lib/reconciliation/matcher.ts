@@ -204,6 +204,51 @@ export function findMultiOrderPaymentProposal(
   };
 }
 
+/** Fallback for bank descriptions that omit or mangle order numbers. It never
+ * auto-matches: it only proposes one unique set of open invoices with the same
+ * payer tax id and a total within the manually approved rounding tolerance. */
+export function findSamePayerAmountBundle(
+  tx: BankTransaction,
+  candidates: MatchCandidate[],
+  toleranceUah = 1
+): MultiOrderPaymentProposal | null {
+  const payerTaxId = normalizeTaxIdentifier(tx.payer_tax_id);
+  if (!payerTaxId) return null;
+  const pool = candidates.filter(
+    (candidate) =>
+      candidate.currency === tx.currency &&
+      candidate.amount > 0 &&
+      taxIdentifiersEqual(tx.payer_tax_id, candidate.fopTaxId)
+  );
+  const bundles: MatchCandidate[][] = [];
+  for (let first = 0; first < pool.length; first += 1) {
+    for (let second = first + 1; second < pool.length; second += 1) {
+      bundles.push([pool[first], pool[second]]);
+      for (let third = second + 1; third < pool.length; third += 1) {
+        bundles.push([pool[first], pool[second], pool[third]]);
+      }
+    }
+  }
+  const matched = bundles
+    .map((orders) => {
+      const expectedAmount = Number(orders.reduce((total, order) => total + order.amount, 0).toFixed(2));
+      return {
+        orders,
+        expectedAmount,
+        amountDifference: Number((Number(tx.amount.toFixed(2)) - expectedAmount).toFixed(2)),
+      };
+    })
+    .filter((bundle) => Math.abs(bundle.amountDifference) <= toleranceUah)
+    .sort((left, right) => Math.abs(left.amountDifference) - Math.abs(right.amountDifference));
+  if (matched.length !== 1) return null;
+  return {
+    candidates: matched[0].orders,
+    expectedAmount: matched[0].expectedAmount,
+    amountDifference: matched[0].amountDifference,
+    payerTaxId,
+  };
+}
+
 function amountsEqual(left: number, right: number) {
   return Math.abs(Number(left.toFixed(2)) - Number(right.toFixed(2))) < 0.01;
 }
@@ -268,18 +313,22 @@ export function matchBankTransaction(tx: BankTransaction, candidates: MatchCandi
   }
 
   const multiOrder = findMultiOrderPaymentProposal(tx, candidates);
-  if (multiOrder) {
+  const inferredBundle = multiOrder ?? findSamePayerAmountBundle(tx, candidates);
+  if (inferredBundle) {
     return {
       status: "NEEDS_REVIEW" as const,
-      confidence: Math.abs(multiOrder.amountDifference) < 0.01 ? 0.99 : 0.95,
+      confidence: multiOrder
+        ? (Math.abs(inferredBundle.amountDifference) < 0.01 ? 0.99 : 0.95)
+        : 0.94,
       candidate: null,
-      candidates: multiOrder.candidates,
-      expectedAmount: multiOrder.expectedAmount,
-      amountDifference: multiOrder.amountDifference,
-      reason:
-        Math.abs(multiOrder.amountDifference) < 0.01
+      candidates: inferredBundle.candidates,
+      expectedAmount: inferredBundle.expectedAmount,
+      amountDifference: inferredBundle.amountDifference,
+      reason: multiOrder
+        ? (Math.abs(inferredBundle.amountDifference) < 0.01
           ? "multiple_order_hints_same_payer_exact_amount"
-          : "multiple_order_hints_same_payer_amount_difference",
+          : "multiple_order_hints_same_payer_amount_difference")
+        : "same_payer_open_orders_amount_tolerance",
     };
   }
 

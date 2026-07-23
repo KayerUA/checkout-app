@@ -4,6 +4,7 @@ import {
   extractInvoiceNumber,
   extractOrderNumberHints,
   findMultiOrderPaymentProposal,
+  findSamePayerAmountBundle,
   matchBankTransaction,
   normalizeTaxIdentifier,
   parseShopifyOrderName,
@@ -308,6 +309,21 @@ describe("B2B bank reconciliation matcher", () => {
         [{ ...candidatesForSplit[0], fopTaxId: "9999999999" }, candidatesForSplit[1]]
       )
     ).toBeNull();
+  });
+
+  it("proposes one unique same-payer invoice bundle when bank order refs are missing", () => {
+    const bundle = findSamePayerAmountBundle(
+      { ...baseTx, amount: 31355, payer_tax_id: "1234567890", payment_description: "Оплата товару" },
+      [
+        { ...ua1155Candidates[0], shopifyOrderId: "first", shopifyOrderName: "#UA1213", amount: 19529.75 },
+        { ...ua1155Candidates[0], shopifyOrderId: "second", shopifyOrderName: "#UA1215", amount: 11826 },
+      ]
+    );
+    expect(bundle).toMatchObject({
+      expectedAmount: 31355.75,
+      amountDifference: -0.75,
+      candidates: [{ shopifyOrderName: "#UA1213" }, { shopifyOrderName: "#UA1215" }],
+    });
   });
 
   it("normalizes punctuation in tax identifiers", () => {
