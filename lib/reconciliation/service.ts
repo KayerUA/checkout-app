@@ -787,11 +787,16 @@ export async function reconcileBankTransactions(
   const results = [];
   for (const tx of transactions) {
     const saved = await saveBankTransaction(tx);
-    if (saved.matchingMethod === "liqpay_soid_order_exists") {
+    if (
+      saved.matchingMethod === "liqpay_soid_order_exists" ||
+      saved.matchingMethod === "manual_multi_order_allocation"
+    ) {
       results.push({
         transactionId: tx.transaction_id,
         status: "SKIPPED",
-        reason: "ignored_online_payment",
+        reason: saved.matchingMethod === "manual_multi_order_allocation"
+          ? "manual_multi_order_allocation_already_applied"
+          : "ignored_online_payment",
       });
       continue;
     }
