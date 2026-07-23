@@ -212,13 +212,25 @@ export function findSamePayerAmountBundle(
   candidates: MatchCandidate[],
   toleranceUah = 1
 ): MultiOrderPaymentProposal | null {
-  const payerTaxId = normalizeTaxIdentifier(tx.payer_tax_id);
+  const payerTaxId = normalizeTaxIdentifier(tx.payer_tax_id) || (() => {
+    // Some bank exports omit the payer tax id. When the purpose still points
+    // to one open invoice, use that invoice's counterparty solely to propose
+    // a review bundle; confirmation remains manual.
+    const hintedTaxIds = Array.from(
+      new Set(
+        findCandidatesByOrderHints(tx.payment_description, candidates)
+          .map((candidate) => normalizeTaxIdentifier(candidate.fopTaxId))
+          .filter(Boolean)
+      )
+    );
+    return hintedTaxIds.length === 1 ? hintedTaxIds[0] : "";
+  })();
   if (!payerTaxId) return null;
   const pool = candidates.filter(
     (candidate) =>
       candidate.currency === tx.currency &&
       candidate.amount > 0 &&
-      taxIdentifiersEqual(tx.payer_tax_id, candidate.fopTaxId)
+      normalizeTaxIdentifier(candidate.fopTaxId) === payerTaxId
   );
   const bundles: MatchCandidate[][] = [];
   for (let first = 0; first < pool.length; first += 1) {
