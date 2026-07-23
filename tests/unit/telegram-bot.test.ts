@@ -39,6 +39,7 @@ describe("Telegram payments bot", () => {
     expect(parseTelegramCommand("/order ua-1183")).toEqual({ name: "order", arg: "ua-1183" });
     expect(parseTelegramCommand("/issues np")).toEqual({ name: "issues", filter: "np", hours: 24 });
     expect(parseTelegramCommand("/unmatched 90")).toEqual({ name: "unmatched", days: 31 });
+    expect(parseTelegramCommand("/bank_review")).toEqual({ name: "bank_review" });
     expect(parseTelegramCommand("/customer anna@example.com")).toEqual({
       name: "customer",
       arg: "anna@example.com",

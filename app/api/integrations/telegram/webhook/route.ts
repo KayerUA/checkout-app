@@ -445,6 +445,28 @@ async function commandResponse(update: TelegramUpdate) {
     return;
   }
 
+  if (command.name === "bank_review") {
+    const payments = await prisma.bankPayment.findMany({
+      where: { status: "NEEDS_REVIEW" },
+      orderBy: { transactionDate: "desc" },
+      take: 20,
+    });
+    await sendMessage(env.TG_BOT_TOKEN!, chatId, {
+      text: payments.length
+        ? `Платежі для ручного розбору: ${payments.length}`
+        : "Платежів для ручного розбору немає.",
+      replyMarkup: { inline_keyboard: [
+        ...payments.map((payment) => [{
+          text: `${payment.amount} ${payment.currency} · …${payment.transactionId.slice(-8)}`,
+          callback_data: `bank_payment|${payment.id}`,
+        }]),
+        [{ text: "⌂ Головне меню", callback_data: "menu" }],
+      ] },
+    });
+    await auditTelegram({ userId, chatId, command: command.name, status: "OK" }).catch(() => {});
+    return;
+  }
+
   try {
     let response: TelegramOpsMessage | null = null;
     if (["order", "np", "b2b", "cashin", "refund"].includes(command.name)) {
