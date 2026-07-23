@@ -56,6 +56,7 @@ const envSchema = z.object({
   TG_WEBHOOK_SECRET: z.string().regex(/^[A-Za-z0-9_-]{16,256}$/).optional(),
   TG_ALLOWED_CHAT_IDS: z.string().optional(),
   TG_ADMIN_USER_IDS: z.string().optional(),
+  TG_EXTRA_ALLOWED_CHAT_IDS: z.string().optional(),
   CRON_SECRET: z.string().optional(),
 });
 
@@ -123,6 +124,7 @@ export function getEnv(): Env {
     TG_WEBHOOK_SECRET: process.env.TG_WEBHOOK_SECRET,
     TG_ALLOWED_CHAT_IDS: process.env.TG_ALLOWED_CHAT_IDS,
     TG_ADMIN_USER_IDS: process.env.TG_ADMIN_USER_IDS,
+    TG_EXTRA_ALLOWED_CHAT_IDS: process.env.TG_EXTRA_ALLOWED_CHAT_IDS,
     CRON_SECRET: process.env.CRON_SECRET,
   });
   return cached;

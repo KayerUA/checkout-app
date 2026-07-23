@@ -104,8 +104,14 @@ async function editMessage(
 
 function isAdmin(userId: number, chatId: number) {
   const env = getEnv();
-  return telegramUserIsAdmin(userId, env.TG_ADMIN_USER_IDS || env.TG_ALLOWED_CHAT_IDS) ||
-    (chatId > 0 && userId === chatId && telegramChatIsAllowed(chatId, env.TG_ALLOWED_CHAT_IDS));
+  const allowedChatIds = [env.TG_ALLOWED_CHAT_IDS, env.TG_EXTRA_ALLOWED_CHAT_IDS]
+    .filter(Boolean)
+    .join(",");
+  const adminUserIds = [env.TG_ADMIN_USER_IDS, env.TG_EXTRA_ALLOWED_CHAT_IDS]
+    .filter(Boolean)
+    .join(",");
+  return telegramUserIsAdmin(userId, adminUserIds || allowedChatIds) ||
+    (chatId > 0 && userId === chatId && telegramChatIsAllowed(chatId, allowedChatIds));
 }
 
 async function callbackResponse(update: TelegramUpdate) {
@@ -121,7 +127,10 @@ async function callbackResponse(update: TelegramUpdate) {
     callback_query_id: callbackId,
   }).catch(() => {});
 
-  if (!telegramChatIsAllowed(chatId, env.TG_ALLOWED_CHAT_IDS)) {
+  const allowedChatIds = [env.TG_ALLOWED_CHAT_IDS, env.TG_EXTRA_ALLOWED_CHAT_IDS]
+    .filter(Boolean)
+    .join(",");
+  if (!telegramChatIsAllowed(chatId, allowedChatIds)) {
     await sendMessage(env.TG_BOT_TOKEN!, chatId, "Доступ к операциям запрещён.");
     return;
   }
@@ -298,7 +307,10 @@ async function commandResponse(update: TelegramUpdate) {
   if (!commandText) return;
 
   const command = parseTelegramCommand(commandText);
-  const allowed = telegramChatIsAllowed(chatId, env.TG_ALLOWED_CHAT_IDS);
+  const allowed = telegramChatIsAllowed(
+    chatId,
+    [env.TG_ALLOWED_CHAT_IDS, env.TG_EXTRA_ALLOWED_CHAT_IDS].filter(Boolean).join(",")
+  );
   const admin = isAdmin(userId, chatId);
 
   if (command.name === "myid") {
