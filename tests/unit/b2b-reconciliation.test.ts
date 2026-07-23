@@ -135,6 +135,13 @@ describe("B2B bank reconciliation matcher", () => {
     expect(extractOrderNumberHints("Оплата по счету 1155")).toEqual([{ full: "UA1155", numeric: 1155 }]);
   });
 
+  it("extracts every order from a listed bank-payment purpose", () => {
+    expect(extractOrderNumberHints("Оплата за рахунки UA1213 та UA1215 без ПДВ")).toEqual([
+      { full: "UA1213", numeric: 1213 },
+      { full: "UA1215", numeric: 1215 },
+    ]);
+  });
+
   it("matches #UA1155 when payment says only 1155 after рахунок", () => {
     const match = matchBankTransaction(
       {

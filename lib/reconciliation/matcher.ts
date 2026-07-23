@@ -91,6 +91,18 @@ export function extractOrderNumberHints(description?: string | null): ParsedOrde
     add(Number.parseInt(match[1], 10));
   }
 
+  // A common bank-purpose form is "за рахунки 1213 та 1215". The regular
+  // expression above intentionally captures the first number only; scan the
+  // short list that follows a payment/order keyword for the remaining refs.
+  const listKeyword = /(?:замовлен\w*|рахунк\w*|рах\.|сч[её]т\w*|сч\.|schet|order|inv)[^\n]{0,90}/gi;
+  for (const fragment of normalized.matchAll(listKeyword)) {
+    // The first bare number is handled by keywordPattern. Here, accept only
+    // explicitly prefixed numbers or subsequent list items, never a year.
+    for (const number of fragment[0].matchAll(/(?:\bUA[-\s]?|[№#]\s*|\b(?:та|і|and)\s*|[,;]\s*)(\d{3,6})\b/gi)) {
+      add(Number.parseInt(number[1], 10));
+    }
+  }
+
   return [...refs.values()];
 }
 
