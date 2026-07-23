@@ -125,6 +125,47 @@ async function saveBankTransaction(tx: BankTransaction) {
   });
 }
 
+async function clearStaleAmbiguousOrderReview(input: {
+  transactionId: string;
+  staleOrderId: string | null;
+  staleMatchingMethod: string | null;
+}) {
+  // Versions before 826ebb7 attached an ambiguous payment to the first order
+  // returned by the matcher. On its next reconciliation, safely undo that
+  // synthetic assignment unless another review still points at this order.
+  if (
+    !input.staleOrderId ||
+    !input.staleMatchingMethod?.startsWith("ambiguous_")
+  ) {
+    return;
+  }
+
+  const anotherReview = await prisma.bankPayment.count({
+    where: {
+      matchedShopifyOrderId: input.staleOrderId,
+      status: "NEEDS_REVIEW",
+      transactionId: { not: input.transactionId },
+    },
+  });
+  if (anotherReview > 0) return;
+
+  const order = await prisma.b2BOrder.findUnique({
+    where: { shopifyOrderId: input.staleOrderId },
+    select: { shopifyOrderId: true, shopDomain: true, status: true },
+  });
+  if (!order || order.status !== "NEEDS_REVIEW") return;
+
+  await prisma.b2BOrder.update({
+    where: { shopifyOrderId: order.shopifyOrderId },
+    data: { status: "WAITING_BANK_PAYMENT" },
+  });
+  await updateOrderTags({
+    shopDomain: order.shopDomain,
+    orderId: order.shopifyOrderId,
+    remove: [B2B_TAGS.needsPaymentReview],
+  });
+}
+
 async function reconcileLiqPayAcquiringTransaction(tx: BankTransaction) {
   const sourceIdentifier = liqPayAcquiringSourceIdentifier(tx);
   if (!sourceIdentifier) return null;
@@ -640,6 +681,11 @@ export async function reconcileBankTransactions(
     try {
       const match = matchBankTransaction(tx, candidates);
       if (match.status === "NEEDS_REVIEW" && !match.candidate) {
+        await clearStaleAmbiguousOrderReview({
+          transactionId: tx.transaction_id,
+          staleOrderId: saved.matchedShopifyOrderId,
+          staleMatchingMethod: saved.matchingMethod,
+        });
         await prisma.bankPayment.update({
           where: { transactionId: tx.transaction_id },
           data: {
