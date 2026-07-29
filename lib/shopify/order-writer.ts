@@ -459,8 +459,42 @@ export async function createBankInvoiceShopifyOrderIdempotent(publicToken: strin
   const shopifySession = await getMerchantShopifySession(session.merchantId);
   if (!shopifySession) throw new Error("Shopify session not found");
 
+  const orderInput = mapCheckoutToOrderCreateInput(session, null, {
+    financialStatus: "PENDING",
+    sourceName: "ua_b2b_bank_invoice",
+    includeShippingLines: true,
+  });
+  const syncBankInvoiceNoteAttributes = async (shopifyOrderGid: string) => {
+    const orderId = shopifyOrderGid.replace("gid://shopify/Order/", "");
+    try {
+      await shopifyAdminREST(shopifySession, `orders/${orderId}.json`, {
+        method: "PUT",
+        body: {
+          order: {
+            id: Number(orderId),
+            // REST replaces note_attributes rather than merging them. Reuse
+            // the complete canonical set already built for GraphQL so the
+            // legal-entity and delivery snapshots cannot be truncated.
+            note_attributes: orderInput.customAttributes.map((attribute) => ({
+              name: attribute.key,
+              value: attribute.value,
+            })),
+          },
+        },
+      });
+    } catch {
+      logWithCorrelation("warn", "B2B note_attributes REST update failed", {
+        checkoutSessionId: session.id,
+        shopifyOrderGid,
+      });
+    }
+  };
+
   const placeholder = await claimOrderLink(session);
-  if (placeholder.shopifyOrderGid) return placeholder;
+  if (placeholder.shopifyOrderGid) {
+    await syncBankInvoiceNoteAttributes(placeholder.shopifyOrderGid);
+    return placeholder;
+  }
 
   const existingShopifyOrder = await findExistingOrderBySourceIdentifier(shopifySession, {
     sourceIdentifier: session.sourceIdentifier ?? session.id,
@@ -468,20 +502,17 @@ export async function createBankInvoiceShopifyOrderIdempotent(publicToken: strin
     publicToken: session.publicToken,
   });
   if (existingShopifyOrder) {
-    return finalizeOrderLink({
+    const recovered = await finalizeOrderLink({
       orderLinkId: placeholder.id,
       checkoutSessionId: session.id,
       shopifyOrderGid: existingShopifyOrder.id,
       shopifyOrderName: existingShopifyOrder.name,
       orderStatus: "WAITING_BANK_PAYMENT",
     });
+    await syncBankInvoiceNoteAttributes(existingShopifyOrder.id);
+    return recovered;
   }
 
-  const orderInput = mapCheckoutToOrderCreateInput(session, null, {
-    financialStatus: "PENDING",
-    sourceName: "ua_b2b_bank_invoice",
-    includeShippingLines: true,
-  });
   let response: { data?: { orderCreate?: { userErrors: ShopifyOrderCreateError[]; order: { id: string; name: string } } } };
   try {
     response = await shopifyAdminGraphQL<typeof response>(shopifySession, ORDER_CREATE_MUTATION, {
@@ -534,38 +565,8 @@ export async function createBankInvoiceShopifyOrderIdempotent(publicToken: strin
     shopifyOrderName: created.name,
     orderStatus: "WAITING_BANK_PAYMENT",
   });
-  const orderId = created.id.replace("gid://shopify/Order/", "");
 
-  try {
-    await shopifyAdminREST(shopifySession, `orders/${orderId}.json`, {
-      method: "PUT",
-      body: {
-        order: {
-          id: Number(orderId),
-          note_attributes: mergeCheckoutNoteAttributes(
-            [
-              { name: "checkout_session_id", value: session.id },
-              { name: "payment_provider", value: "BANK_INVOICE" },
-              { name: "buyer_type", value: "fop_company" },
-              { name: "payment_preference", value: "bank_invoice" },
-              { name: "fop_name", value: String(attrs.fop_name ?? "") },
-              { name: "fop_tax_id", value: String(attrs.fop_tax_id ?? "") },
-              { name: "fop_legal_address", value: String(attrs.fop_legal_address ?? "") },
-              { name: "docs_email", value: String(attrs.docs_email ?? session.buyerEmail ?? "") },
-              { name: "docs_phone", value: String(attrs.docs_phone ?? session.buyerPhone ?? "") },
-              { name: "accounting_comment", value: String(attrs.accounting_comment ?? "") },
-            ],
-            (session.shippingPayload ?? {}) as NovaPoshtaShippingPayload
-          ),
-        },
-      },
-    });
-  } catch {
-    logWithCorrelation("warn", "B2B note_attributes REST update failed", {
-      checkoutSessionId: session.id,
-      shopifyOrderGid: created.id,
-    });
-  }
+  await syncBankInvoiceNoteAttributes(created.id);
 
   logWithCorrelation("info", "Shopify B2B bank invoice order created", {
     checkoutSessionId: session.id,

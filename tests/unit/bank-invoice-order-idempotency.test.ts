@@ -96,7 +96,13 @@ vi.mock("@/lib/shopify/admin", () => ({
 }));
 vi.mock("@/lib/shopify/order-mapper", () => ({
   ORDER_CREATE_MUTATION: "mutation OrderCreateExternal",
-  mapCheckoutToOrderCreateInput: vi.fn(() => ({})),
+  mapCheckoutToOrderCreateInput: vi.fn(() => ({
+    customAttributes: [
+      { key: "buyer_type", value: "fop_company" },
+      { key: "legal_entity_v1", value: "{\"version\":1}" },
+      { key: "delivery_address_v1", value: "{\"version\":1}" },
+    ],
+  })),
 }));
 vi.mock("@/lib/queue", () => ({ QUEUE_NAMES: {}, enqueueJob: vi.fn() }));
 vi.mock("@/lib/logger", () => ({ logWithCorrelation: vi.fn() }));
@@ -111,6 +117,7 @@ vi.mock("@/lib/shipping/shopify-np-note-attributes", () => ({
 import { createBankInvoiceShopifyOrderIdempotent } from "@/lib/shopify/order-writer";
 import { mapCheckoutToOrderCreateInput } from "@/lib/shopify/order-mapper";
 import { repriceCheckoutSession } from "@/lib/checkout/session-service";
+import { shopifyAdminREST } from "@/lib/shopify/admin";
 
 describe("bank invoice Shopify order creation", () => {
   beforeEach(() => {
@@ -119,6 +126,7 @@ describe("bank invoice Shopify order creation", () => {
     state.rejectPhoneOnce = false;
     vi.mocked(mapCheckoutToOrderCreateInput).mockClear();
     vi.mocked(repriceCheckoutSession).mockClear();
+    vi.mocked(shopifyAdminREST).mockClear();
   });
 
   it("issues one Shopify orderCreate for concurrent checkout requests", async () => {
@@ -172,5 +180,21 @@ describe("bank invoice Shopify order creation", () => {
 
     expect(repriceCheckoutSession).not.toHaveBeenCalled();
     expect(state.mutationCalls).toBe(0);
+    expect(shopifyAdminREST).toHaveBeenCalledWith(
+      expect.anything(),
+      "orders/1.json",
+      expect.objectContaining({
+        body: {
+          order: {
+            id: 1,
+            note_attributes: [
+              { name: "buyer_type", value: "fop_company" },
+              { name: "legal_entity_v1", value: "{\"version\":1}" },
+              { name: "delivery_address_v1", value: "{\"version\":1}" },
+            ],
+          },
+        },
+      }),
+    );
   });
 });
