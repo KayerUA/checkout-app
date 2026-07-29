@@ -66,8 +66,32 @@ function collectPdf(doc: PdfStream) {
   });
 }
 
-function truncate(value: string, max = 96) {
-  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+function fitTextToHeight(
+  doc: {
+    heightOfString(value: string, options: { width: number; lineGap?: number }): number;
+  },
+  value: string,
+  width: number,
+  maxHeight: number,
+  lineGap = 1
+) {
+  const normalized = value.trim() || "—";
+  if (doc.heightOfString(normalized, { width, lineGap }) <= maxHeight) return normalized;
+
+  let low = 1;
+  let high = normalized.length;
+  let fitted = "…";
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    const candidate = `${normalized.slice(0, middle).trimEnd()}…`;
+    if (doc.heightOfString(candidate, { width, lineGap }) <= maxHeight) {
+      fitted = candidate;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
+  }
+  return fitted;
 }
 
 export async function createInvoicePdf(input: B2BDocumentInput) {
@@ -78,6 +102,10 @@ export async function createInvoicePdf(input: B2BDocumentInput) {
   const sellerBank = env.SELLER_BANK_NAME || 'АТ КБ "ПРИВАТБАНК", м.Київ';
   const sellerAddress = env.SELLER_LEGAL_ADDRESS || "04074, м. Київ, вул Автозаводська 7, кв 5";
   const orderNumber = formatOrderNumber(input.shopifyOrderName);
+  const invoiceDate =
+    input.invoiceDate instanceof Date
+      ? input.invoiceDate
+      : new Date(input.invoiceDate as unknown as string);
 
   const doc = new PDFDocument({
     size: "A4",
@@ -94,6 +122,7 @@ export async function createInvoicePdf(input: B2BDocumentInput) {
   const left = 42;
   const right = pageWidth - 42;
   const width = right - left;
+  const pageBottom = 800;
   let y = 38;
 
   doc.lineWidth(1.1).rect(left + 30, y, width - 60, 42).stroke();
@@ -126,23 +155,28 @@ export async function createInvoicePdf(input: B2BDocumentInput) {
   doc.fontSize(8.4).text(sellerIban, left + 300, y + 68, { width: 205, align: "center" });
   y += 112;
 
-  doc.fontSize(14.5).text(
-    `Рахунок на оплату по замовленню № ${orderNumber} від ${formatLongDate(input.invoiceDate)} р.`,
-    left,
-    y,
-    { width }
-  );
-  y += 22;
+  const heading =
+    `Рахунок на оплату по замовленню № ${orderNumber} від ${formatLongDate(invoiceDate)} р.`;
+  doc.fontSize(14.5);
+  const headingHeight = doc.heightOfString(heading, { width });
+  doc.text(heading, left, y, { width });
+  y += headingHeight + 5;
   doc.lineWidth(1.8).moveTo(left, y).lineTo(right, y).stroke();
   y += 14;
 
   doc.fontSize(8.7);
   doc.text("Постачальник:", left, y, { width: 86, underline: true });
-  doc.text(`${sellerName}\nп/р ${sellerIban} у банку ${sellerBank}\n${sellerAddress}\nкод за ДРФО ${sellerTaxId}, ІПН ${sellerTaxId}`, left + 92, y, {
+  const supplierText =
+    `${sellerName}\nп/р ${sellerIban} у банку ${sellerBank}\n${sellerAddress}\nкод за ДРФО ${sellerTaxId}, ІПН ${sellerTaxId}`;
+  const supplierHeight = doc.heightOfString(supplierText, {
     width: width - 92,
     lineGap: 1,
   });
-  y += 52;
+  doc.text(supplierText, left + 92, y, {
+    width: width - 92,
+    lineGap: 1,
+  });
+  y += Math.max(52, supplierHeight + 5);
 
   doc.text("Покупець:", left, y, { width: 86, underline: true });
   const buyerLines = [
@@ -151,38 +185,94 @@ export async function createInvoicePdf(input: B2BDocumentInput) {
     input.buyer.docs_phone ? `Тел.: ${input.buyer.docs_phone}` : "",
     input.buyer.docs_email ? `E-mail: ${input.buyer.docs_email}` : "",
   ].filter(Boolean);
-  doc.text(buyerLines.join("\n"), left + 92, y, { width: width - 92, lineGap: 1 });
-  y += buyerLines.length > 2 ? 52 : 34;
-
-  const tableTop = y;
-  const cols = [left, left + 30, left + 322, left + 414, left + 470, right];
-  const headerHeight = 22;
-  doc.lineWidth(1.1).rect(left, tableTop, width, headerHeight).stroke();
-  doc.fontSize(8.5);
-  ["№", "Товар", "Кількість", "Ціна", "Сума"].forEach((label, index) => {
-    doc.text(label, cols[index] + 3, tableTop + 7, {
-      width: cols[index + 1] - cols[index] - 6,
-      align: index < 2 ? "center" : "right",
-    });
-    if (index > 0) doc.moveTo(cols[index], tableTop).lineTo(cols[index], tableTop + headerHeight).stroke();
+  const buyerText = buyerLines.join("\n");
+  const buyerHeight = doc.heightOfString(buyerText, {
+    width: width - 92,
+    lineGap: 1,
   });
-  y += headerHeight;
+  doc.text(buyerText, left + 92, y, { width: width - 92, lineGap: 1 });
+  y += Math.max(buyerLines.length > 2 ? 52 : 34, buyerHeight + 5);
+
+  // Keep monetary columns wide enough for formatted UAH values. The previous
+  // final column was only 41pt wide, so even ordinary five-digit totals escaped
+  // the right-hand border.
+  const cols = [left, left + 28, left + 293, left + 361, left + 431, right];
+  const headerHeight = 22;
+  const drawTableHeader = (top: number) => {
+    doc.lineWidth(1.1).rect(left, top, width, headerHeight).stroke();
+    doc.fontSize(8.5);
+    ["№", "Товар", "Кількість", "Ціна", "Сума"].forEach((label, index) => {
+      doc.text(label, cols[index] + 3, top + 7, {
+        width: cols[index + 1] - cols[index] - 6,
+        align: index <= 2 ? "center" : "right",
+        lineBreak: false,
+      });
+      if (index > 0) {
+        doc.moveTo(cols[index], top).lineTo(cols[index], top + headerHeight).stroke();
+      }
+    });
+    return top + headerHeight;
+  };
+  const addContinuationPage = (includeTableHeader: boolean) => {
+    doc.addPage();
+    let top = 38;
+    doc.fontSize(10).text(
+      `Рахунок № ${input.invoiceNumber} · замовлення № ${orderNumber} · продовження`,
+      left,
+      top,
+      { width, lineBreak: false }
+    );
+    top += 22;
+    return includeTableHeader ? drawTableHeader(top) : top;
+  };
+  y = drawTableHeader(y);
 
   input.lines.forEach((line, index) => {
-    const rowHeight = 24;
     const unit = lineUnitPrice(line);
     const qty = Number(line.quantity);
+    doc.fontSize(8);
+    const titleWidth = cols[2] - cols[1] - 8;
+    const title = fitTextToHeight(doc, line.title, titleWidth, 42);
+    const titleHeight = doc.heightOfString(title, { width: titleWidth, lineGap: 1 });
+    const rowHeight = Math.max(24, Math.ceil(titleHeight + 10));
+    if (y + rowHeight > pageBottom) {
+      y = addContinuationPage(true);
+    }
     doc.rect(left, y, width, rowHeight).stroke();
     cols.slice(1, -1).forEach((x) => doc.moveTo(x, y).lineTo(x, y + rowHeight).stroke());
-    doc.fontSize(8);
-    doc.text(String(index + 1), cols[0] + 3, y + 7, { width: cols[1] - cols[0] - 6, align: "center" });
-    doc.text(truncate(line.title, 78), cols[1] + 4, y + 5, { width: cols[2] - cols[1] - 8, lineGap: 1 });
-    doc.text(`${qty} шт`, cols[2] + 4, y + 7, { width: cols[3] - cols[2] - 8, align: "center" });
-    doc.text(moneyNumber(unit), cols[3] + 4, y + 7, { width: cols[4] - cols[3] - 8, align: "right" });
-    doc.text(moneyNumber(unit * qty), cols[4] + 4, y + 7, { width: cols[5] - cols[4] - 8, align: "right" });
+    const verticallyCenteredY = y + Math.max(5, (rowHeight - 9) / 2);
+    doc.text(String(index + 1), cols[0] + 3, verticallyCenteredY, {
+      width: cols[1] - cols[0] - 6,
+      align: "center",
+      lineBreak: false,
+    });
+    doc.text(title, cols[1] + 4, y + 5, {
+      width: titleWidth,
+      height: rowHeight - 10,
+      lineGap: 1,
+      ellipsis: true,
+    });
+    doc.text(`${qty} шт`, cols[2] + 4, verticallyCenteredY, {
+      width: cols[3] - cols[2] - 8,
+      align: "center",
+      lineBreak: false,
+    });
+    doc.text(moneyNumber(unit), cols[3] + 4, verticallyCenteredY, {
+      width: cols[4] - cols[3] - 8,
+      align: "right",
+      lineBreak: false,
+    });
+    doc.text(moneyNumber(unit * qty), cols[4] + 4, verticallyCenteredY, {
+      width: cols[5] - cols[4] - 8,
+      align: "right",
+      lineBreak: false,
+    });
     y += rowHeight;
   });
 
+  if (y + 150 > pageBottom) {
+    y = addContinuationPage(false);
+  }
   y += 10;
   doc.fontSize(10).text("Разом:", left + 332, y, { width: 100, align: "right" });
   doc.fontSize(11).text(moneyNumber(input.amount), left + 438, y, { width: 90, align: "right" });

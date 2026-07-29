@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getEnv } from "@/lib/env";
 import { reconcileBankPayments } from "@/lib/reconciliation/service";
+import { dispatchPendingAccountingNotifications } from "@/lib/accounting/diloshop";
 
 export const runtime = "nodejs";
 
@@ -22,6 +23,15 @@ export async function GET(request: NextRequest) {
   const days = Number(request.nextUrl.searchParams.get("days") ?? 7);
   const to = new Date();
   const from = new Date(Date.now() - Math.max(1, days) * 24 * 60 * 60 * 1000);
-  const result = await reconcileBankPayments({ from, to });
-  return NextResponse.json(result);
+  let accountingDispatch:
+    | Awaited<ReturnType<typeof dispatchPendingAccountingNotifications>>
+    | undefined;
+  let result: Awaited<ReturnType<typeof reconcileBankPayments>>;
+  try {
+    result = await reconcileBankPayments({ from, to });
+  } finally {
+    // Delivery retries are independent from the B2B order's final business status.
+    accountingDispatch = await dispatchPendingAccountingNotifications();
+  }
+  return NextResponse.json({ ...result, accountingDispatch });
 }

@@ -212,6 +212,104 @@ describe("B2B invoice checkout", () => {
       },
     });
   });
+
+  it("can create a guest order without upserting a conflicting Shopify customer", () => {
+    const session = {
+      id: "session-guest-1",
+      merchantId: "merchant-1",
+      publicToken: "token-guest-1",
+      status: "READY" as const,
+      sourceIdentifier: "chk_guest_1",
+      currency: "UAH",
+      subtotal: 10000,
+      shippingAmount: 0,
+      discountAmount: 0,
+      totalAmount: 10000,
+      buyerEmail: "buyer@example.com",
+      buyerPhone: "+380501111111",
+      buyerFirstName: "Тест",
+      buyerLastName: "Покупець",
+      shippingMethodCode: "nova_poshta_branch",
+      shippingProvider: "nova_poshta",
+      shippingPayload: { branchRef: "np-1", branchName: "Відділення 1", cityName: "Київ" },
+      billingPayload: null,
+      paymentProvider: null,
+      customAttributes: {},
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      abandonedAt: null,
+      lines: [{
+        id: "line-guest-1", checkoutSessionId: "session-guest-1", variantGid: "gid://shopify/ProductVariant/1",
+        productGid: null, sku: null, title: "Product", quantity: 1, unitPrice: 10000,
+        compareAtPrice: null, lineDiscountAmount: 0, metadata: null,
+      }],
+      paymentAttempts: [],
+    };
+
+    const order = mapCheckoutToOrderCreateInput(session, null, { includeCustomer: false });
+
+    expect(order.customer).toBeUndefined();
+    expect(order.email).toBe("buyer@example.com");
+    expect(order.phone).toBe("+380501111111");
+  });
+
+  it("can retry a Shopify order without validated phone fields", () => {
+    const session = {
+      id: "session-no-phone-1",
+      merchantId: "merchant-1",
+      publicToken: "token-no-phone-1",
+      status: "READY" as const,
+      sourceIdentifier: "chk_no_phone_1",
+      currency: "UAH",
+      subtotal: 10000,
+      shippingAmount: 0,
+      discountAmount: 0,
+      totalAmount: 10000,
+      buyerEmail: "buyer@example.com",
+      buyerPhone: "+380501111111",
+      buyerFirstName: "Тест",
+      buyerLastName: "Покупець",
+      shippingProvider: "nova_poshta",
+      shippingMethodCode: "nova_poshta_branch",
+      shippingPayload: {
+        cityName: "Київ",
+        branchName: "Відділення №1",
+      },
+      billingPayload: null,
+      customAttributes: {
+        docs_phone: "+380501111111",
+        contact_phone: "+380501111111",
+      },
+      paymentProvider: null,
+      expiresAt: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      abandonedAt: null,
+      lines: [{
+        id: "line-no-phone-1", checkoutSessionId: "session-no-phone-1",
+        variantGid: "gid://shopify/ProductVariant/1", productGid: null,
+        sku: null, title: "Product", quantity: 1, unitPrice: 10000,
+        compareAtPrice: null, lineDiscountAmount: 0, metadata: null,
+      }],
+      paymentAttempts: [],
+    };
+
+    const order = mapCheckoutToOrderCreateInput(session, null, {
+      includeCustomer: false,
+      includePhone: false,
+    });
+
+    expect(order.customer).toBeUndefined();
+    expect(order.email).toBe("buyer@example.com");
+    expect(order.phone).toBeUndefined();
+    expect(order.shippingAddress.phone).toBeUndefined();
+    expect(order.customAttributes).toEqual(
+      expect.arrayContaining([
+        { key: "docs_phone", value: "+380501111111" },
+        { key: "contact_phone", value: "+380501111111" },
+      ]),
+    );
+  });
 });
 
 describe("Shopify order mapping", () => {

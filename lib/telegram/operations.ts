@@ -46,6 +46,57 @@ async function isResolvedNovaPoshtaFallbackError(error: {
   ));
 }
 
+async function isResolvedMatchedPaymentError(error: {
+  step: string | null;
+  shopifyOrderId: string | null;
+  metadata: unknown;
+}) {
+  if (error.step !== "matched_payment_finalize" || !error.shopifyOrderId) return false;
+  const metadata = error.metadata && typeof error.metadata === "object" && !Array.isArray(error.metadata)
+    ? error.metadata as Record<string, unknown>
+    : {};
+  const transactionId = typeof metadata.transactionId === "string" ? metadata.transactionId : null;
+  const [order, payment] = await Promise.all([
+    prisma.b2BOrder.findUnique({
+      where: { shopifyOrderId: error.shopifyOrderId },
+      select: { paymentStatus: true, status: true },
+    }),
+    transactionId
+      ? prisma.bankPayment.findUnique({
+          where: { transactionId },
+          select: { status: true, matchedShopifyOrderId: true },
+        })
+      : null,
+  ]);
+  return Boolean(
+    order?.paymentStatus === "PAID" &&
+    ["PAYMENT_MATCHED", "PAYMENT_CONFIRMED", "DOCS_SENT", "READY_TO_FULFILL_AFTER_BANK_PAYMENT"].includes(order.status) &&
+    payment?.status === "MATCHED" &&
+    payment.matchedShopifyOrderId === error.shopifyOrderId
+  );
+}
+
+async function isResolvedShopifyRecoveryError(error: {
+  step: string | null;
+  shopifyOrderId: string | null;
+}) {
+  if (error.step !== "action:recover-shopify-order" || !error.shopifyOrderId) {
+    return false;
+  }
+  // Telegram audit historically stored the checkout session ID in
+  // shopifyOrderId for this action. Keep the failed attempt in history, but do
+  // not show it as an active issue once the checkout has a Shopify order link.
+  const session = await prisma.checkoutSession.findUnique({
+    where: { id: error.shopifyOrderId },
+    select: {
+      orderLink: {
+        select: { shopifyOrderGid: true },
+      },
+    },
+  });
+  return Boolean(session?.orderLink?.shopifyOrderGid);
+}
+
 export async function prepareShopifyOrderRecovery(reference: string) {
   const value = reference.trim();
   if (!value) return { error: "Укажите Checkout ID или source identifier." } as const;
@@ -332,13 +383,44 @@ export async function buildIssuesSummary(hours = 24, filter?: string): Promise<T
     getDiloshopIssues(hours, 20).catch(() => null),
   ]);
   const resolvedAutomationErrors = await Promise.all(
-    automationErrors.map((error) => isResolvedNovaPoshtaFallbackError(error))
+    automationErrors.map(async (error) =>
+      (await isResolvedNovaPoshtaFallbackError(error)) ||
+      (await isResolvedMatchedPaymentError(error)) ||
+      (await isResolvedShopifyRecoveryError(error))
+    )
   );
   const activeAutomationErrors = automationErrors.filter((_, index) => !resolvedAutomationErrors[index]);
+  const errorOrderIds = Array.from(new Set(
+    activeAutomationErrors.map((error) => error.shopifyOrderId).filter(Boolean)
+  )) as string[];
+  const errorOrders = errorOrderIds.length
+    ? await prisma.b2BOrder.findMany({
+        where: { shopifyOrderId: { in: errorOrderIds } },
+        select: { shopifyOrderId: true, shopifyOrderName: true },
+      })
+    : [];
+  const errorOrderNames = new Map(
+    errorOrders.map((order) => [order.shopifyOrderId, order.shopifyOrderName ?? order.shopifyOrderId])
+  );
   const show = (name: string) => !filter || filter === "all" || filter === name;
   const lines = [`Проблемы за ${hours} ч:`];
   if (show("payments")) {
     lines.push(`Оплачено без Shopify: ${paidWithoutOrder.length}`, `Банк без матча/review: ${unmatched.length}`);
+    if (unmatched.length) {
+      lines.push(
+        "",
+        "Банковские платежи без матча:",
+        ...unmatched.slice(0, 5).map((payment) => [
+          `• ${money(Number(payment.amount), payment.currency)}`,
+          payment.payerName ?? "плательщик неизвестен",
+          payment.status,
+          `ref …${payment.transactionId.slice(-8)}`,
+          payment.paymentDescription
+            ? payment.paymentDescription.replace(/\s+/g, " ").slice(0, 90)
+            : null,
+        ].filter(Boolean).join(" · "))
+      );
+    }
   }
   if (show("b2b")) lines.push(`B2B partial/overpayment: ${partial.length}`);
   if (show("fiscal")) lines.push(`Фискализация failed: ${fiscalFailed.length}`);
@@ -355,11 +437,31 @@ export async function buildIssuesSummary(hours = 24, filter?: string): Promise<T
     new Set(partial.map((row) => row.shopifyOrderName).filter(Boolean))
   ).slice(0, 8) as string[];
   if (activeAutomationErrors.length) {
-    lines.push("", ...activeAutomationErrors.slice(0, 5).map((row) => `• ${row.step ?? row.eventType}: ${(row.errorMessage ?? row.message ?? "ошибка").slice(0, 180)}`));
+    lines.push("", ...activeAutomationErrors.slice(0, 5).map((row) => {
+      const metadata = row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+        ? row.metadata as Record<string, unknown>
+        : {};
+      const transactionId = typeof metadata.transactionId === "string" ? metadata.transactionId : null;
+      const relation = [
+        row.shopifyOrderId ? errorOrderNames.get(row.shopifyOrderId) ?? row.shopifyOrderId : null,
+        transactionId ? `ref …${transactionId.slice(-8)}` : null,
+      ].filter(Boolean).join(" · ");
+      return `• ${row.step ?? row.eventType}${relation ? ` · ${relation}` : ""}: ${(row.errorMessage ?? row.message ?? "ошибка").slice(0, 180)}`;
+    }));
   }
-  const inline_keyboard = orders.map((order) => [
+  const relatedOrders = Array.from(new Set([
+    ...orders,
+    ...errorOrders.map((order) => order.shopifyOrderName).filter(Boolean),
+  ])).slice(0, 8) as string[];
+  const inline_keyboard = relatedOrders.map((order) => [
     { text: `Открыть ${order}`, callback_data: `lookup|${order.replace(/^#/, "")}` },
   ]);
+  if (unmatched.length) {
+    inline_keyboard.push([{
+      text: `🧾 Разобрать платежи (${unmatched.length})`,
+      callback_data: "bank_review",
+    }]);
+  }
   inline_keyboard.push([{ text: "🔄 Обновить", callback_data: `issues|${hours}|${filter ?? "all"}` }]);
   inline_keyboard.push(telegramMenuKeyboard());
   return { text: lines.join("\n"), replyMarkup: { inline_keyboard } };

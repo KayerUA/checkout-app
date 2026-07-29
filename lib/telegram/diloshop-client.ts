@@ -77,6 +77,22 @@ export function getDiloshopOrder(shopifyOrderId: string) {
   return request<DiloshopOrderState>(`/order/${encodeURIComponent(shopifyOrderId)}`);
 }
 
+export function getDiloshopOrderMappings(shopifyOrderIds: string[]) {
+  const uniqueIds = Array.from(
+    new Set(shopifyOrderIds.map((value) => value.trim()).filter(Boolean))
+  ).slice(0, 100);
+  if (uniqueIds.length === 0) {
+    return Promise.resolve({ mappings: {} as Record<string, Record<string, unknown>> });
+  }
+  return request<{ mappings: Record<string, Record<string, unknown>> }>(
+    "/order-mappings",
+    {
+      method: "POST",
+      body: JSON.stringify({ order_ids: uniqueIds }),
+    }
+  );
+}
+
 export function getDiloshopSku(sku: string) {
   return request<{
     sku: string;

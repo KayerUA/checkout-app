@@ -38,7 +38,9 @@ export async function PATCH(
       );
     }
     const body = checkoutSessionPatchSchema.parse(await request.json());
-    const session = await updateCheckoutSession(token, body);
+    const authHeader = request.headers.get("authorization");
+    const storefrontPricingToken = authHeader?.match(/^Bearer\s+(.+)$/i)?.[1] ?? null;
+    const session = await updateCheckoutSession(token, body, { storefrontPricingToken });
     return NextResponse.json(serializePublicSession(
       await getCheckoutSessionByToken(session.publicToken)
     ));

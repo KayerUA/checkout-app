@@ -3,6 +3,7 @@ import {
   allocateProportionalDiscountCents,
   mapCheckoutToOrderCreateInput,
 } from "@/lib/shopify/order-mapper";
+import { liqpayAdapter } from "@/lib/payments/liqpay";
 
 function sessionWithDiscount(appliedDiscountCode?: string) {
   return {
@@ -105,5 +106,48 @@ describe("Shopify cart discount mapping", () => {
     });
     expect(order.customAttributes).toContainEqual({ key: "partnerMarket", value: "KHARKIV" });
     expect(order.customAttributes).toContainEqual({ key: "pricingMode", value: "partner_rules" });
+  });
+
+  it("keeps checkout, Shopify and LiqPay totals equal after 25% plus 5%", async () => {
+    const session = sessionWithDiscount("KAYERUA5");
+    session.subtotal = 1_235_625;
+    session.discountAmount = 61_781;
+    session.totalAmount = 1_173_844;
+    session.lines[0].quantity = 1;
+    session.lines[0].unitPrice = 1_235_625;
+
+    const order = mapCheckoutToOrderCreateInput(session, null);
+    const shopifyTotalCents =
+      Math.round(order.lineItems[0].priceSet.shopMoney.amount * 100) -
+      Math.round(
+        order.discountCode!.itemFixedDiscountCode.amountSet.shopMoney.amount * 100
+      );
+    const payment = await liqpayAdapter.initPayment({
+      amount: session.totalAmount,
+      currency: "UAH",
+      description: "Test",
+      orderReference: "test-order",
+      returnUrl: "https://example.com/return",
+      callbackUrl: "https://example.com/callback",
+      config: { publicKey: "public", privateKey: "private" },
+    });
+
+    expect(shopifyTotalCents).toBe(1_173_844);
+    expect(payment.requestPayload).toMatchObject({ amount: 11_738.44 });
+  });
+
+  it("supports a 100% discount without requiring a positive total", () => {
+    const session = sessionWithDiscount("FREE100");
+    session.subtotal = 15_300;
+    session.discountAmount = 15_300;
+    session.totalAmount = 0;
+
+    const order = mapCheckoutToOrderCreateInput(session, null);
+    const total =
+      Math.round(order.lineItems[0].priceSet.shopMoney.amount * 2 * 100) -
+      Math.round(
+        order.discountCode!.itemFixedDiscountCode.amountSet.shopMoney.amount * 100
+      );
+    expect(total).toBe(0);
   });
 });

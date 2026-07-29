@@ -10,6 +10,8 @@ export type FopOrderAttributes = {
   docs_email?: string;
   docs_phone?: string;
   accounting_comment?: string;
+  legal_entity_id?: string;
+  legal_entity_snapshot?: import("@/lib/legal-entities/model").LegalEntitySnapshot;
 };
 
 export type ShopifyOrderLine = {

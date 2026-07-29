@@ -6,6 +6,10 @@ import { getEnv } from "@/lib/env";
 import { publicCheckoutSessionCreateSchema } from "@/lib/checkout/public-input";
 import { checkRateLimit, rateLimitHeaders } from "@/lib/rate-limit";
 import { apiErrorResponse } from "@/lib/api/errors";
+import {
+  signStorefrontPricingToken,
+  verifyStorefrontPricingToken,
+} from "@/lib/checkout/storefront-pricing-token";
 
 export async function OPTIONS(request: NextRequest) {
   return handleCorsPreflight(request) ?? new NextResponse(null, { status: 204 });
@@ -90,11 +94,28 @@ export async function POST(request: NextRequest) {
       session.totalAmount / 100
     );
 
+    const verifiedCustomer = body.storefrontPricingToken
+      ? verifyStorefrontPricingToken(body.storefrontPricingToken, session.merchant.shopDomain)
+      : null;
+    const customerFragmentToken = verifiedCustomer
+      ? signStorefrontPricingToken({
+          shop: verifiedCustomer.shop,
+          customerGid: verifiedCustomer.customerGid,
+          email: verifiedCustomer.email,
+          ttlSec: 2 * 60 * 60,
+        })
+      : null;
+    const checkoutUrl = `/checkout/${session.publicToken}${
+      customerFragmentToken
+        ? `#customer_auth=${encodeURIComponent(customerFragmentToken)}`
+        : ""
+    }`;
+
     return withCors(
       NextResponse.json({
         sessionId: session.id,
         publicToken: session.publicToken,
-        checkoutUrl: `/checkout/${session.publicToken}`,
+        checkoutUrl,
         sourceIdentifier: session.sourceIdentifier,
         totals: {
           subtotal: session.subtotal,

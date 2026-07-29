@@ -1,6 +1,10 @@
 import { z } from "zod";
 import type { FopOrderAttributes, ShopifyOrderPayload } from "@/lib/b2b/types";
 import { normalizeUaPhone } from "@/lib/checkout/phone";
+import {
+  LEGAL_ENTITY_TRANSPORT_ATTRIBUTE,
+  parseLegalEntityTransport,
+} from "@/lib/legal-entities/model";
 
 const b2bAttributeSchema = z.object({
   buyer_type: z.enum(["individual", "fop_company"]).default("individual"),
@@ -38,7 +42,25 @@ export function getOrderAttributes(order: ShopifyOrderPayload): Record<string, s
 }
 
 export function getB2BAttributesFromOrder(order: ShopifyOrderPayload): FopOrderAttributes {
-  return normalizeB2BAttributes(getOrderAttributes(order));
+  const attributes = getOrderAttributes(order);
+  const snapshot = parseLegalEntityTransport(attributes[LEGAL_ENTITY_TRANSPORT_ATTRIBUTE]);
+  const legacy = normalizeB2BAttributes({
+    ...attributes,
+    ...(snapshot
+      ? {
+          fop_name: snapshot.legalName,
+          fop_tax_id: snapshot.taxId,
+          fop_legal_address: snapshot.legalAddress,
+          docs_email: snapshot.contactEmail ?? attributes.docs_email,
+          docs_phone: snapshot.contactPhone ?? attributes.docs_phone,
+        }
+      : {}),
+  });
+  return {
+    ...legacy,
+    legal_entity_id: attributes.legal_entity_id || undefined,
+    legal_entity_snapshot: snapshot ?? undefined,
+  };
 }
 
 export function validateFopFields(attrs: FopOrderAttributes) {

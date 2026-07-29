@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { getCheckoutSessionByToken } from "@/lib/checkout/session-service";
 import { formatMoney } from "@/lib/checkout/pricing";
+import { publicInvoiceUrl } from "@/lib/documents/public-invoice-link";
 import { prisma } from "@/lib/db";
 import { BRAND, CheckoutHeader } from "@/components/checkout/checkout-header";
 import { CheckoutFooter } from "@/components/checkout/checkout-footer";
@@ -64,6 +65,7 @@ export default async function ThankYouPage({
       })
     : null;
   const invoiceReady = Boolean(invoice?.number && invoice.pdfUrl);
+  const invoiceDownloadUrl = invoiceReady ? publicInvoiceUrl(invoice!.id) : null;
   const shouldClearStorefrontCart =
     !isLiqPayPending &&
     (isBankInvoice || ["PAID", "COMPLETED"].includes(session.status) || Boolean(session.orderLink));
@@ -166,7 +168,7 @@ export default async function ThankYouPage({
                     <div className="flex justify-between gap-4">
                       <span className="text-muted-foreground">Рахунок</span>
                       <a
-                        href={invoice!.pdfUrl!}
+                        href={invoiceDownloadUrl!}
                         className="inline-flex items-center gap-1 text-right font-medium hover:underline"
                         target="_blank"
                         rel="noreferrer"
@@ -199,7 +201,7 @@ export default async function ThankYouPage({
                       nativeButton={false}
                       render={
                         <a
-                          href={invoice!.pdfUrl!}
+                          href={invoiceDownloadUrl!}
                           target="_blank"
                           rel="noreferrer"
                           download

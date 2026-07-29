@@ -6,6 +6,12 @@ import {
 import { isPartnerProgramDiscountCode } from "@/lib/checkout/partner-pricing";
 import { normalizePhoneForShopify } from "@/lib/checkout/phone";
 import { normalizeUaPersonName } from "@/lib/checkout/ua-person-name";
+import {
+  LEGAL_ENTITY_TRANSPORT_ATTRIBUTE,
+  legalEntitySnapshotSchema,
+  legalEntityTransport,
+  legalEntityV2Enabled,
+} from "@/lib/legal-entities/model";
 
 const ORDER_CREATE_MUTATION = `
   mutation OrderCreateExternal($order: OrderCreateOrderInput!, $options: OrderCreateOptionsInput) {
@@ -22,7 +28,15 @@ const ORDER_CREATE_MUTATION = `
   }
 `;
 
-type SessionWithRelations = CheckoutSession & {
+export const DELIVERY_ADDRESS_TRANSPORT_ATTRIBUTE = "delivery_address_v1";
+
+type SessionWithRelations = Omit<
+  CheckoutSession,
+  "shopifyCustomerGid" | "legalEntityId" | "legalEntitySnapshot"
+> &
+  Partial<
+    Pick<CheckoutSession, "shopifyCustomerGid" | "legalEntityId" | "legalEntitySnapshot">
+  > & {
   lines: CheckoutLine[];
   paymentAttempts: PaymentAttempt[];
 };
@@ -58,6 +72,17 @@ export function mapCheckoutToOrderCreateInput(
     financialStatus?: "PAID" | "PENDING";
     sourceName?: string;
     includeShippingLines?: boolean;
+    /**
+     * Keep the order as a guest checkout when Shopify cannot safely upsert a
+     * customer (for example, when its phone belongs to a different account).
+     */
+    includeCustomer?: boolean;
+    /**
+     * Omit Shopify's validated phone fields on a retry after Shopify rejects
+     * the phone. The contact phone remains in the checkout snapshot and custom
+     * attributes used by fulfillment and accounting.
+     */
+    includePhone?: boolean;
   }
 ) {
   const shippingPayload = (session.shippingPayload ?? {}) as NovaPoshtaShippingPayload;
@@ -72,6 +97,28 @@ export function mapCheckoutToOrderCreateInput(
     { key: "checkout_public_token", value: session.publicToken },
     { key: "source_identifier", value: session.sourceIdentifier ?? session.id },
   ];
+  const deliveryAddressSnapshot = {
+    version: 1,
+    recipient: {
+      firstName: session.buyerFirstName?.trim() ?? "",
+      lastName: session.buyerLastName?.trim() ?? "",
+      phone: session.buyerPhone?.trim() ?? "",
+    },
+    delivery: {
+      methodCode: session.shippingMethodCode ?? "",
+      provider: session.shippingProvider ?? "",
+      address1: shippingPayload.branchName ?? shippingPayload.address ?? "",
+      address2: "",
+      city: shippingPayload.cityName ?? "",
+      province: "",
+      zip: shippingPayload.postalCode ?? "",
+      countryCode: "UA",
+    },
+  };
+  customAttributes.push({
+    key: DELIVERY_ADDRESS_TRANSPORT_ATTRIBUTE,
+    value: JSON.stringify(deliveryAddressSnapshot),
+  });
 
   [
     "buyer_type",
@@ -84,10 +131,31 @@ export function mapCheckoutToOrderCreateInput(
     "accounting_comment",
     "partnerMarket",
     "pricingMode",
+    "entity_type",
+    "short_name",
+    "vat_number",
+    "actual_address",
+    "contact_name",
+    "contact_email",
+    "contact_phone",
+    "iban",
   ].forEach((key) => {
     const value = sessionAttrs[key];
     if (typeof value === "string" && value) customAttributes.push({ key, value });
   });
+
+  if (legalEntityV2Enabled()) {
+    const snapshot = legalEntitySnapshotSchema.safeParse(session.legalEntitySnapshot);
+    if (snapshot.success) {
+      customAttributes.push({
+        key: LEGAL_ENTITY_TRANSPORT_ATTRIBUTE,
+        value: legalEntityTransport(snapshot.data),
+      });
+      if (session.legalEntityId) {
+        customAttributes.push({ key: "legal_entity_id", value: session.legalEntityId });
+      }
+    }
+  }
 
   for (const row of buildShopifyNovaPoshtaNoteAttributes(shippingPayload)) {
     customAttributes.push({ key: row.name, value: row.value });
@@ -116,6 +184,7 @@ export function mapCheckoutToOrderCreateInput(
   );
   const buyerEmail = session.buyerEmail?.trim() || undefined;
   const buyerPhone = normalizePhoneForShopify(session.buyerPhone);
+  const shopifyPhone = options?.includePhone === false ? undefined : buyerPhone;
   const buyerFirstName =
     normalizeUaPersonName(session.buyerFirstName?.trim() || undefined) || undefined;
   const buyerLastName =
@@ -124,13 +193,13 @@ export function mapCheckoutToOrderCreateInput(
   return {
     currency: session.currency,
     email: buyerEmail,
-    phone: buyerPhone,
-    ...((buyerEmail || buyerPhone)
+    ...(shopifyPhone ? { phone: shopifyPhone } : {}),
+    ...(options?.includeCustomer !== false && (buyerEmail || shopifyPhone)
       ? {
           customer: {
             toUpsert: {
               email: buyerEmail,
-              phone: buyerPhone,
+              ...(shopifyPhone ? { phone: shopifyPhone } : {}),
               firstName: buyerFirstName,
               lastName: buyerLastName,
             },
@@ -206,7 +275,7 @@ export function mapCheckoutToOrderCreateInput(
     shippingAddress: {
       firstName: buyerFirstName ?? "",
       lastName: buyerLastName ?? "",
-      phone: buyerPhone,
+      ...(shopifyPhone ? { phone: shopifyPhone } : {}),
       address1: shippingPayload.branchName ?? shippingPayload.address ?? "",
       city: shippingPayload.cityName ?? "",
       countryCode: "UA",

@@ -58,7 +58,11 @@ export function calculateShopifyPaymentPresentation(input: {
     Math.round(input.businessOverpaymentAmount * 100)
   );
   const differenceCents = paidCents - recordedCents;
-  const overpaymentCents = Math.max(businessOverpaymentCents, differenceCents, 0);
+  // A Shopify transaction snapshot may lag an orders/paid webhook or represent
+  // a different gateway. It is useful audit information, but it is not money
+  // the buyer overpaid. Only the cumulative bank amount above the invoice can
+  // produce an overpayment state.
+  const overpaymentCents = businessOverpaymentCents;
   return {
     status: (overpaymentCents > 0 ? "PAID_WITH_OVERPAYMENT" : "PAID") as
       | "PAID"
@@ -351,18 +355,33 @@ async function attachBankPaymentAndCalculateProgress(input: {
       paidAmount
     );
 
+    const authoritativeReference = [
+      "tax_id_and_order_number",
+      "tax_id_and_numeric_order_number",
+    ].includes(input.matchingMethod);
+    const settledProgress = authoritativeReference
+      ? {
+          ...progress,
+          status: "PAID" as const,
+          remainingAmount: 0,
+          overpaymentAmount: 0,
+          isFullyPaid: true,
+          invoiceDifferenceAmount: Number((progress.paidAmount - progress.expectedAmount).toFixed(2)),
+        }
+      : { ...progress, invoiceDifferenceAmount: 0 };
+
     await db.b2BOrder.update({
       where: { shopifyOrderId: input.order.shopifyOrderId },
       data: {
-        orderTotalAmount: progress.expectedAmount,
-        expectedAmount: progress.expectedAmount,
-        paidAmount: progress.paidAmount,
-        remainingAmount: progress.remainingAmount,
-        paymentStatus: progress.status,
-        status: progress.isFullyPaid ? "PAYMENT_MATCHED" : "PARTIALLY_PAID",
+        orderTotalAmount: settledProgress.expectedAmount,
+        expectedAmount: settledProgress.expectedAmount,
+        paidAmount: settledProgress.paidAmount,
+        remainingAmount: settledProgress.remainingAmount,
+        paymentStatus: settledProgress.status,
+        status: settledProgress.isFullyPaid ? "PAYMENT_MATCHED" : "PARTIALLY_PAID",
       },
     });
-    return progress;
+    return settledProgress;
   }, { isolationLevel: "Serializable" });
 }
 
@@ -509,8 +528,11 @@ async function applyPartialBankPaymentState(input: {
 async function applyFullyPaidBankPaymentState(input: {
   tx: BankTransaction;
   order: B2BOrder;
-  progress: ReturnType<typeof calculateBankPaymentProgress>;
+  progress: ReturnType<typeof calculateBankPaymentProgress> & {
+    invoiceDifferenceAmount?: number;
+  };
 }) {
+  const invoiceDifferenceAmount = input.progress.invoiceDifferenceAmount ?? 0;
   const shopifyPayment = await markOrderPaidByBankTransfer({
     shopDomain: input.order.shopDomain,
     orderId: input.order.shopifyOrderId,
@@ -533,6 +555,32 @@ async function applyFullyPaidBankPaymentState(input: {
     shopifyRecordedAmount: presentation.shopifyRecordedAmount,
     differenceAmount: presentation.bankVsShopifyDifferenceAmount,
   });
+  if (invoiceDifferenceAmount !== 0) {
+    try {
+      await appendOrderNote({
+        shopDomain: input.order.shopDomain,
+        orderId: input.order.shopifyOrderId,
+        marker: `[${input.tx.transaction_id}]:invoice-adjustment`,
+        message: [
+          `Банківська оплата за номером замовлення та ІПН підтверджена.`,
+          `Отримано ${input.progress.paidAmount.toFixed(2)} ${input.tx.currency};`,
+          `сума рахунку ${input.progress.expectedAmount.toFixed(2)} ${input.tx.currency};`,
+          `коригування ${invoiceDifferenceAmount >= 0 ? "+" : ""}${invoiceDifferenceAmount.toFixed(2)} ${input.tx.currency}.`,
+          "Замовлення вважається оплаченим повністю.",
+        ].join(" "),
+      });
+    } catch (error) {
+      await writeAutomationLog({
+        shopifyOrderId: input.order.shopifyOrderId,
+        eventType: "bank/reconcile",
+        step: "invoice_adjustment_note",
+        status: "WARN",
+        message: "Payment was accepted, but the invoice adjustment comment failed",
+        error,
+        metadata: { transactionId: input.tx.transaction_id },
+      });
+    }
+  }
 
   if (presentation.bankVsShopifyDifferenceAmount !== 0) {
     try {
@@ -589,6 +637,7 @@ async function applyFullyPaidBankPaymentState(input: {
       shopify_recorded_paid_amount_uah: presentation.shopifyRecordedAmount.toFixed(2),
       bank_vs_shopify_difference_uah:
         presentation.bankVsShopifyDifferenceAmount.toFixed(2),
+      bank_vs_invoice_difference_uah: invoiceDifferenceAmount.toFixed(2),
       payment_reconcile_note: reconcileNote,
       bank_transaction_id: input.tx.transaction_id,
       shopify_bank_transaction_id: shopifyPayment.transaction.id,

@@ -65,6 +65,14 @@ export const editableCheckoutAttributesSchema = z
     docs_email: email.optional(),
     docs_phone: optionalDocumentPhone,
     accounting_comment: z.string().trim().max(1000).nullable().optional(),
+    entity_type: z.enum(["FOP", "LEGAL_PERSON"]).nullable().optional(),
+    short_name: nullableShortText.optional(),
+    vat_number: z.string().trim().max(20).nullable().optional(),
+    actual_address: z.string().trim().max(500).nullable().optional(),
+    contact_name: nullableShortText.optional(),
+    contact_email: email.optional(),
+    contact_phone: optionalDocumentPhone,
+    iban: z.string().trim().max(34).nullable().optional(),
   })
   .strict();
 
@@ -78,6 +86,7 @@ export const checkoutSessionPatchSchema = z
     shippingProvider: z.literal("nova_poshta").optional(),
     shippingPayload: checkoutShippingPayloadSchema.optional(),
     paymentProvider: z.enum(["LIQPAY", "BANK_INVOICE"]).optional(),
+    legalEntityId: z.string().uuid().nullable().optional(),
     customAttributes: editableCheckoutAttributesSchema.optional(),
     status: z.literal("READY").optional(),
   })

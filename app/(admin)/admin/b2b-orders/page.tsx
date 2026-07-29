@@ -8,6 +8,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Building2 } from "lucide-react";
+import { getDiloshopOrderMappings } from "@/lib/telegram/diloshop-client";
 
 export default async function B2BOrdersPage() {
   try {
@@ -25,13 +26,25 @@ export default async function B2BOrdersPage() {
   });
   const payments = await prisma.bankPayment.findMany({
     where: { matchedShopifyOrderId: { in: orders.map((order) => order.shopifyOrderId) } },
+    orderBy: { transactionDate: "desc" },
   });
+  const diloshop = await getDiloshopOrderMappings(
+    orders.map((order) => order.shopifyOrderId)
+  ).catch(() => null);
 
   const docsByOrder = new Map<string, typeof documents>();
   documents.forEach((doc) => {
     docsByOrder.set(doc.shopifyOrderId, [...(docsByOrder.get(doc.shopifyOrderId) ?? []), doc]);
   });
-  const paymentByOrder = new Map(payments.map((payment) => [payment.matchedShopifyOrderId, payment]));
+  const paymentByOrder = new Map<string, (typeof payments)[number]>();
+  payments.forEach((payment) => {
+    if (
+      payment.matchedShopifyOrderId &&
+      !paymentByOrder.has(payment.matchedShopifyOrderId)
+    ) {
+      paymentByOrder.set(payment.matchedShopifyOrderId, payment);
+    }
+  });
 
   return (
     <div className="space-y-6">
@@ -46,7 +59,7 @@ export default async function B2BOrdersPage() {
         </CardHeader>
         <CardContent>
           {orders.length > 0 ? (
-            <Table className="min-w-[980px]">
+            <Table className="min-w-[1180px]">
               <TableHeader>
                 <TableRow>
                   <TableHead>Order</TableHead>
@@ -57,6 +70,7 @@ export default async function B2BOrdersPage() {
                   <TableHead>Status</TableHead>
                   <TableHead>Invoice</TableHead>
                   <TableHead>Payment</TableHead>
+                  <TableHead>Dilovod</TableHead>
                   <TableHead>Docs</TableHead>
                   <TableHead>Actions</TableHead>
                 </TableRow>
@@ -67,6 +81,13 @@ export default async function B2BOrdersPage() {
                   const invoice = docs.find((doc) => doc.type === "invoice");
                   const delivery = docs.find((doc) => doc.type === "delivery_note");
                   const payment = paymentByOrder.get(order.shopifyOrderId);
+                  const mapping = diloshop?.mappings?.[order.shopifyOrderId];
+                  const dilovodId =
+                    String(
+                      mapping?.sale_order_id ??
+                        mapping?.dilovod_sale_order_id ??
+                        ""
+                    ).trim() || null;
                   return (
                     <TableRow key={order.id}>
                       <TableCell className="font-medium">{order.shopifyOrderName ?? order.shopifyOrderId}</TableCell>
@@ -82,7 +103,25 @@ export default async function B2BOrdersPage() {
                           </a>
                         ) : "—"}
                       </TableCell>
-                      <TableCell><StatusBadge status={payment?.status} /></TableCell>
+                      <TableCell>
+                        <div className="space-y-1 text-xs">
+                          <div className="flex items-center gap-2">
+                            <StatusBadge status={order.paymentStatus || payment?.status} />
+                            <span>{order.paymentPreference ?? "—"}</span>
+                          </div>
+                          <div>
+                            {String(order.paidAmount)} /{" "}
+                            {String(order.expectedAmount ?? order.orderTotalAmount ?? "")}{" "}
+                            {order.orderCurrency ?? "UAH"}
+                          </div>
+                          <div className="font-mono text-muted-foreground">
+                            {payment?.transactionId ?? "reference —"}
+                          </div>
+                        </div>
+                      </TableCell>
+                      <TableCell className="font-mono text-xs">
+                        {dilovodId ?? "—"}
+                      </TableCell>
                       <TableCell>{delivery?.pdfUrl ? <a className="underline" href={delivery.pdfUrl} target="_blank" rel="noreferrer">download</a> : "—"}</TableCell>
                       <TableCell>
                         <form action={`/api/admin/b2b-orders/${order.shopifyOrderId}`} method="post" className="flex flex-wrap gap-2">

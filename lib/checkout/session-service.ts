@@ -34,8 +34,18 @@ import { assertTransition } from "@/lib/checkout/state-machine";
 import { normalizeUaPersonName } from "@/lib/checkout/ua-person-name";
 import { normalizeUaPhone } from "@/lib/checkout/phone";
 import { assertCheckoutReadyForFulfillment } from "@/lib/checkout/fulfillment-validation";
-import type { CheckoutStatus, PaymentProvider, Prisma } from "@prisma/client";
+import { Prisma, type CheckoutStatus, type PaymentProvider } from "@prisma/client";
 import type { CheckoutSessionPatch } from "@/lib/checkout/public-input";
+import {
+  legalEntitySnapshotSchema,
+  legalEntityV2Enabled,
+  legacyAttributesFromSnapshot,
+  snapshotFromLegacyAttributes,
+} from "@/lib/legal-entities/model";
+import {
+  LegalEntityAccessError,
+  resolveOwnedLegalEntitySnapshot,
+} from "@/lib/legal-entities/service";
 
 const VARIANT_QUERY = `
   query GetVariants($ids: [ID!]!) {
@@ -623,6 +633,7 @@ export async function createCheckoutSession(input: CreateCheckoutSessionInput) {
       buyerPhone: normalizeUaPhone(storefrontCustomerPhone) ?? null,
       buyerFirstName: storefrontCustomerFirstName,
       buyerLastName: storefrontCustomerLastName,
+      shopifyCustomerGid: verifiedPartnerGid,
       customAttributes: {
         ...inputAttributes,
         utm: input.utm ?? {},
@@ -742,10 +753,12 @@ export async function getCheckoutSessionByToken(publicToken: string) {
 
 export async function updateCheckoutSession(
   publicToken: string,
-  data: CheckoutSessionPatch
+  data: CheckoutSessionPatch,
+  options?: { storefrontPricingToken?: string | null }
 ) {
   const existing = await prisma.checkoutSession.findUnique({
     where: { publicToken },
+    include: { merchant: { select: { shopDomain: true } } },
   });
   if (!existing) throw new Error("Session not found");
 
@@ -762,6 +775,91 @@ export async function updateCheckoutSession(
       shippingMethodCode: data.shippingMethodCode ?? existing.shippingMethodCode,
       shippingPayload: data.shippingPayload ?? existing.shippingPayload,
     });
+  }
+
+  let mergedAttributes = {
+    ...((existing.customAttributes ?? {}) as Record<string, unknown>),
+    ...(data.customAttributes ?? {}),
+  };
+  let legalEntitySnapshot:
+    | Prisma.InputJsonValue
+    | Prisma.NullableJsonNullValueInput
+    | undefined =
+    existing.legalEntitySnapshot === null
+      ? Prisma.JsonNull
+      : (existing.legalEntitySnapshot as Prisma.InputJsonValue);
+  let legalEntityId =
+    data.legalEntityId === undefined ? existing.legalEntityId : data.legalEntityId;
+  const immutableLegalSnapshot =
+    existing.status !== "DRAFT" && existing.legalEntitySnapshot !== null;
+
+  if (data.legalEntityId) {
+    if (
+      !legalEntityV2Enabled() ||
+      mergedAttributes.buyer_type !== "fop_company"
+    ) {
+      throw new LegalEntityAccessError("Legal entity selection is unavailable", 403);
+    }
+    if (
+      immutableLegalSnapshot &&
+      data.legalEntityId !== existing.legalEntityId
+    ) {
+      throw new LegalEntityAccessError(
+        "Legal entity snapshot is immutable after checkout confirmation",
+        409
+      );
+    }
+    const token = options?.storefrontPricingToken?.trim();
+    const identity = token
+      ? verifyStorefrontPricingToken(token, existing.merchant.shopDomain)
+      : null;
+    if (
+      !identity ||
+      !existing.shopifyCustomerGid ||
+      identity.customerGid !== existing.shopifyCustomerGid
+    ) {
+      throw new LegalEntityAccessError("Legal entity ownership could not be verified", 403);
+    }
+    if (!immutableLegalSnapshot) {
+      const snapshot = await resolveOwnedLegalEntitySnapshot({
+        merchantId: existing.merchantId,
+        shopifyCustomerGid: identity.customerGid,
+        legalEntityId: data.legalEntityId,
+      });
+      legalEntitySnapshot = snapshot as Prisma.InputJsonValue;
+      mergedAttributes = {
+        ...mergedAttributes,
+        ...legacyAttributesFromSnapshot(snapshot),
+      };
+    }
+  } else if (
+    data.status === "READY" &&
+    mergedAttributes.buyer_type === "fop_company" &&
+    (!legalEntityId || data.legalEntityId === null) &&
+    !immutableLegalSnapshot
+  ) {
+    const snapshot = snapshotFromLegacyAttributes(mergedAttributes);
+    legalEntityId = null;
+    legalEntitySnapshot = snapshot as Prisma.InputJsonValue;
+    if (legalEntityV2Enabled()) {
+      mergedAttributes = {
+        ...mergedAttributes,
+        ...legacyAttributesFromSnapshot(snapshot),
+      };
+    }
+  }
+  if (immutableLegalSnapshot) {
+    const storedSnapshot = legalEntitySnapshotSchema.safeParse(
+      existing.legalEntitySnapshot
+    );
+    if (storedSnapshot.success) {
+      mergedAttributes = {
+        ...mergedAttributes,
+        ...legacyAttributesFromSnapshot(storedSnapshot.data),
+      };
+      legalEntityId = existing.legalEntityId;
+      legalEntitySnapshot = existing.legalEntitySnapshot as Prisma.InputJsonValue;
+    }
   }
 
   return prisma.checkoutSession.update({
@@ -782,11 +880,10 @@ export async function updateCheckoutSession(
       paymentProvider: data.paymentProvider as PaymentProvider | undefined,
       status: data.status as CheckoutStatus | undefined,
       customAttributes: data.customAttributes
-        ? ({
-            ...((existing.customAttributes ?? {}) as Record<string, unknown>),
-            ...data.customAttributes,
-          } as Prisma.InputJsonValue)
+        ? (mergedAttributes as Prisma.InputJsonValue)
         : undefined,
+      legalEntityId,
+      legalEntitySnapshot,
       shippingPayload: data.shippingPayload as Prisma.InputJsonValue | undefined,
     },
     include: { lines: true, merchant: true },
@@ -989,6 +1086,14 @@ export function serializePublicSession(
       "docs_email",
       "docs_phone",
       "accounting_comment",
+      "entity_type",
+      "short_name",
+      "vat_number",
+      "actual_address",
+      "contact_name",
+      "contact_email",
+      "contact_phone",
+      "iban",
     ]
       .filter((key) => key in attrs)
       .map((key) => [key, attrs[key]])
@@ -1014,6 +1119,8 @@ export function serializePublicSession(
     shippingPayload: session.shippingPayload,
     paymentProvider: session.paymentProvider,
     customAttributes: editableAttributes,
+    legalEntityId: session.legalEntityId,
+    legalEntityV2Enabled: legalEntityV2Enabled(),
     lines: session.lines.map((line) => {
       const metadata = (line.metadata ?? {}) as Record<string, unknown>;
       return {

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const state = vi.hoisted(() => ({
   link: null as null | Record<string, unknown>,
   mutationCalls: 0,
+  rejectPhoneOnce: false,
 }));
 
 const session = {
@@ -75,6 +76,16 @@ vi.mock("@/lib/shopify/admin", () => ({
       return { data: { orders: { nodes: [] } } };
     }
     state.mutationCalls += 1;
+    if (state.rejectPhoneOnce && state.mutationCalls === 1) {
+      return {
+        data: {
+          orderCreate: {
+            userErrors: [{ field: ["order", "phone"], message: "Phone is invalid" }],
+            order: null,
+          },
+        },
+      };
+    }
     return { data: { orderCreate: { userErrors: [], order: { id: "gid://shopify/Order/1", name: "#1001" } } } };
   }),
 }));
@@ -93,11 +104,14 @@ vi.mock("@/lib/shipping/shopify-np-note-attributes", () => ({
 }));
 
 import { createBankInvoiceShopifyOrderIdempotent } from "@/lib/shopify/order-writer";
+import { mapCheckoutToOrderCreateInput } from "@/lib/shopify/order-mapper";
 
 describe("bank invoice Shopify order creation", () => {
   beforeEach(() => {
     state.link = null;
     state.mutationCalls = 0;
+    state.rejectPhoneOnce = false;
+    vi.mocked(mapCheckoutToOrderCreateInput).mockClear();
   });
 
   it("issues one Shopify orderCreate for concurrent checkout requests", async () => {
@@ -108,5 +122,26 @@ describe("bank invoice Shopify order creation", () => {
 
     expect(state.mutationCalls).toBe(1);
     expect(results.some((result) => result.status === "fulfilled")).toBe(true);
+  });
+
+  it("retries a rejected Shopify phone once without phone fields", async () => {
+    state.rejectPhoneOnce = true;
+
+    await expect(
+      createBankInvoiceShopifyOrderIdempotent(session.publicToken),
+    ).resolves.toMatchObject({
+      shopifyOrderGid: "gid://shopify/Order/1",
+    });
+
+    expect(state.mutationCalls).toBe(2);
+    expect(mapCheckoutToOrderCreateInput).toHaveBeenNthCalledWith(
+      2,
+      session,
+      null,
+      expect.objectContaining({
+        includeCustomer: false,
+        includePhone: false,
+      }),
+    );
   });
 });

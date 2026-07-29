@@ -374,18 +374,18 @@ describe("B2B bank reconciliation matcher", () => {
     }
   );
 
-  it("presents a bank amount above the Shopify transaction as an overpayment", () => {
+  it("keeps an exact bank payment paid when the Shopify transaction snapshot lags", () => {
     expect(
       calculateShopifyPaymentPresentation({
-        paidAmount: 6272.5,
+        paidAmount: 1960,
         businessOverpaymentAmount: 0,
-        shopifyRecordedAmount: 4077.12,
+        shopifyRecordedAmount: 0,
       })
     ).toEqual({
-      status: "PAID_WITH_OVERPAYMENT",
-      shopifyRecordedAmount: 4077.12,
-      bankVsShopifyDifferenceAmount: 2195.38,
-      overpaymentAmount: 2195.38,
+      status: "PAID",
+      shopifyRecordedAmount: 0,
+      bankVsShopifyDifferenceAmount: 1960,
+      overpaymentAmount: 0,
     });
   });
 

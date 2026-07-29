@@ -78,6 +78,16 @@ type SessionForOrder = CheckoutSession & {
 
 const ORDER_CREATION_LEASE_MS = 2 * 60 * 1000;
 
+type ShopifyOrderCreateError = { field?: string | string[]; message?: string };
+
+function hasShopifyPhoneError(errors: ShopifyOrderCreateError[] | undefined) {
+  return Boolean(errors?.some((error) => {
+    const field = Array.isArray(error.field) ? error.field.join(".") : error.field ?? "";
+    return field.toLowerCase().includes("phone") ||
+      /phone.*(?:invalid|taken)|(?:invalid|taken).*phone/i.test(error.message ?? "");
+  }));
+}
+
 async function claimOrderLink(session: SessionForOrder): Promise<OrderLink> {
   try {
     return await prisma.orderLink.create({
@@ -303,7 +313,39 @@ export async function createShopifyOrderIdempotent(checkoutSessionId: string) {
       throw error;
     }
 
-    const errors = response.data?.orderCreate?.userErrors;
+    let errors = response.data?.orderCreate?.userErrors;
+    if (hasShopifyPhoneError(errors)) {
+      // A phone can be unique on another Shopify customer.  Never attach an
+      // external checkout to that profile based solely on a conflicting phone.
+      // Shopify can also reject a phone that it cannot validate, so retry
+      // without Shopify phone fields while retaining contact data locally.
+      const guestOrderInput = mapCheckoutToOrderCreateInput(pricedSession, paidAttempt, {
+        includeShippingLines: true,
+        includeCustomer: false,
+        includePhone: false,
+      });
+      try {
+        response = await shopifyAdminGraphQL<{
+          data: {
+            orderCreate: {
+              userErrors: Array<{ field: string; message: string }>;
+              order: { id: string; name: string };
+            };
+          };
+        }>(shopifySession, ORDER_CREATE_MUTATION, {
+          order: guestOrderInput,
+          options: {
+            inventoryBehaviour: "BYPASS",
+            sendReceipt: false,
+            sendFulfillmentReceipt: false,
+          },
+        });
+        errors = response.data?.orderCreate?.userErrors;
+      } catch (error) {
+        await markOrderLinkCreationFailed(placeholder.id);
+        throw error;
+      }
+    }
     if (errors?.length) {
       await markOrderLinkCreationFailed(placeholder.id);
       throw new Error(JSON.stringify(errors));
@@ -427,7 +469,7 @@ export async function createBankInvoiceShopifyOrderIdempotent(publicToken: strin
     sourceName: "ua_b2b_bank_invoice",
     includeShippingLines: true,
   });
-  let response: { data?: { orderCreate?: { userErrors: Array<{ field: string; message: string }>; order: { id: string; name: string } } } };
+  let response: { data?: { orderCreate?: { userErrors: ShopifyOrderCreateError[]; order: { id: string; name: string } } } };
   try {
     response = await shopifyAdminGraphQL<typeof response>(shopifySession, ORDER_CREATE_MUTATION, {
       order: orderInput,
@@ -438,7 +480,35 @@ export async function createBankInvoiceShopifyOrderIdempotent(publicToken: strin
     throw error;
   }
 
-  const errors = response.data?.orderCreate?.userErrors;
+  let errors = response.data?.orderCreate?.userErrors;
+  if (hasShopifyPhoneError(errors)) {
+    const withoutPhoneInput = mapCheckoutToOrderCreateInput(session, null, {
+      financialStatus: "PENDING",
+      sourceName: "ua_b2b_bank_invoice",
+      includeShippingLines: true,
+      includeCustomer: false,
+      includePhone: false,
+    });
+    try {
+      response = await shopifyAdminGraphQL<typeof response>(
+        shopifySession,
+        ORDER_CREATE_MUTATION,
+        {
+          order: withoutPhoneInput,
+          options: {
+            inventoryBehaviour: "BYPASS",
+            sendReceipt: false,
+            sendFulfillmentReceipt: false,
+          },
+        },
+      );
+      errors = response.data?.orderCreate?.userErrors;
+    } catch (error) {
+      await markOrderLinkCreationFailed(placeholder.id);
+      throw error;
+    }
+  }
+
   if (errors?.length || !response.data?.orderCreate?.order) {
     await markOrderLinkCreationFailed(placeholder.id);
     throw new Error(errors?.map((error) => error.message).join("; ") || "Shopify order creation failed");

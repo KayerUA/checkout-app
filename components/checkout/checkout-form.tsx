@@ -67,6 +67,8 @@ type CheckoutData = {
   shippingPayload?: Record<string, string> | null;
   paymentProvider?: string | null;
   customAttributes?: Record<string, unknown> | null;
+  legalEntityId?: string | null;
+  legalEntityV2Enabled?: boolean;
   lines: CheckoutLine[];
   recommendations?: CheckoutRecommendation[];
   theme?: Record<string, string>;
@@ -84,6 +86,22 @@ type Branch = {
 };
 type BuyerType = "individual" | "fop_company";
 type PaymentPreference = "card" | "bank_invoice";
+type LegalEntity = {
+  id: string;
+  entityType: "FOP" | "LEGAL_PERSON";
+  legalName: string;
+  shortName?: string | null;
+  maskedTaxId: string;
+  taxId: string;
+  vatNumber?: string | null;
+  legalAddress: string;
+  actualAddress?: string | null;
+  contactName?: string | null;
+  contactPhone?: string | null;
+  contactEmail?: string | null;
+  iban?: string | null;
+  isDefault: boolean;
+};
 
 function cleanDigits(value: FormDataEntryValue | null) {
   return String(value ?? "").replace(/\D/g, "");
@@ -178,6 +196,15 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
   );
   const [searchingCities, setSearchingCities] = useState(false);
   const [addingVariantGid, setAddingVariantGid] = useState<string | null>(null);
+  const [customerAuthToken, setCustomerAuthToken] = useState<string | null>(null);
+  const [legalEntities, setLegalEntities] = useState<LegalEntity[]>([]);
+  const [selectedLegalEntityId, setSelectedLegalEntityId] = useState<string | null>(
+    initial.legalEntityId ?? null
+  );
+  const [legalEntitiesLoading, setLegalEntitiesLoading] = useState(false);
+  const [legalEntitySaving, setLegalEntitySaving] = useState(false);
+  const selectedLegalEntity =
+    legalEntities.find((entity) => entity.id === selectedLegalEntityId) ?? null;
 
   const buttonText = data.theme?.buttonText ?? "Оформити замовлення";
   const loadingText =
@@ -199,12 +226,52 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
   const saveSession = useCallback(async (patch: Record<string, unknown>) => {
     const res = await fetch(`/api/public/checkout-sessions/${data.publicToken}`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(customerAuthToken
+          ? { Authorization: `Bearer ${customerAuthToken}` }
+          : {}),
+      },
       body: JSON.stringify(patch),
     });
     if (!res.ok) throw new Error("Не вдалося зберегти дані");
     return res.json();
-  }, [data.publicToken]);
+  }, [customerAuthToken, data.publicToken]);
+
+  const loadLegalEntities = useCallback(async (token: string) => {
+    setLegalEntitiesLoading(true);
+    try {
+      const response = await fetch("/api/public/legal-entities", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) return;
+      const result = await response.json() as { legalEntities?: LegalEntity[] };
+      const entities = result.legalEntities ?? [];
+      setLegalEntities(entities);
+      setSelectedLegalEntityId((current) =>
+        current && entities.some((entity) => entity.id === current)
+          ? current
+          : entities.find((entity) => entity.isDefault)?.id ?? null
+      );
+    } finally {
+      setLegalEntitiesLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!data.legalEntityV2Enabled) return;
+    const fragment = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+    const fromFragment = fragment.get("customer_auth");
+    const storageKey = `checkout-customer-auth:${data.publicToken}`;
+    const token = fromFragment || window.sessionStorage.getItem(storageKey);
+    if (!token) return;
+    window.sessionStorage.setItem(storageKey, token);
+    const frame = window.requestAnimationFrame(() => {
+      setCustomerAuthToken(token);
+      void loadLegalEntities(token);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [data.legalEntityV2Enabled, data.publicToken, loadLegalEntities]);
 
   useEffect(() => {
     if (cityQuery.length < 2) {
@@ -295,6 +362,8 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
         shippingProvider: "nova_poshta",
         shippingMethodCode: "nova_poshta_branch",
         paymentProvider: selectedPaymentProvider,
+        legalEntityId:
+          buyerType === "fop_company" ? selectedLegalEntityId : null,
         customAttributes: {
           buyer_type: buyerType,
           payment_preference: effectivePaymentPreference,
@@ -304,6 +373,14 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
           docs_email: docsEmail,
           docs_phone: normalizeUaPhone(String(form.get("docs_phone") || phone)) ?? phone,
           accounting_comment: form.get("accounting_comment"),
+          entity_type: form.get("entity_type"),
+          short_name: form.get("short_name"),
+          vat_number: form.get("vat_number"),
+          actual_address: form.get("actual_address"),
+          contact_name: form.get("contact_name"),
+          contact_email: form.get("contact_email") || docsEmail,
+          contact_phone:
+            normalizeUaPhone(String(form.get("contact_phone") || phone)) ?? phone,
         },
         status: "READY",
       });
@@ -332,6 +409,94 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
       setError(err instanceof Error ? err.message : "Помилка");
     } finally {
       setLoading(false);
+    }
+  }
+
+  function legalEntityPayload(form: HTMLFormElement) {
+    const values = new FormData(form);
+    return {
+      entityType:
+        String(values.get("entity_type") || "FOP") === "LEGAL_PERSON"
+          ? "LEGAL_PERSON"
+          : "FOP",
+      legalName: String(values.get("fop_name") || ""),
+      shortName: String(values.get("short_name") || ""),
+      taxId: String(values.get("fop_tax_id") || ""),
+      vatNumber: String(values.get("vat_number") || ""),
+      legalAddress: String(values.get("fop_legal_address") || ""),
+      actualAddress: String(values.get("actual_address") || ""),
+      contactName: String(values.get("contact_name") || ""),
+      contactPhone: String(values.get("contact_phone") || values.get("phone") || ""),
+      contactEmail: String(values.get("contact_email") || values.get("email") || ""),
+      isDefault: legalEntities.length === 0,
+    };
+  }
+
+  async function persistLegalEntity(form: HTMLFormElement) {
+    if (!customerAuthToken) return;
+    setLegalEntitySaving(true);
+    setError(null);
+    try {
+      const response = await fetch(
+        selectedLegalEntityId
+          ? `/api/public/legal-entities/${selectedLegalEntityId}`
+          : "/api/public/legal-entities",
+        {
+          method: selectedLegalEntityId ? "PATCH" : "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${customerAuthToken}`,
+          },
+          body: JSON.stringify(legalEntityPayload(form)),
+        }
+      );
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? "Не вдалося зберегти реквізити");
+      await loadLegalEntities(customerAuthToken);
+      setSelectedLegalEntityId(result.legalEntity.id);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Не вдалося зберегти реквізити");
+    } finally {
+      setLegalEntitySaving(false);
+    }
+  }
+
+  async function patchSelectedLegalEntity(patch: Record<string, unknown>) {
+    if (!customerAuthToken || !selectedLegalEntityId) return;
+    setLegalEntitySaving(true);
+    try {
+      const response = await fetch(`/api/public/legal-entities/${selectedLegalEntityId}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${customerAuthToken}`,
+        },
+        body: JSON.stringify(patch),
+      });
+      if (!response.ok) throw new Error("Не вдалося оновити картку");
+      await loadLegalEntities(customerAuthToken);
+    } catch (updateError) {
+      setError(updateError instanceof Error ? updateError.message : "Не вдалося оновити картку");
+    } finally {
+      setLegalEntitySaving(false);
+    }
+  }
+
+  async function removeSelectedLegalEntity() {
+    if (!customerAuthToken || !selectedLegalEntityId) return;
+    setLegalEntitySaving(true);
+    try {
+      const response = await fetch(`/api/public/legal-entities/${selectedLegalEntityId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${customerAuthToken}` },
+      });
+      if (!response.ok) throw new Error("Не вдалося видалити картку");
+      setSelectedLegalEntityId(null);
+      await loadLegalEntities(customerAuthToken);
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Не вдалося видалити картку");
+    } finally {
+      setLegalEntitySaving(false);
     }
   }
 
@@ -569,34 +734,213 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
                 </div>
 
                 {buyerType === "fop_company" && (
-                  <div className="grid gap-4 sm:grid-cols-2">
+                  <div
+                    key={selectedLegalEntity?.id ?? "one-time-legal-entity"}
+                    className="grid gap-4 sm:grid-cols-2"
+                  >
+                    {data.legalEntityV2Enabled && customerAuthToken ? (
+                      <div className="space-y-2 sm:col-span-2">
+                        <Label htmlFor="saved_legal_entity">Збережені реквізити</Label>
+                        {legalEntitiesLoading ? (
+                          <Skeleton className="h-11 w-full rounded-xl" />
+                        ) : (
+                          <div className="space-y-2">
+                            <select
+                              id="saved_legal_entity"
+                              value={selectedLegalEntityId ?? ""}
+                              onChange={(event) =>
+                                setSelectedLegalEntityId(event.target.value || null)
+                              }
+                              className="h-11 w-full rounded-xl border bg-background px-3 text-sm"
+                            >
+                              <option value="">Нові одноразові реквізити</option>
+                              {legalEntities.map((entity) => (
+                                <option key={entity.id} value={entity.id}>
+                                  {entity.legalName} — {entity.maskedTaxId}
+                                  {entity.isDefault ? " · за замовчуванням" : ""}
+                                </option>
+                              ))}
+                            </select>
+                            {selectedLegalEntity ? (
+                              <div className="flex flex-wrap gap-2">
+                                {!selectedLegalEntity.isDefault ? (
+                                  <button
+                                    type="button"
+                                    className="rounded-full border px-3 py-1.5 text-xs font-semibold"
+                                    disabled={legalEntitySaving}
+                                    onClick={() => void patchSelectedLegalEntity({ isDefault: true })}
+                                  >
+                                    Зробити основною
+                                  </button>
+                                ) : null}
+                                <button
+                                  type="button"
+                                  className="rounded-full border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-700"
+                                  disabled={legalEntitySaving}
+                                  onClick={() => void removeSelectedLegalEntity()}
+                                >
+                                  Видалити картку
+                                </button>
+                              </div>
+                            ) : null}
+                          </div>
+                        )}
+                      </div>
+                    ) : null}
+                    <div className="space-y-2">
+                      <Label htmlFor="entity_type">Тип платника</Label>
+                      <select
+                        id="entity_type"
+                        name="entity_type"
+                        defaultValue={
+                          selectedLegalEntity?.entityType ??
+                          initialAttrs.entity_type ??
+                          "FOP"
+                        }
+                        className="h-10 w-full rounded-xl border bg-background px-3 text-sm"
+                      >
+                        <option value="FOP">ФОП</option>
+                        <option value="LEGAL_PERSON">Юридична особа</option>
+                      </select>
+                    </div>
                     <div className="space-y-2 sm:col-span-2">
                       <Label htmlFor="fop_name">Назва компанії або ПІБ ФОП</Label>
-                      <Input id="fop_name" name="fop_name" defaultValue={initialAttrs.fop_name ?? ""} minLength={3} required={buyerType === "fop_company"} />
+                      <Input
+                        id="fop_name"
+                        name="fop_name"
+                        defaultValue={
+                          selectedLegalEntity?.legalName ?? initialAttrs.fop_name ?? ""
+                        }
+                        minLength={3}
+                        required={buyerType === "fop_company"}
+                      />
+                    </div>
+                    <div className="space-y-2 sm:col-span-2">
+                      <Label htmlFor="short_name">Скорочена назва</Label>
+                      <Input
+                        id="short_name"
+                        name="short_name"
+                        defaultValue={
+                          selectedLegalEntity?.shortName ?? initialAttrs.short_name ?? ""
+                        }
+                      />
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="fop_tax_id">ЄДРПОУ або ІПН</Label>
                       <Input
                         id="fop_tax_id"
                         name="fop_tax_id"
-                        defaultValue={initialAttrs.fop_tax_id ?? ""}
+                        defaultValue={
+                          selectedLegalEntity?.taxId ?? initialAttrs.fop_tax_id ?? ""
+                        }
                         inputMode="numeric"
                         pattern="(?:[0-9]{8}|[0-9]{10})"
                         title="ЄДРПОУ має містити 8 цифр, ІПН або РНОКПП — 10 цифр"
                         required={buyerType === "fop_company"}
                       />
                     </div>
-                    <p className="rounded-2xl bg-white/70 px-3 py-2 text-xs leading-5 text-muted-foreground ring-1 ring-black/[0.04] sm:col-span-2">
-                      Рахунок і документи надішлемо на email з контактних даних. Телефон також використаємо з блоку контактів вище.
-                    </p>
+                    <div className="space-y-2">
+                      <Label htmlFor="vat_number">Номер платника ПДВ</Label>
+                      <Input
+                        id="vat_number"
+                        name="vat_number"
+                        defaultValue={
+                          selectedLegalEntity?.vatNumber ?? initialAttrs.vat_number ?? ""
+                        }
+                      />
+                    </div>
                     <div className="space-y-2 sm:col-span-2">
                       <Label htmlFor="fop_legal_address">Юридична адреса</Label>
-                      <Input id="fop_legal_address" name="fop_legal_address" defaultValue={initialAttrs.fop_legal_address ?? ""} minLength={8} required={buyerType === "fop_company"} />
+                      <Input
+                        id="fop_legal_address"
+                        name="fop_legal_address"
+                        defaultValue={
+                          selectedLegalEntity?.legalAddress ??
+                          initialAttrs.fop_legal_address ??
+                          ""
+                        }
+                        minLength={8}
+                        required={buyerType === "fop_company"}
+                      />
+                    </div>
+                    <div className="space-y-2 sm:col-span-2">
+                      <Label htmlFor="actual_address">Фактична адреса</Label>
+                      <Input
+                        id="actual_address"
+                        name="actual_address"
+                        defaultValue={
+                          selectedLegalEntity?.actualAddress ??
+                          initialAttrs.actual_address ??
+                          ""
+                        }
+                      />
+                    </div>
+                    <div className="space-y-2 sm:col-span-2">
+                      <Label htmlFor="contact_name">Контактна особа платника</Label>
+                      <Input
+                        id="contact_name"
+                        name="contact_name"
+                        defaultValue={
+                          selectedLegalEntity?.contactName ??
+                          initialAttrs.contact_name ??
+                          ""
+                        }
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="contact_phone">Телефон платника</Label>
+                      <Input
+                        id="contact_phone"
+                        name="contact_phone"
+                        type="tel"
+                        defaultValue={
+                          selectedLegalEntity?.contactPhone ??
+                          initialAttrs.contact_phone ??
+                          contactPhoneDefault
+                        }
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="contact_email">Email платника</Label>
+                      <Input
+                        id="contact_email"
+                        name="contact_email"
+                        type="email"
+                        defaultValue={
+                          selectedLegalEntity?.contactEmail ??
+                          initialAttrs.contact_email ??
+                          contactEmailDefault
+                        }
+                      />
                     </div>
                     <div className="space-y-2 sm:col-span-2">
                       <Label htmlFor="accounting_comment">Коментар для бухгалтерії</Label>
                       <Textarea id="accounting_comment" name="accounting_comment" defaultValue={initialAttrs.accounting_comment ?? ""} placeholder="Наприклад: потрібен рахунок для оплати сьогодні" />
                     </div>
+                    {data.legalEntityV2Enabled && customerAuthToken ? (
+                      <div className="sm:col-span-2">
+                        <button
+                          type="button"
+                          className="rounded-full border px-4 py-2 text-sm font-semibold disabled:opacity-50"
+                          disabled={legalEntitySaving}
+                          onClick={(event) => {
+                            const form = event.currentTarget.form;
+                            if (form) void persistLegalEntity(form);
+                          }}
+                        >
+                          {legalEntitySaving
+                            ? "Зберігаємо..."
+                            : selectedLegalEntity
+                              ? "Оновити збережену картку"
+                              : "Зберегти реквізити в профілі"}
+                        </button>
+                      </div>
+                    ) : (
+                      <p className="rounded-2xl bg-white/70 px-3 py-2 text-xs leading-5 text-muted-foreground ring-1 ring-black/[0.04] sm:col-span-2">
+                        Ці реквізити буде використано для рахунку та документів
+                        цього замовлення. У профілі вони не зберігатимуться.
+                      </p>
+                    )}
                   </div>
                 )}
               </div>

@@ -144,7 +144,7 @@ async function callbackResponse(update: TelegramUpdate) {
   }
   if (parsed.name === "bank_review") {
     const payments = await prisma.bankPayment.findMany({
-      where: { status: "NEEDS_REVIEW" }, orderBy: { transactionDate: "desc" }, take: 20,
+      where: { status: { in: ["NEW", "NEEDS_REVIEW"] } }, orderBy: { transactionDate: "desc" }, take: 20,
     });
     await editMessage(env.TG_BOT_TOKEN!, chatId, messageId, {
       text: payments.length

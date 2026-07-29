@@ -4,6 +4,7 @@ import { B2B_TAGS } from "@/lib/b2b/constants";
 import { writeAutomationLog } from "@/lib/b2b/log";
 import { getOrCreateInvoiceDocument } from "@/lib/documents/invoice";
 import { getOrCreateDeliveryNoteDocument } from "@/lib/documents/delivery-note";
+import { publicInvoiceUrl } from "@/lib/documents/public-invoice-link";
 import { sendDocumentEmail } from "@/lib/email/resend";
 import {
   renderDeliveryNoteEmailHtml,
@@ -12,6 +13,7 @@ import {
 } from "@/lib/email/document-templates";
 import { sendOrderInvoiceEmail, setOrderMetafields, updateOrderTags } from "@/lib/shopify/b2b-admin";
 import type { FopOrderAttributes, ShopifyOrderPayload } from "@/lib/b2b/types";
+import type { Prisma } from "@prisma/client";
 
 function shopDomainFromOrder(order: ShopifyOrderPayload, fallback?: string | null) {
   return order.myshopify_domain ?? order.shop_domain ?? fallback ?? undefined;
@@ -32,6 +34,8 @@ export async function upsertB2BOrder(order: ShopifyOrderPayload, buyer: FopOrder
       docsEmail: buyer.docs_email ?? order.email ?? order.contact_email,
       docsPhone: buyer.docs_phone ?? order.phone ?? order.billing_address?.phone ?? order.shipping_address?.phone,
       accountingComment: buyer.accounting_comment,
+      legalEntityId: buyer.legal_entity_id,
+      legalEntitySnapshot: buyer.legal_entity_snapshot as Prisma.InputJsonValue | undefined,
       orderTotalAmount: Number(order.total_price ?? 0),
       orderCurrency: order.currency ?? "UAH",
       status,
@@ -104,6 +108,7 @@ export async function handleB2BOrderCreated(order: ShopifyOrderPayload, shopDoma
 
   await upsertB2BOrder(order, buyer, "CREATED");
   const invoice = await getOrCreateInvoiceDocument(order, buyer, orderShop);
+  const invoiceDownloadUrl = publicInvoiceUrl(invoice.document.id);
   await prisma.b2BOrder.update({
     where: { shopifyOrderId: String(order.id) },
     data: { status: "WAITING_BANK_PAYMENT" },
@@ -114,7 +119,7 @@ export async function handleB2BOrderCreated(order: ShopifyOrderPayload, shopDoma
     orderId: String(order.id),
     metafields: {
       invoice_number: invoice.document.number,
-      invoice_pdf_url: invoice.document.pdfUrl,
+      invoice_pdf_url: invoiceDownloadUrl,
       bank_payment_status: "WAITING_BANK_PAYMENT",
       automation_status: "WAITING_BANK_PAYMENT",
     },
@@ -133,7 +138,7 @@ export async function handleB2BOrderCreated(order: ShopifyOrderPayload, shopDoma
       invoiceNumber: invoice.document.number ?? "",
       orderName: order.name,
       paymentPurpose: invoice.paymentPurpose,
-      pdfUrl: invoice.document.pdfUrl,
+      pdfUrl: invoiceDownloadUrl,
       pdf: invoice.pdf,
     });
   }
@@ -163,7 +168,8 @@ async function sendInvoiceEmail(input: {
   const fallbackMessage = [
       "Дякуємо за замовлення.",
       "Ви обрали оплату як ФОП або компанія.",
-      "Будь ласка, дочекайтесь генерації рахунку і оплатіть його з підприємницького або юридичного рахунку.",
+      "Оплата виконується лише за реквізитами з PDF-рахунку.",
+      "Не використовуйте кнопку Shopify «Оплатити зараз» у цьому листі.",
       `Призначення платежу: ${input.paymentPurpose}`,
       input.pdfUrl ? `Завантажити рахунок PDF: ${input.pdfUrl}` : "",
       "Після надходження коштів замовлення буде автоматично передано в обробку.",
