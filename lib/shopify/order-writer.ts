@@ -431,7 +431,20 @@ export async function createShopifyOrderIdempotent(checkoutSessionId: string) {
 }
 
 export async function createBankInvoiceShopifyOrderIdempotent(publicToken: string) {
-  await repriceCheckoutSession(publicToken);
+  const existingCheckout = await prisma.checkoutSession.findUnique({
+    where: { publicToken },
+    select: {
+      orderLink: {
+        select: { shopifyOrderGid: true },
+      },
+    },
+  });
+  // A completed bank-invoice checkout may be retried to recover a missing or
+  // stale PDF. Its prices are immutable at this point, and repricing would
+  // reject the request before the idempotent order/invoice recovery can run.
+  if (!existingCheckout?.orderLink?.shopifyOrderGid) {
+    await repriceCheckoutSession(publicToken);
+  }
   const session = await prisma.checkoutSession.findUniqueOrThrow({
     where: { publicToken },
     include: { lines: true, paymentAttempts: true, merchant: true },

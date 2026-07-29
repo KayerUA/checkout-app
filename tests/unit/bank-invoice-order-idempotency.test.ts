@@ -33,6 +33,11 @@ const session = {
 vi.mock("@/lib/db", () => ({
   prisma: {
     checkoutSession: {
+      findUnique: vi.fn(async () =>
+        state.link?.shopifyOrderGid
+          ? { ...session, status: "COMPLETED", orderLink: state.link }
+          : { ...session, status: "READY", orderLink: null }
+      ),
       findUniqueOrThrow: vi.fn(async () => session),
       update: vi.fn(async () => session),
     },
@@ -105,6 +110,7 @@ vi.mock("@/lib/shipping/shopify-np-note-attributes", () => ({
 
 import { createBankInvoiceShopifyOrderIdempotent } from "@/lib/shopify/order-writer";
 import { mapCheckoutToOrderCreateInput } from "@/lib/shopify/order-mapper";
+import { repriceCheckoutSession } from "@/lib/checkout/session-service";
 
 describe("bank invoice Shopify order creation", () => {
   beforeEach(() => {
@@ -112,6 +118,7 @@ describe("bank invoice Shopify order creation", () => {
     state.mutationCalls = 0;
     state.rejectPhoneOnce = false;
     vi.mocked(mapCheckoutToOrderCreateInput).mockClear();
+    vi.mocked(repriceCheckoutSession).mockClear();
   });
 
   it("issues one Shopify orderCreate for concurrent checkout requests", async () => {
@@ -143,5 +150,27 @@ describe("bank invoice Shopify order creation", () => {
         includePhone: false,
       }),
     );
+  });
+
+  it("does not reprice a completed checkout when recovering its invoice", async () => {
+    state.link = {
+      id: "order-link-1",
+      checkoutSessionId: session.id,
+      shopifyOrderGid: "gid://shopify/Order/1",
+      shopifyOrderName: "#1001",
+      sourceIdentifier: session.sourceIdentifier,
+      orderStatus: "WAITING_BANK_PAYMENT",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    await expect(
+      createBankInvoiceShopifyOrderIdempotent(session.publicToken),
+    ).resolves.toMatchObject({
+      shopifyOrderGid: "gid://shopify/Order/1",
+    });
+
+    expect(repriceCheckoutSession).not.toHaveBeenCalled();
+    expect(state.mutationCalls).toBe(0);
   });
 });
