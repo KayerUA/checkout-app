@@ -38,6 +38,13 @@ export async function ensureB2BInvoiceForCheckoutSession(publicToken: string) {
     contact_email: session.buyerEmail ?? undefined,
     myshopify_domain: session.merchant.shopDomain,
     total_price: String((session.totalAmount / 100).toFixed(2)),
+    ...({
+      // Shopify's webhook payload normally supplies these fields. Keep the
+      // synchronous bank-invoice path equivalent so invoice rows include
+      // cart-level promo discounts before the webhook arrives.
+      total_line_items_price: String((session.subtotal / 100).toFixed(2)),
+      total_discounts: String((session.discountAmount / 100).toFixed(2)),
+    } as Record<string, string>),
     currency: session.currency,
     note_attributes: [
       { name: "buyer_type", value: String(attrs.buyer_type ?? "") },

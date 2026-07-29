@@ -6,10 +6,100 @@ import { uploadPrivateDocument } from "@/lib/supabase/storage";
 import { fetchDilovodInvoiceNamesBySku, resolveLineInvoiceTitle } from "@/lib/shopify/variant-invoice-names";
 import type { B2BDocumentInput, FopOrderAttributes, ShopifyOrderLine, ShopifyOrderPayload } from "@/lib/b2b/types";
 
+type ShopifyOrderDiscountTotals = {
+  total_line_items_price?: string | number | null;
+  total_discounts?: string | number | null;
+  subtotal_price?: string | number | null;
+};
+
+function moneyCents(value: unknown) {
+  const amount = Number(value);
+  return Number.isFinite(amount) ? Math.max(0, Math.round(amount * 100)) : null;
+}
+
+function lineGrossCents(line: ShopifyOrderLine) {
+  const unit = Number(line.price_set?.shop_money?.amount ?? line.price ?? 0);
+  const quantity = Number(line.quantity);
+  if (!Number.isFinite(unit) || !Number.isFinite(quantity) || quantity <= 0) return 0;
+  return Math.max(0, Math.round(unit * quantity * 100));
+}
+
+function allocateProportionally(bases: number[], target: number) {
+  const normalized = bases.map((base) => Math.max(0, Math.round(base)));
+  const subtotal = normalized.reduce((sum, base) => sum + base, 0);
+  const cappedTarget = Math.min(subtotal, Math.max(0, Math.round(target)));
+  if (subtotal <= 0) return normalized.map(() => 0);
+
+  const raw = normalized.map((base) => (base * cappedTarget) / subtotal);
+  const allocated = raw.map(Math.floor);
+  let remainder = cappedTarget - allocated.reduce((sum, amount) => sum + amount, 0);
+  const priority = raw
+    .map((amount, index) => ({ index, fraction: amount - allocated[index] }))
+    .sort((left, right) => right.fraction - left.fraction || left.index - right.index);
+
+  for (const row of priority) {
+    if (remainder <= 0) break;
+    if (allocated[row.index] >= normalized[row.index]) continue;
+    allocated[row.index] += 1;
+    remainder -= 1;
+  }
+  return allocated;
+}
+
+function discountedGoodsTargetCents(order: ShopifyOrderPayload, grossCents: number) {
+  const totals = order as ShopifyOrderPayload & ShopifyOrderDiscountTotals;
+  const lineItemsCents = moneyCents(totals.total_line_items_price);
+  const discountsCents = moneyCents(totals.total_discounts);
+  if (lineItemsCents !== null && discountsCents !== null) {
+    return Math.min(grossCents, Math.max(0, lineItemsCents - discountsCents));
+  }
+
+  const subtotalCents = moneyCents(totals.subtotal_price);
+  if (subtotalCents !== null && subtotalCents <= grossCents) return subtotalCents;
+
+  // The synchronous checkout invoice payload historically only carried
+  // total_price. B2B checkout does not add Nova Poshta delivery to the order,
+  // so a lower order total is a safe legacy signal for a cart-level discount.
+  const orderTotalCents = moneyCents(order.total_price);
+  if (orderTotalCents !== null && orderTotalCents <= grossCents) return orderTotalCents;
+  return grossCents;
+}
+
+export function invoiceDiscountedLines(order: ShopifyOrderPayload): ShopifyOrderLine[] {
+  const lines = order.line_items ?? [];
+  const grossByLine = lines.map(lineGrossCents);
+  const grossCents = grossByLine.reduce((sum, amount) => sum + amount, 0);
+  const netByLine = allocateProportionally(
+    grossByLine,
+    discountedGoodsTargetCents(order, grossCents)
+  );
+
+  return lines.map((line, index) => {
+    const quantity = Number(line.quantity);
+    const unit =
+      Number.isFinite(quantity) && quantity > 0
+        ? netByLine[index] / 100 / quantity
+        : 0;
+    const amount = unit.toFixed(6);
+    return {
+      ...line,
+      price: amount,
+      price_set: {
+        ...line.price_set,
+        shop_money: {
+          ...line.price_set?.shop_money,
+          amount,
+        },
+      },
+    };
+  });
+}
+
 async function invoiceDocumentLines(
-  lines: ShopifyOrderLine[],
+  order: ShopifyOrderPayload,
   shopDomain?: string | null
 ): Promise<ShopifyOrderLine[]> {
+  const lines = invoiceDiscountedLines(order);
   const dilovodNamesBySku = await fetchDilovodInvoiceNamesBySku(
     shopDomain,
     lines.map((line) => line.sku)
@@ -26,11 +116,12 @@ async function invoiceDocumentLines(
 }
 
 export function invoiceGoodsAmount(order: ShopifyOrderPayload) {
-  return (order.line_items ?? []).reduce((sum, line) => {
+  const cents = (order.line_items ?? []).reduce((sum, line) => {
     const unit = Number(line.price_set?.shop_money?.amount ?? line.price ?? 0);
     const quantity = Number(line.quantity);
-    return sum + unit * quantity;
+    return sum + Math.round(unit * quantity * 100);
   }, 0);
+  return cents / 100;
 }
 
 export function generateInvoiceNumber(sequence: number, date = new Date()) {
@@ -54,24 +145,36 @@ export async function getOrCreateInvoiceDocument(
   shopDomain?: string | null
 ) {
   const shopifyOrderId = String(order.id);
+  const discountedLines = invoiceDiscountedLines(order);
+  const expectedAmount = invoiceGoodsAmount({
+    ...order,
+    line_items: discountedLines,
+  });
   const existing = await prisma.b2BDocument.findFirst({
     where: { shopifyOrderId, type: "invoice" },
     orderBy: { createdAt: "asc" },
   });
   if (existing?.number && existing.pdfUrl) {
-    return {
-      document: existing,
-      pdf: null,
-      paymentPurpose: invoicePaymentPurpose(existing.number, existing.createdAt, order.name),
-      created: false,
-    };
+    const metadata = existing.metadata as { input?: B2BDocumentInput } | null;
+    const storedAmount = Number(metadata?.input?.amount);
+    if (
+      Number.isFinite(storedAmount) &&
+      Math.round(storedAmount * 100) === Math.round(expectedAmount * 100)
+    ) {
+      return {
+        document: existing,
+        pdf: null,
+        paymentPurpose: invoicePaymentPurpose(existing.number, existing.createdAt, order.name),
+        created: false,
+      };
+    }
   }
 
   const invoiceNumber = existing?.number ?? (await nextInvoiceSequenceNumber());
   const invoiceDate = existing?.createdAt ?? new Date();
   const paymentPurpose = invoicePaymentPurpose(invoiceNumber, invoiceDate, order.name);
   const documentLines = await invoiceDocumentLines(
-    order.line_items ?? [],
+    order,
     shopDomain ?? order.myshopify_domain ?? order.shop_domain
   );
   const input: B2BDocumentInput = {
@@ -100,7 +203,12 @@ export async function getOrCreateInvoiceDocument(
         number: invoiceNumber,
         status: "CREATED",
         pdfUrl,
-        metadata: { paymentPurpose, html, input },
+        metadata: {
+          paymentPurpose,
+          html,
+          input,
+          correctedAt: new Date().toISOString(),
+        },
       },
     });
     return { document, pdf, paymentPurpose, created: true };
