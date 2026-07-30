@@ -149,6 +149,15 @@ function scalar(value: unknown) {
   return typeof value === "string" || typeof value === "number" ? String(value) : "";
 }
 
+export function dilovodOrderReference(mapping: Record<string, unknown> | null | undefined) {
+  if (!mapping) return "";
+  return (
+    scalar(mapping.dilovod_document_number) ||
+    scalar(mapping.sale_order_id) ||
+    scalar(mapping.dilovod_sale_order_id)
+  ).trim();
+}
+
 function marker(status: string | null | undefined) {
   const normalized = String(status ?? "").toUpperCase();
   if (["PAID", "SUCCESS", "DONE", "COMPLETED", "OK", "CREATED", "POSTED"].includes(normalized)) {
@@ -268,6 +277,8 @@ export async function buildOrderCard(referenceText: string, options?: { admin?: 
     [session?.buyerFirstName, session?.buyerLastName].filter(Boolean).join(" ") ||
     local.b2bOrder?.fopName || "Клиент не указан";
   const mapping = diloshop?.mapping;
+  const dilovodOrder = dilovodOrderReference(mapping);
+  const hasDilovodOrder = Boolean(dilovodOrder);
   const job = latestJob(diloshop);
   const shipment = diloshop?.np_shipment;
   const ttn = scalar(shipment?.ttn) || shopify?.fulfillments?.flatMap((f) => f.trackingInfo ?? [])[0]?.number || "";
@@ -284,7 +295,7 @@ export async function buildOrderCard(referenceText: string, options?: { admin?: 
     `Checkout       ${session ? marker(session.status) : "—"} ${session?.status ?? "не найден"}`,
     `Оплата         ${paidAttempt ? "✅" : marker(shopify?.displayFinancialStatus)} ${paidAttempt ? `${paidAttempt.provider} · ${cents(paidAttempt.amount, session?.currency)}` : `${shopify?.displayFinancialStatus ?? local.b2bOrder?.paymentStatus ?? "нет данных"} · ${money(paidAmount, total?.currencyCode ?? "UAH")}`}`,
     `Shopify        ${shopify ? marker(shopify.displayFinancialStatus) : "—"} ${shopify ? `${shopify.displayFinancialStatus} · ${shopify.displayFulfillmentStatus}` : "не найден"}`,
-    `Dilovod        ${mapping ? "✅" : job?.status === "dead" ? "❌" : "⚠️"} ${mapping ? `${scalar(mapping.dilovod_document_number) || scalar(mapping.dilovod_sale_order_id)}${Number(mapping.dilovod_posted) ? " · POSTED" : ""}` : job ? `${job.status} · попыток ${job.attempts}` : "saleOrder не найден"}`,
+    `Dilovod        ${hasDilovodOrder ? "✅" : job?.status === "dead" ? "❌" : "⚠️"} ${hasDilovodOrder ? `${dilovodOrder}${Number(mapping?.dilovod_posted) ? " · POSTED" : ""}` : job ? `${job.status} · попыток ${job.attempts}` : "saleOrder не найден"}`,
     `Нова Пошта     ${ttn ? "✅" : scalar(shipment?.create_error) ? "❌" : "—"} ${ttn ? `${ttn} · ${npStatus}` : scalar(shipment?.create_error) || npStatus}`,
     `Фискализация   ${fiscal ? marker(fiscal.status) : "—"} ${fiscal?.status ?? "не используется"}`,
     `cashIn          ${diloshop?.cash_in?.length ? "✅" : "—"} ${diloshop?.cash_in?.length ? `${diloshop.cash_in.length} подтвержд. транзакц.` : "не найден"}`,
@@ -311,7 +322,7 @@ export async function buildOrderCard(referenceText: string, options?: { admin?: 
 
   const problems: string[] = [];
   if (paidAttempt && !shopify) problems.push("оплата подтверждена, но Shopify-заказ отсутствует");
-  if (shopify?.fullyPaid && !mapping) problems.push("оплаченный заказ не дошёл в Dilovod");
+  if (shopify?.fullyPaid && !hasDilovodOrder) problems.push("оплаченный заказ не дошёл в Dilovod");
   if (job?.status === "dead") problems.push(`Dilovod job dead: ${job.last_error ?? "без текста ошибки"}`);
   if (scalar(shipment?.create_error)) problems.push(`НП: ${scalar(shipment?.create_error)}`);
   if (local.b2bOrder?.paymentStatus === "PARTIALLY_PAID") problems.push("частичная оплата — fulfillment заблокирован");

@@ -12,7 +12,7 @@ import {
   telegramMainMenu,
   telegramUserIsAdmin,
 } from "@/lib/telegram/bot";
-import { normalizeOrderReference } from "@/lib/telegram/operations";
+import { dilovodOrderReference, normalizeOrderReference } from "@/lib/telegram/operations";
 
 describe("Telegram payments bot", () => {
   it("parses commands and caps reconciliation size", () => {
@@ -143,6 +143,26 @@ describe("Telegram payments bot", () => {
     });
     const menu = telegramMainMenu(true);
     expect(menu.replyMarkup?.inline_keyboard).toHaveLength(6);
+  });
+
+  it("does not treat an empty Dilovod recovery mapping as a created order", () => {
+    expect(
+      dilovodOrderReference({
+        status: "received",
+        dilovod_document_number: "",
+        dilovod_sale_order_id: "",
+        sale_order_id: "",
+      })
+    ).toBe("");
+    expect(dilovodOrderReference({ sale_order_id: "1109100000001238" })).toBe(
+      "1109100000001238"
+    );
+    expect(
+      dilovodOrderReference({
+        dilovod_document_number: "0000236",
+        sale_order_id: "1109100000001238",
+      })
+    ).toBe("0000236");
   });
 
   it("formats a payment-without-order alert without customer secrets", () => {
