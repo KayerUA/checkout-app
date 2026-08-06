@@ -66,6 +66,7 @@ type CheckoutData = {
   buyerLastName?: string | null;
   shippingPayload?: Record<string, string> | null;
   paymentProvider?: string | null;
+  postomatAllowed?: boolean;
   customAttributes?: Record<string, unknown> | null;
   legalEntityId?: string | null;
   legalEntityV2Enabled?: boolean;
@@ -122,6 +123,10 @@ function validateCompanyBillingFields(form: FormData) {
 
   return null;
 }
+
+type CheckoutStateChangedError = Error & {
+  checkoutStatus?: string;
+};
 
 function StepCard({
   step,
@@ -234,7 +239,22 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
       },
       body: JSON.stringify(patch),
     });
-    if (!res.ok) throw new Error("Не вдалося зберегти дані");
+    if (!res.ok) {
+      const payload = (await res.json().catch(() => null)) as {
+        error?: string;
+        issues?: string[];
+        code?: string;
+        status?: string;
+      } | null;
+      const detail =
+        payload?.error ||
+        (payload?.issues?.length ? `Перевірте дані: ${payload.issues.join(", ")}` : null);
+      const error = new Error(detail || "Не вдалося зберегти дані") as CheckoutStateChangedError;
+      if (payload?.code === "CHECKOUT_STATE_CHANGED") {
+        error.checkoutStatus = payload.status;
+      }
+      throw error;
+    }
     return res.json();
   }, [customerAuthToken, data.publicToken]);
 
@@ -294,7 +314,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
     const controller = new AbortController();
     const timer = setTimeout(() => {
       setLoadingBranches(true);
-      const params = new URLSearchParams({ cityRef: selectedCityRef });
+      const params = new URLSearchParams({ cityRef: selectedCityRef, checkoutToken: data.publicToken });
       if (branchQuery.trim()) params.set("q", branchQuery.trim());
       fetch(`/api/public/shipping/nova-poshta/branches?${params}`, { signal: controller.signal })
         .then(async (response) => {
@@ -312,7 +332,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
       clearTimeout(timer);
       controller.abort();
     };
-  }, [branchQuery, selectedCityRef]);
+  }, [branchQuery, data.publicToken, selectedCityRef]);
 
   useEffect(() => {
     if (data.status === "PAYMENT_PENDING") {
@@ -406,6 +426,11 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
         window.location.href = payData.redirectUrl;
       }
     } catch (err) {
+      const checkoutStatus = (err as CheckoutStateChangedError | null)?.checkoutStatus;
+      if (checkoutStatus === "PAID" || checkoutStatus === "COMPLETED") {
+        window.location.href = `/checkout/${data.publicToken}/thank-you`;
+        return;
+      }
       setError(err instanceof Error ? err.message : "Помилка");
     } finally {
       setLoading(false);
@@ -501,6 +526,10 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
   }
 
   async function selectBranch(branch: Branch) {
+    if (branch.type === "locker" && !data.postomatAllowed) {
+      setError("Поштомати доступні для замовлень до 29 000 грн. Оберіть відділення Нової Пошти.");
+      return;
+    }
     if (!/^\d{5}$/.test(branch.postalCode ?? "")) {
       setError(
         "Нова Пошта не повернула поштовий індекс цього відділення. Оновіть пошук або оберіть інше відділення."
@@ -989,12 +1018,21 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
                             setCityListOpen(false);
                             setBranchListOpen(true);
                             setLoadingBranches(true);
+                            setError(null);
                             void saveSession({
                               shippingPayload: {
                                 cityRef: c.ref,
                                 cityName: c.name,
                               },
-                            }).then(setData);
+                            })
+                              .then(setData)
+                              .catch((err) => {
+                                setError(
+                                  err instanceof Error
+                                    ? err.message
+                                    : "Не вдалося зберегти місто доставки."
+                                );
+                              });
                           }}
                         >
                           {c.name}
@@ -1035,7 +1073,7 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
                   className="h-9 w-full rounded-xl border border-border bg-background px-3 text-sm font-medium transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
                   onClick={() => setBranchListOpen(true)}
                 >
-                  Обрати відділення або поштомат
+                  {data.postomatAllowed ? "Обрати відділення або поштомат" : "Обрати відділення"}
                 </button>
               )}
 
@@ -1043,7 +1081,10 @@ export function CheckoutForm({ initial }: { initial: CheckoutData }) {
 
               {branchListOpen && selectedCityRef && !data.shippingPayload?.branchRef && (
                 <div className="space-y-2">
-                  <Label htmlFor="branch">Відділення або поштомат</Label>
+                  <Label htmlFor="branch">{data.postomatAllowed ? "Відділення або поштомат" : "Відділення"}</Label>
+                  {!data.postomatAllowed && (
+                    <p className="text-xs text-muted-foreground">Поштомати недоступні для замовлень понад 29 000 грн.</p>
+                  )}
                   <Input
                     id="branch"
                     value={branchQuery}

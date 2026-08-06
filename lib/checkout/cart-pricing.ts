@@ -14,6 +14,44 @@ export type ResolvedCartLinePricing = {
 
 export type PricingSource = "catalog" | "partner_rules" | "shopify_cart";
 
+/** Tolerance for Admin catalog vs Shopify cart original (kopecks / groszy). */
+export function catalogOriginalToleranceCents(catalogUnitPriceCents: number): number {
+  const catalog = Math.max(0, Math.round(catalogUnitPriceCents));
+  return Math.max(100, Math.round(catalog * 0.05));
+}
+
+/**
+ * True when cart original unit still matches live Admin catalog.
+ * Missing/invalid original ⇒ not fresh (do not trust forceCartSnapshot).
+ */
+export function catalogPriceMatchesOriginal(
+  catalogUnitPriceCents: number,
+  originalUnitPriceCents?: number
+): boolean {
+  const catalog = Math.max(0, Math.round(catalogUnitPriceCents));
+  if (
+    typeof originalUnitPriceCents !== "number" ||
+    !Number.isFinite(originalUnitPriceCents) ||
+    originalUnitPriceCents <= 0
+  ) {
+    return false;
+  }
+  return (
+    Math.abs(Math.round(originalUnitPriceCents) - catalog) <=
+    catalogOriginalToleranceCents(catalog)
+  );
+}
+
+/** All lines: cart original ≈ live Admin catalog (safe to bake Shopify cart units). */
+export function cartOriginalsMatchCatalog(
+  lines: Array<{ catalogUnitPriceCents: number; originalUnitPriceCents?: number }>
+): boolean {
+  if (!lines.length) return false;
+  return lines.every((line) =>
+    catalogPriceMatchesOriginal(line.catalogUnitPriceCents, line.originalUnitPriceCents)
+  );
+}
+
 /** Retail / promo: accept Shopify cart unit price when below catalog. */
 export function applyCartUnitPriceHint(input: {
   catalogUnitPriceCents: number;
@@ -24,10 +62,12 @@ export function applyCartUnitPriceHint(input: {
   const catalog = Math.max(0, Math.round(input.catalogUnitPriceCents));
   const hinted = input.unitPriceCents;
   const originalHint = input.originalUnitPriceCents;
+  // Hints without original are still allowed (legacy carts); forceCartSnapshot
+  // separately requires originals to match catalog.
   const originalMatchesCatalog =
     typeof originalHint !== "number" ||
     originalHint <= 0 ||
-    Math.abs(originalHint - catalog) <= Math.max(100, Math.round(catalog * 0.05));
+    catalogPriceMatchesOriginal(catalog, originalHint);
 
   if (
     typeof hinted === "number" &&

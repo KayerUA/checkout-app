@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { applyCartUnitPriceHint, cartSubtotalMatchesHint } from "@/lib/checkout/cart-pricing";
+import {
+  applyCartUnitPriceHint,
+  cartOriginalsMatchCatalog,
+  cartSubtotalMatchesHint,
+  catalogPriceMatchesOriginal,
+} from "@/lib/checkout/cart-pricing";
 
 describe("applyCartUnitPriceHint", () => {
   it("uses discounted cart unit price for partner -35%", () => {
@@ -45,6 +50,41 @@ describe("applyCartUnitPriceHint", () => {
     });
     expect(result.unitPrice).toBe(700_000);
     expect(result.usedCartHint).toBe(false);
+  });
+
+  it("rejects stale post-reprice hint (UA1259: old×0.85 vs new catalog)", () => {
+    const result = applyCartUnitPriceHint({
+      catalogUnitPriceCents: 114_500,
+      quantity: 1,
+      unitPriceCents: 84_575,
+      originalUnitPriceCents: 99_500,
+    });
+    expect(result.unitPrice).toBe(114_500);
+    expect(result.usedCartHint).toBe(false);
+  });
+});
+
+describe("cartOriginalsMatchCatalog", () => {
+  it("accepts fresh cart originals", () => {
+    expect(
+      cartOriginalsMatchCatalog([
+        { catalogUnitPriceCents: 114_500, originalUnitPriceCents: 114_500 },
+        { catalogUnitPriceCents: 108_500, originalUnitPriceCents: 108_500 },
+      ])
+    ).toBe(true);
+  });
+
+  it("rejects stale originals after catalog reprice", () => {
+    expect(
+      cartOriginalsMatchCatalog([
+        { catalogUnitPriceCents: 114_500, originalUnitPriceCents: 99_500 },
+      ])
+    ).toBe(false);
+    expect(catalogPriceMatchesOriginal(114_500, 99_500)).toBe(false);
+  });
+
+  it("rejects missing originals (unsafe for forceCartSnapshot)", () => {
+    expect(cartOriginalsMatchCatalog([{ catalogUnitPriceCents: 114_500 }])).toBe(false);
   });
 });
 

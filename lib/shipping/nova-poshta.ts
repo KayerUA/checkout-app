@@ -50,6 +50,41 @@ export type BranchSearchResult = {
   codAllowed?: boolean;
 };
 
+type NovaPoshtaWarehouse = {
+  Ref: string;
+  Number: string;
+  ShortAddress: string;
+  CityRef: string;
+  CityDescription: string;
+  PostalCodeUA?: string;
+  TypeOfWarehouseRef?: string;
+  TypeOfWarehouse?: string;
+  CategoryOfWarehouse?: string;
+};
+
+const NP_POSTOMAT_TYPE_OF_WAREHOUSE_REF = "9a68df70-0267-42a8-bb5c-37f427e36ee4";
+
+export function novaPoshtaWarehouseType(warehouse: Pick<
+  NovaPoshtaWarehouse,
+  "TypeOfWarehouseRef" | "TypeOfWarehouse" | "CategoryOfWarehouse" | "ShortAddress"
+>): BranchSearchResult["type"] {
+  const values = [
+    warehouse.TypeOfWarehouseRef,
+    warehouse.TypeOfWarehouse,
+    warehouse.CategoryOfWarehouse,
+    warehouse.ShortAddress,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  if (
+    warehouse.TypeOfWarehouseRef === NP_POSTOMAT_TYPE_OF_WAREHOUSE_REF ||
+    /поштомат|postomat/i.test(values)
+  ) {
+    return "locker";
+  }
+  return "branch";
+}
+
 export async function getConfiguredNovaPoshtaApiKey(merchantId?: string | null) {
   const env = getEnv();
   const where = merchantId
@@ -142,7 +177,9 @@ export async function searchBranches(input: BranchSearchInput, apiKey?: string) 
         postalByRef = {};
       }
     }
-    return local.map((b) => ({
+    return local
+      .filter((b) => input.includePostomats !== false || b.type !== "locker")
+      .map((b) => ({
       ref: b.ref,
       number: b.number,
       shortAddress: b.shortAddress,
@@ -152,37 +189,58 @@ export async function searchBranches(input: BranchSearchInput, apiKey?: string) 
       postalCode: postalByRef[b.ref],
       weightLimitKg: b.weightLimit ?? undefined,
       codAllowed: b.codAllowed,
-    }));
+      }));
   }
 
   const key = apiKey ?? await getConfiguredNovaPoshtaApiKey();
   if (!key) return [];
 
-  const warehouses = await novaPoshtaRequest<
-    Array<{
-      Ref: string;
-      Number: string;
-      ShortAddress: string;
-      CityRef: string;
-      CityDescription: string;
-      PostalCodeUA?: string;
-    }>
-  >(key, "Address", "getWarehouses", {
+  const warehouses = await novaPoshtaRequest<Array<NovaPoshtaWarehouse>>(key, "Address", "getWarehouses", {
     CityRef: input.cityRef,
     FindByString: input.query ?? "",
     Limit: String(limit),
   });
 
-  return warehouses.map((w) => ({
+  return warehouses
+    .filter((w) => input.includePostomats !== false || novaPoshtaWarehouseType(w) !== "locker")
+    .map((w) => ({
     ref: w.Ref,
     number: w.Number,
     shortAddress: w.ShortAddress,
-    type: "branch" as const,
+    type: novaPoshtaWarehouseType(w),
     cityRef: w.CityRef,
     cityName: w.CityDescription,
     postalCode: (w.PostalCodeUA ?? "").trim() || undefined,
     codAllowed: true,
-  }));
+    }));
+}
+
+export async function resolveNovaPoshtaBranchType(input: {
+  merchantId: string;
+  branchRef: string;
+}): Promise<BranchSearchResult["type"] | null> {
+  const branchRef = input.branchRef.trim();
+  if (!branchRef) return null;
+
+  const apiKey = await getConfiguredNovaPoshtaApiKey(input.merchantId);
+  if (apiKey) {
+    try {
+      const warehouses = await novaPoshtaRequest<Array<NovaPoshtaWarehouse>>(
+        apiKey,
+        "Address",
+        "getWarehouses",
+        { Ref: branchRef, Page: "1" }
+      );
+      const exact = warehouses.find((warehouse) => warehouse.Ref === branchRef);
+      if (exact) return novaPoshtaWarehouseType(exact);
+    } catch {
+      // The synchronized dictionary below is an acceptable fallback during an NP API outage.
+    }
+  }
+
+  const local = await prisma.novaPoshtaBranch.findUnique({ where: { ref: branchRef } });
+  if (!local) return null;
+  return local.type === "locker" ? "locker" : "branch";
 }
 
 export async function syncNovaPoshtaDictionary(apiKey?: string) {

@@ -18,6 +18,19 @@ describe("partner pricing rules", () => {
     expect(bestPartnerDiscountPct(rules, ["luxio-base", "luxio"])).toBe(35);
   });
 
+  it("supports B2B Pro all-products rules without collection_handle", () => {
+    const allRules = parsePartnerDiscountRules(
+      '[{"all":true,"pct":19.0,"label":"B2B Pro · all products"}]'
+    );
+    expect(allRules).toEqual([
+      { collection_handle: "*", pct: 19, all: true, label: "B2B Pro · all products" },
+    ]);
+    expect(bestPartnerDiscountPct(allRules, ["luxio", "gel-brushes"])).toBe(19);
+    expect(partnerUnitPriceFromCatalog(114_500, allRules, ["luxio"])).toBe(
+      Math.round(114_500 * 0.81)
+    );
+  });
+
   it("applies luxio promo collection fallback", () => {
     expect(bestPartnerDiscountPct(rules, ["akcja-luxio-kolory-2026-06"])).toBe(35);
   });

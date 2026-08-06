@@ -89,6 +89,29 @@ describe("Shopify cart discount mapping", () => {
     expect("discountCode" in order).toBe(false);
   });
 
+  it("folds loyalty into line prices and writes only the promo part as the code (UA1268)", () => {
+    const session = sessionWithDiscount("KAYERUA5");
+    session.subtotal = 880_000;
+    session.discountAmount = 117_295; // 32 550 promo + 84 745 loyalty
+    session.totalAmount = 762_705;
+    session.lines[0].quantity = 1;
+    session.lines[0].unitPrice = 880_000;
+    session.customAttributes = {
+      appliedDiscountCode: "KAYERUA5",
+      loyaltyDiscountCents: 84_745,
+    };
+
+    const order = mapCheckoutToOrderCreateInput(session, null);
+    const linesCents = Math.round(order.lineItems[0].priceSet.shopMoney.amount * 100);
+    const codeCents = Math.round(
+      order.discountCode!.itemFixedDiscountCode.amountSet.shopMoney.amount * 100
+    );
+
+    expect(linesCents).toBe(795_255);
+    expect(codeCents).toBe(32_550);
+    expect(linesCents - codeCents).toBe(session.totalAmount);
+  });
+
   it("does not write PARTNER discount code onto Shopify orders", () => {
     const session = sessionWithDiscount("PARTNER-24109539885380");
     session.customAttributes = {

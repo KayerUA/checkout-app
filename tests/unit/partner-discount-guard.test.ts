@@ -1,23 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { CheckoutDiscountError } from "@/lib/checkout/discount-code";
 import { isPartnerProgramDiscountCode } from "@/lib/checkout/partner-pricing";
 
 /**
  * Mirrors createCheckoutSession PARTNER policy without spinning up Prisma.
- * Valid partner context → strip. No context → hard fail (never treat as B2C promo).
+ * Valid partner context → strip. No context → strip (never treat as B2C promo,
+ * never hard-block checkout on a leftover PARTNER code).
  */
 function resolvePartnerDiscountCodeInput(input: {
   partnerContext: { market?: string } | null;
   requestedDiscountCode: string;
 }): string {
   const code = input.requestedDiscountCode;
-  if (input.partnerContext && isPartnerProgramDiscountCode(code)) {
+  if (isPartnerProgramDiscountCode(code)) {
     return "";
-  }
-  if (!input.partnerContext && isPartnerProgramDiscountCode(code)) {
-    throw new CheckoutDiscountError(
-      "Партнерську знижку не підтверджено. Увійдіть у акаунт партнера і спробуйте знову."
-    );
   }
   return code;
 }
@@ -32,13 +27,13 @@ describe("PARTNER discount guard", () => {
     ).toBe("");
   });
 
-  it("rejects unverified PARTNER instead of treating it as a B2C promo", () => {
-    expect(() =>
+  it("strips unverified PARTNER instead of blocking checkout", () => {
+    expect(
       resolvePartnerDiscountCodeInput({
         partnerContext: null,
         requestedDiscountCode: "PARTNER-24109539885380",
       })
-    ).toThrow(CheckoutDiscountError);
+    ).toBe("");
   });
 
   it("leaves ordinary B2C promo codes alone", () => {

@@ -3,6 +3,7 @@ import {
   CheckoutDiscountError,
   assertCheckoutPromoAllowed,
   computeCheckoutDiscountCents,
+  eligibleSubtotalCents,
   normalizeDiscountCode,
   parseShopifyDiscountNode,
   promoDiscountRowTitle,
@@ -15,12 +16,19 @@ describe("normalizeDiscountCode", () => {
   });
 });
 
+const ALL_ITEMS = {
+  appliesToAllItems: true,
+  collectionHandles: [] as string[],
+  productHandles: [] as string[],
+};
+
 describe("computeCheckoutDiscountCents", () => {
   it("calculates percentage discount against subtotal", () => {
     const discount = {
       title: "Підписка −5%",
       active: true,
       percentage: 5,
+      ...ALL_ITEMS,
     };
     expect(
       computeCheckoutDiscountCents({
@@ -36,6 +44,7 @@ describe("computeCheckoutDiscountCents", () => {
       active: true,
       percentage: 10,
       minimumSubtotalCents: 50_000,
+      ...ALL_ITEMS,
     };
     expect(() =>
       computeCheckoutDiscountCents({
@@ -55,16 +64,63 @@ describe("computeCheckoutDiscountCents", () => {
     expect(() =>
       computeCheckoutDiscountCents({
         subtotalCents: 100_000,
-        discount: { title: "Old", active: false, percentage: 5 },
+        discount: { title: "Old", active: false, percentage: 5, ...ALL_ITEMS },
       })
     ).toThrow("Промокод неактивний або прострочений");
+  });
+
+  it("charges a collection-scoped code only on its own lines (UA1268)", () => {
+    const discount = {
+      title: "KAYER UA Newsletter KAYERUA5 — 5% off order",
+      active: true,
+      percentage: 5,
+      appliesToAllItems: false,
+      collectionHandles: ["luxio-colour"],
+      productHandles: [] as string[],
+    };
+    const lines = [
+      {
+        unitPrice: 108_500,
+        quantity: 6,
+        metadata: { productHandle: "luxio-238", collectionHandles: ["luxio-colour"] },
+      },
+      {
+        unitPrice: 114_500,
+        quantity: 2,
+        metadata: { productHandle: "notpolish-12", collectionHandles: ["notpolish"] },
+      },
+    ];
+
+    const eligible = eligibleSubtotalCents(lines, discount);
+    expect(eligible).toBe(651_000);
+    expect(
+      computeCheckoutDiscountCents({
+        subtotalCents: 880_000,
+        discount,
+        eligibleSubtotalCents: eligible,
+      })
+    ).toBe(32_550);
+  });
+
+  it("falls back to the whole cart when lines carry no collection data", () => {
+    const discount = {
+      title: "KAYERUA5",
+      active: true,
+      percentage: 5,
+      appliesToAllItems: false,
+      collectionHandles: ["luxio-colour"],
+      productHandles: [] as string[],
+    };
+    const legacyLines = [{ unitPrice: 108_500, quantity: 2, metadata: null }];
+
+    expect(eligibleSubtotalCents(legacyLines, discount)).toBe(217_000);
   });
 
   it("caps fixed amount discount by subtotal", () => {
     expect(
       computeCheckoutDiscountCents({
         subtotalCents: 3_000,
-        discount: { title: "Fixed", active: true, fixedAmountCents: 5_000 },
+        discount: { title: "Fixed", active: true, fixedAmountCents: 5_000, ...ALL_ITEMS },
       })
     ).toBe(3_000);
   });
@@ -90,7 +146,32 @@ describe("parseShopifyDiscountNode", () => {
       title: "Підписка −5%",
       active: true,
       percentage: 5,
+      // No items block in the payload — unknown scope is treated as the whole cart.
+      appliesToAllItems: true,
+      collectionHandles: [],
+      productHandles: [],
     });
+  });
+
+  it("reads the collection scope of a code", () => {
+    const parsed = parseShopifyDiscountNode({
+      id: "gid://shopify/DiscountCodeNode/2",
+      codeDiscount: {
+        __typename: "DiscountCodeBasic",
+        title: "KAYERUA5",
+        status: "ACTIVE",
+        customerGets: {
+          value: { __typename: "DiscountPercentage", percentage: 0.05 },
+          items: {
+            __typename: "DiscountCollections",
+            collections: { nodes: [{ handle: "luxio-colour" }, { handle: "gel-play" }] },
+          },
+        },
+      },
+    });
+
+    expect(parsed?.appliesToAllItems).toBe(false);
+    expect(parsed?.collectionHandles).toEqual(["luxio-colour", "gel-play"]);
   });
 });
 

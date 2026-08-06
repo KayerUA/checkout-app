@@ -24,6 +24,22 @@ const CODE_DISCOUNT_QUERY = `
                 appliesOnEachItem
               }
             }
+            items {
+              __typename
+              ... on AllDiscountItems {
+                allItems
+              }
+              ... on DiscountCollections {
+                collections(first: 50) {
+                  nodes { handle }
+                }
+              }
+              ... on DiscountProducts {
+                products(first: 100) {
+                  nodes { handle }
+                }
+              }
+            }
           }
           minimumRequirement {
             __typename
@@ -54,6 +70,10 @@ export type ResolvedCheckoutDiscount = {
   fixedAmountCents?: number;
   appliesOnEachItem?: boolean;
   minimumSubtotalCents?: number;
+  /** Scope of the discount — empty handles with allItems=false means "unknown, treat as all". */
+  appliesToAllItems: boolean;
+  collectionHandles: string[];
+  productHandles: string[];
 };
 
 type ShopifyDiscountResponse = {
@@ -70,6 +90,12 @@ type ShopifyDiscountResponse = {
             percentage?: number;
             amount?: { amount: string; currencyCode: string };
             appliesOnEachItem?: boolean;
+          };
+          items?: {
+            __typename?: string;
+            allItems?: boolean;
+            collections?: { nodes?: Array<{ handle?: string }> };
+            products?: { nodes?: Array<{ handle?: string }> };
           };
         };
         minimumRequirement?: {
@@ -98,9 +124,20 @@ export function parseShopifyDiscountNode(
   if (!discount || discount.__typename !== "DiscountCodeBasic") return null;
 
   const value = discount.customerGets?.value;
+  const items = discount.customerGets?.items;
+  const collectionHandles = (items?.collections?.nodes ?? [])
+    .map((node) => String(node?.handle ?? "").trim())
+    .filter(Boolean);
+  const productHandles = (items?.products?.nodes ?? [])
+    .map((node) => String(node?.handle ?? "").trim())
+    .filter(Boolean);
   const resolved: ResolvedCheckoutDiscount = {
     title: String(discount.title ?? "Промокод").trim() || "Промокод",
     active: discount.status === "ACTIVE",
+    appliesToAllItems:
+      items?.allItems === true || (collectionHandles.length === 0 && productHandles.length === 0),
+    collectionHandles,
+    productHandles,
   };
 
   if (value?.__typename === "DiscountPercentage" && typeof value.percentage === "number") {
@@ -121,11 +158,57 @@ export function parseShopifyDiscountNode(
   return resolved;
 }
 
+export type DiscountScopedLine = {
+  unitPrice: number;
+  quantity: number;
+  metadata?: unknown;
+};
+
+function lineHandles(line: DiscountScopedLine): { product: string; collections: string[] } {
+  const metadata = (line.metadata ?? {}) as Record<string, unknown>;
+  const collections = Array.isArray(metadata.collectionHandles)
+    ? metadata.collectionHandles.map((handle) => String(handle))
+    : [];
+  return { product: String(metadata.productHandle ?? ""), collections };
+}
+
+/**
+ * Sum of the lines a code actually covers. KAYERUA5 is limited to five gel collections, so
+ * charging 5% on the whole cart over-discounts every order that also holds other products.
+ */
+export function eligibleSubtotalCents(
+  lines: DiscountScopedLine[],
+  discount: ResolvedCheckoutDiscount
+): number {
+  const wholeCart = () => lines.reduce((sum, line) => sum + line.unitPrice * line.quantity, 0);
+  if (discount.appliesToAllItems) return wholeCart();
+
+  // Sessions created before lines carried collection handles: scope is unknowable, so
+  // charge the whole cart rather than reject a code the buyer legitimately owns.
+  if (!lines.some((line) => lineHandles(line).collections.length > 0)) return wholeCart();
+
+  const collections = new Set(discount.collectionHandles);
+  const products = new Set(discount.productHandles);
+
+  return lines.reduce((sum, line) => {
+    const handles = lineHandles(line);
+    const matches =
+      products.has(handles.product) ||
+      handles.collections.some((handle) => collections.has(handle));
+    return matches ? sum + line.unitPrice * line.quantity : sum;
+  }, 0);
+}
+
 export function computeCheckoutDiscountCents(input: {
   subtotalCents: number;
   discount: ResolvedCheckoutDiscount;
+  /** Subtotal of the lines the discount covers; defaults to the whole subtotal. */
+  eligibleSubtotalCents?: number;
 }): number {
   const { subtotalCents, discount } = input;
+  // Shopify checks the minimum against the order subtotal, but discounts only its own items.
+  const base =
+    typeof input.eligibleSubtotalCents === "number" ? input.eligibleSubtotalCents : subtotalCents;
 
   if (!discount.active) {
     throw new CheckoutDiscountError("Промокод неактивний або прострочений");
@@ -139,14 +222,14 @@ export function computeCheckoutDiscountCents(input: {
   }
 
   if (typeof discount.percentage === "number" && discount.percentage > 0) {
-    return Math.max(0, Math.round((subtotalCents * discount.percentage) / 100));
+    return Math.max(0, Math.round((base * discount.percentage) / 100));
   }
 
   if (typeof discount.fixedAmountCents === "number" && discount.fixedAmountCents > 0) {
     if (discount.appliesOnEachItem) {
       throw new CheckoutDiscountError("Цей тип промокоду поки не підтримується на checkout");
     }
-    return Math.max(0, Math.min(subtotalCents, discount.fixedAmountCents));
+    return Math.max(0, Math.min(base, discount.fixedAmountCents));
   }
 
   return 0;

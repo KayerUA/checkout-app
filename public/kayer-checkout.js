@@ -434,13 +434,18 @@
     endCheckoutLoading(trigger);
     console.error("[KayerCheckout]", err);
     var message = formatCheckoutError(err);
-    var fallback = config.fallbackUrl || "/cart";
-    var blockNativeFallback = isNativeCheckoutFallback(fallback);
-    if (blockNativeFallback) {
-      alert("Не вдалося відкрити checkout KAYER.\n" + message);
-      return;
+    // Never silently bounce to /cart — that looks like "checkout button is broken".
+    // Stay on the current page, restore the button, and show the real error.
+    alert("Не вдалося відкрити checkout KAYER.\n" + message);
+    var fallback = config.fallbackUrl || "";
+    if (
+      fallback &&
+      !isNativeCheckoutFallback(fallback) &&
+      !/\/cart\/?(\?|$)/i.test(fallback) &&
+      window.location.pathname.indexOf("/cart") < 0
+    ) {
+      window.location.href = fallback;
     }
-    window.location.href = fallback;
   }
 
   function cartLinePayload(item) {
@@ -533,7 +538,9 @@
       var code = typeof row === "string" ? row : row && (row.code || row.discount_code);
       if (code && String(code).trim()) {
         var normalized = String(code).trim().toUpperCase();
-        if (/^PARTNER-/i.test(normalized) && isUaRegionalCatalogPartner()) return "";
+        // PARTNER-* must never ride as a checkout promo code. Partner pricing is
+        // resolved only via storefront identity / pricing token.
+        if (/^PARTNER-/i.test(normalized)) continue;
         return normalized;
       }
     }
@@ -555,12 +562,23 @@
     const cart = await cartRes.json();
 
     if (!cart.items || cart.items.length === 0) {
+      window.__kayerRedirectInProgress = false;
+      endCheckoutLoading(trigger);
+      if (window.location.pathname.indexOf("/cart") >= 0) {
+        alert("Кошик порожній. Додайте товари, щоб оформити замовлення.");
+        return;
+      }
       window.location.href = root + "cart";
       return;
     }
 
     const cartLines = cart.items.map(cartLinePayload);
     const pricingAuth = await fetchStorefrontPricingToken();
+    const isPartnerCheckout =
+      (pricingAuth && pricingAuth.isPartner) ||
+      (document.body && document.body.getAttribute("data-kayer-partner-pricing") === "1");
+    // Partners never send B2C promo codes (newsletter KAYERUA5, etc.) — partner % is SoT.
+    const promoCode = isPartnerCheckout ? "" : appliedCartDiscountCode(cart);
     const payload = {
       shopDomain: config.shopDomain,
       cartLines: cartLines,
@@ -577,9 +595,7 @@
         {
           cartDiscountSnapshot: buildCartDiscountSnapshot(cart),
         },
-        appliedCartDiscountCode(cart)
-          ? { appliedDiscountCode: appliedCartDiscountCode(cart) }
-          : {}
+        promoCode ? { appliedDiscountCode: promoCode } : {}
       ),
       sourceUrl: window.location.href,
     };

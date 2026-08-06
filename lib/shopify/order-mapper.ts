@@ -178,9 +178,25 @@ export function mapCheckoutToOrderCreateInput(
   );
   const sessionCartDiscount = Math.max(0, session.discountAmount ?? 0);
   const hasExplicitDiscountCode = effectiveDiscountCode !== "";
+  // Loyalty (ORDER-class automatic) goes into unit prices, exactly as for a cart without
+  // a code. Only the promo part becomes a Shopify discount code — orderCreate takes one.
+  const loyaltyDiscount = Math.min(
+    sessionCartDiscount,
+    Math.max(
+      0,
+      Math.round(
+        typeof sessionAttrs.loyaltyDiscountCents === "number"
+          ? sessionAttrs.loyaltyDiscountCents
+          : 0
+      )
+    )
+  );
+  const promoDiscount = hasExplicitDiscountCode
+    ? Math.max(0, sessionCartDiscount - loyaltyDiscount)
+    : 0;
   const foldedDiscounts = allocateProportionalDiscountCents(
     lineBases,
-    hasExplicitDiscountCode ? 0 : sessionCartDiscount
+    hasExplicitDiscountCode ? loyaltyDiscount : sessionCartDiscount
   );
   const buyerEmail = session.buyerEmail?.trim() || undefined;
   const buyerPhone = normalizePhoneForShopify(session.buyerPhone);
@@ -214,14 +230,14 @@ export function mapCheckoutToOrderCreateInput(
         ? "UA external checkout B2B/ФОП order"
         : "UA external checkout order",
     customAttributes,
-    ...(hasExplicitDiscountCode && sessionCartDiscount > 0
+    ...(hasExplicitDiscountCode && promoDiscount > 0
       ? {
           discountCode: {
             itemFixedDiscountCode: {
               code: effectiveDiscountCode,
               amountSet: {
                 shopMoney: {
-                  amount: sessionCartDiscount / 100,
+                  amount: promoDiscount / 100,
                   currencyCode: session.currency,
                 },
               },

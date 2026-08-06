@@ -5,6 +5,7 @@ import { UnauthorizedError } from "@/lib/session";
 import { PaymentIntegrityError } from "@/lib/payments/integrity";
 import { CheckoutDiscountError } from "@/lib/checkout/discount-code";
 import { CheckoutFulfillmentValidationError } from "@/lib/checkout/fulfillment-validation";
+import { LegalEntityAccessError } from "@/lib/legal-entities/service";
 
 export function apiErrorResponse(
   error: unknown,
@@ -15,11 +16,21 @@ export function apiErrorResponse(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  if (error instanceof LegalEntityAccessError) {
+    return NextResponse.json({ error: error.message }, { status: error.status });
+  }
+
   if (error instanceof ZodError) {
-    return NextResponse.json(
-      { error: options?.validationMessage ?? "Invalid request" },
-      { status: 400 }
-    );
+    const firstIssue = error.issues[0];
+    const field = firstIssue?.path?.length ? firstIssue.path.join(".") : null;
+    const issueMessage = firstIssue?.message;
+    const detail =
+      options?.validationMessage ??
+      (field && issueMessage
+        ? `${field}: ${issueMessage}`
+        : issueMessage) ??
+      "Invalid request";
+    return NextResponse.json({ error: detail }, { status: 400 });
   }
 
   if (error instanceof PaymentIntegrityError) {
@@ -36,6 +47,21 @@ export function apiErrorResponse(
 
   if (error instanceof Error && error.message === "Session not found") {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  const invalidTransition =
+    error instanceof Error
+      ? error.message.match(/^Invalid checkout transition: ([A-Z_]+) -> ([A-Z_]+)$/)
+      : null;
+  if (invalidTransition) {
+    return NextResponse.json(
+      {
+        error: "Сесію оформлення вже змінено. Оновіть сторінку і спробуйте ще раз.",
+        code: "CHECKOUT_STATE_CHANGED",
+        status: invalidTransition[1],
+      },
+      { status: 409 }
+    );
   }
 
   log("error", fallbackMessage, {

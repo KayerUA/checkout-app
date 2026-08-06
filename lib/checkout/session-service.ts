@@ -5,6 +5,7 @@ import { shopifyAdminGraphQL } from "@/lib/shopify/admin";
 import { fetchVariantDilovodInvoiceNames } from "@/lib/shopify/variant-invoice-names";
 import {
   applyCartUnitPriceHint,
+  cartOriginalsMatchCatalog,
   cartSubtotalMatchesHint,
   cartTotalMatchesExpected,
   computeCartLevelDiscountCents,
@@ -25,15 +26,25 @@ import {
   CheckoutDiscountError,
   assertCheckoutPromoAllowed,
   computeCheckoutDiscountCents,
+  eligibleSubtotalCents,
   fetchCheckoutDiscountByCode,
   normalizeDiscountCode,
   promoDiscountRowTitle,
 } from "@/lib/checkout/discount-code";
+import { computeLoyaltyDiscount, fetchOrderLoyaltyLadder } from "@/lib/checkout/loyalty-ladder";
 import { calcTotals } from "@/lib/checkout/pricing";
 import { assertTransition } from "@/lib/checkout/state-machine";
 import { normalizeUaPersonName } from "@/lib/checkout/ua-person-name";
 import { normalizeUaPhone } from "@/lib/checkout/phone";
-import { assertCheckoutReadyForFulfillment } from "@/lib/checkout/fulfillment-validation";
+import {
+  assertCheckoutReadyForFulfillment,
+  CheckoutFulfillmentValidationError,
+} from "@/lib/checkout/fulfillment-validation";
+import {
+  canUseNovaPoshtaPostomat,
+  novaPoshtaPostomatLimitMessage,
+} from "@/lib/shipping/nova-poshta-postomat-policy";
+import { resolveNovaPoshtaBranchType } from "@/lib/shipping/nova-poshta";
 import { Prisma, type CheckoutStatus, type PaymentProvider } from "@prisma/client";
 import type { CheckoutSessionPatch } from "@/lib/checkout/public-input";
 import {
@@ -214,6 +225,7 @@ export async function resolveAndPriceLines(
           dilovodNames.get(variant.id)?.trim() ||
           variant.metafield?.value?.trim() ||
           null,
+        collectionHandles,
         catalogUnitPriceCents: catalogUnitPrice,
         cartUnitPriceCents: line.unitPriceCents ?? null,
         partnerUnitPriceCents: partnerContext ? unitPrice : null,
@@ -394,12 +406,14 @@ export async function ensureSessionLinePricing(publicToken: string) {
     { partnerContext, useRetailCartHints: !partnerContext }
   );
 
-  await prisma.$transaction(async (tx) => {
-    for (let i = 0; i < session.lines.length; i += 1) {
-      const existing = session.lines[i];
-      const repriced = repricedLines[i];
-      if (!repriced) continue;
-      await tx.checkoutLine.update({
+  // Avoid interactive $transaction: large carts (50–80+ lines) plus Supabase
+  // pooler routinely close the tx before sequential updates finish, which
+  // surfaces to the buyer as a generic "Не вдалося зберегти дані" on PATCH.
+  const updates = session.lines.flatMap((existing, i) => {
+    const repriced = repricedLines[i];
+    if (!repriced) return [];
+    return [
+      prisma.checkoutLine.update({
         where: { id: existing.id },
         data: {
           unitPrice: repriced.unitPrice,
@@ -407,9 +421,14 @@ export async function ensureSessionLinePricing(publicToken: string) {
           lineDiscountAmount: 0,
           metadata: repriced.metadata as Prisma.InputJsonValue,
         },
-      });
-    }
+      }),
+    ];
   });
+
+  const chunkSize = 25;
+  for (let start = 0; start < updates.length; start += chunkSize) {
+    await Promise.all(updates.slice(start, start + chunkSize));
+  }
 }
 
 async function recalcCheckoutSessionTotals(publicToken: string, shippingAmount?: number) {
@@ -462,14 +481,28 @@ export async function createCheckoutSession(input: CreateCheckoutSessionInput) {
     useRetailCartHints: !partnerContext,
   });
 
+  const cartCatalogFresh = cartOriginalsMatchCatalog(
+    pricedLines.map((line, index) => ({
+      catalogUnitPriceCents:
+        typeof line.metadata?.catalogUnitPriceCents === "number"
+          ? line.metadata.catalogUnitPriceCents
+          : line.unitPrice,
+      originalUnitPriceCents: input.cartLines[index]?.originalUnitPriceCents,
+    }))
+  );
+
   if (partnerContext && input.cartItemsSubtotalCents != null) {
     const partnerSubtotal = linesSubtotalCents(pricedLines);
     const tolerance = Math.max(100, Math.round(input.cartItemsSubtotalCents * 0.02));
     if (Math.abs(partnerSubtotal - Math.round(input.cartItemsSubtotalCents)) > tolerance) {
-      pricedLines = await resolveAndPriceLines(input.merchantId, input.cartLines, {
-        partnerContext,
-        forceCartSnapshot: true,
-      });
+      // Only trust cart units when originals still match live Admin catalog.
+      // After a reprice, keep Admin × partner rules (do not bake stale cart).
+      if (cartCatalogFresh) {
+        pricedLines = await resolveAndPriceLines(input.merchantId, input.cartLines, {
+          partnerContext,
+          forceCartSnapshot: true,
+        });
+      }
     }
   }
 
@@ -490,8 +523,9 @@ export async function createCheckoutSession(input: CreateCheckoutSessionInput) {
       : "";
   delete inputAttributes.appliedDiscountCode;
 
-  // Partner % is baked into unit prices — never stack PARTNER-* as a checkout promo.
-  if (partnerContext && isPartnerProgramDiscountCode(requestedDiscountCode)) {
+  // Partner % is baked into unit prices — never stack retail promos (KAYERUA5,
+  // newsletter cookie, PARTNER-*, etc.). Strip silently; do not hard-block checkout.
+  if (partnerContext && requestedDiscountCode) {
     requestedDiscountCode = "";
     if (
       typeof input.cartItemsSubtotalCents === "number" &&
@@ -502,22 +536,35 @@ export async function createCheckoutSession(input: CreateCheckoutSessionInput) {
     }
   }
 
+  // PARTNER-* is never a B2C promo. If identity is not verified (App Proxy down,
+  // guest cart with a leftover code), strip it and continue on catalog / cart hints
+  // instead of hard-blocking checkout.
   if (!partnerContext && isPartnerProgramDiscountCode(requestedDiscountCode)) {
-    throw new CheckoutDiscountError(
-      "Партнерську знижку не підтверджено. Увійдіть у акаунт партнера і спробуйте знову."
-    );
+    requestedDiscountCode = "";
   }
 
   let validatedDiscountCode = "";
   let validatedPromoTitle = "";
-  let discountAmount = partnerContext || requestedDiscountCode
+  // Cart-level discount = ORDER-class automatic discount (BRUTTO loyalty ladder) that the
+  // storefront cart already applied. It must survive a promo code, not be replaced by it.
+  let cartAutoDiscount = partnerContext
     ? 0
     : computeCartLevelDiscountCents(linesSubtotal, input.cartTotalCents);
+  let loyaltyDiscount = 0;
+  let loyaltyTitle = "";
+  let discountAmount = cartAutoDiscount;
 
   if (
     !partnerContext &&
-    !cartTotalMatchesExpected(linesSubtotal, discountAmount, input.cartTotalCents)
+    !cartTotalMatchesExpected(linesSubtotal, cartAutoDiscount, input.cartTotalCents)
   ) {
+    // forceCartSnapshot is only safe when cart originals = live Admin catalog
+    // (Shopify automatic discounts baked into final_price). After catalog reprice,
+    // stale cart units (e.g. old×0.85 Loyalty) must not become order unit prices.
+    if (!cartCatalogFresh) {
+      throw new Error("Cart total mismatch — refresh cart and try again");
+    }
+
     const snapshotLines = await resolveAndPriceLines(input.merchantId, input.cartLines, {
       partnerContext: null,
       forceCartSnapshot: true,
@@ -527,31 +574,40 @@ export async function createCheckoutSession(input: CreateCheckoutSessionInput) {
     if (cartTotalMatchesExpected(snapshotSubtotal, snapshotDiscount, input.cartTotalCents)) {
       pricedLines = snapshotLines;
       linesSubtotal = snapshotSubtotal;
+      cartAutoDiscount = snapshotDiscount;
       discountAmount = snapshotDiscount;
-    } else if (
-      typeof input.cartTotalCents === "number" &&
-      input.cartLines.every(
-        (line) => typeof line.unitPriceCents === "number" && line.unitPriceCents > 0
-      )
-    ) {
-      pricedLines = snapshotLines;
-      linesSubtotal = snapshotSubtotal;
-      discountAmount = computeCartLevelDiscountCents(linesSubtotal, input.cartTotalCents);
     } else {
       throw new Error("Cart total mismatch — refresh cart and try again");
     }
   }
 
+  if (cartAutoDiscount > 0) {
+    loyaltyDiscount = cartAutoDiscount;
+  }
+
   if (requestedDiscountCode) {
     assertCheckoutPromoAllowed(partnerContext ? "partner_rules" : "shopify_cart");
     const discount = await fetchCheckoutDiscountByCode(input.merchantId, requestedDiscountCode);
-    discountAmount = computeCheckoutDiscountCents({
+    const promoDiscount = computeCheckoutDiscountCents({
       subtotalCents: linesSubtotal,
       discount,
+      eligibleSubtotalCents: eligibleSubtotalCents(pricedLines, discount),
     });
-    if (discountAmount <= 0) {
+    if (promoDiscount <= 0) {
       throw new CheckoutDiscountError("Промокод не дає знижки для поточного замовлення");
     }
+    // The code is PRODUCT-class and stacks with the loyalty ladder, but Shopify re-picks
+    // the ORDER-class tier on what is left after it — a code can drop 15% down to 10%.
+    const reevaluated =
+      cartAutoDiscount > 0
+        ? computeLoyaltyDiscount(
+            await fetchOrderLoyaltyLadder(input.merchantId),
+            Math.max(0, linesSubtotal - promoDiscount)
+          )
+        : { tier: null, discountCents: 0 };
+    loyaltyDiscount = reevaluated.discountCents;
+    loyaltyTitle = reevaluated.tier?.title ?? "";
+    discountAmount = promoDiscount + loyaltyDiscount;
     validatedDiscountCode = requestedDiscountCode;
     validatedPromoTitle = promoDiscountRowTitle(requestedDiscountCode, discount.title);
   }
@@ -597,6 +653,8 @@ export async function createCheckoutSession(input: CreateCheckoutSessionInput) {
           discountCents: totals.discountAmount,
           promoTitle: validatedPromoTitle,
           pricingMode: "shopify_cart",
+          loyaltyCents: loyaltyDiscount,
+          loyaltyTitle,
         }
       )
     : inputAttributes.cartDiscountSnapshot ?? null;
@@ -646,6 +704,10 @@ export async function createCheckoutSession(input: CreateCheckoutSessionInput) {
         ...(partnerContext?.market ? { partnerMarket: partnerContext.market } : {}),
         pricingMode: partnerContext ? "partner_rules" : "shopify_cart",
         cartDiscountSnapshot,
+        // Split of discountAmount: the loyalty part is folded into Shopify line prices,
+        // the rest is written as the promo code discount on the order.
+        cartAutoDiscountCents: cartAutoDiscount,
+        loyaltyDiscountCents: loyaltyDiscount,
         ...(validatedDiscountCode ? { appliedDiscountCode: validatedDiscountCode } : {}),
       },
       lines: {
@@ -762,6 +824,44 @@ export async function updateCheckoutSession(
   });
   if (!existing) throw new Error("Session not found");
 
+  const effectiveShippingPayload = data.shippingPayload ?? existing.shippingPayload;
+  const effectiveBranchRef =
+    effectiveShippingPayload && typeof effectiveShippingPayload === "object"
+      ? String((effectiveShippingPayload as { branchRef?: unknown }).branchRef ?? "").trim()
+      : "";
+  let verifiedBranchType: "branch" | "locker" | "courier" | null = null;
+  if (effectiveBranchRef && (data.shippingPayload !== undefined || data.status === "READY")) {
+    verifiedBranchType = await resolveNovaPoshtaBranchType({
+      merchantId: existing.merchantId,
+      branchRef: effectiveBranchRef,
+    });
+    if (!verifiedBranchType) {
+      throw new CheckoutFulfillmentValidationError([
+        "не вдалося підтвердити вибрану точку Нової Пошти",
+      ]);
+    }
+    if (
+      verifiedBranchType === "locker" &&
+      !canUseNovaPoshtaPostomat({
+        totalAmountCents: existing.totalAmount,
+        shopifyCustomerGid: existing.shopifyCustomerGid,
+      })
+    ) {
+      throw new CheckoutFulfillmentValidationError([novaPoshtaPostomatLimitMessage()]);
+    }
+  }
+
+  const normalizedShippingPayload =
+    data.shippingPayload && verifiedBranchType
+      ? { ...data.shippingPayload, branchType: verifiedBranchType }
+      : data.shippingPayload;
+  const normalizedShippingMethodCode =
+    verifiedBranchType === "locker"
+      ? "nova_poshta_locker"
+      : verifiedBranchType === "branch"
+        ? "nova_poshta_branch"
+        : data.shippingMethodCode;
+
   if (data.status && data.status !== existing.status) {
     assertTransition(existing.status, data.status);
   }
@@ -772,8 +872,8 @@ export async function updateCheckoutSession(
       buyerFirstName: data.buyerFirstName ?? existing.buyerFirstName,
       buyerLastName: data.buyerLastName ?? existing.buyerLastName,
       shippingProvider: data.shippingProvider ?? existing.shippingProvider,
-      shippingMethodCode: data.shippingMethodCode ?? existing.shippingMethodCode,
-      shippingPayload: data.shippingPayload ?? existing.shippingPayload,
+      shippingMethodCode: normalizedShippingMethodCode ?? existing.shippingMethodCode,
+      shippingPayload: normalizedShippingPayload ?? existing.shippingPayload,
     });
   }
 
@@ -875,7 +975,7 @@ export async function updateCheckoutSession(
         data.buyerLastName !== undefined
           ? normalizeUaPersonName(data.buyerLastName) ?? null
           : undefined,
-      shippingMethodCode: data.shippingMethodCode,
+      shippingMethodCode: normalizedShippingMethodCode,
       shippingProvider: data.shippingProvider,
       paymentProvider: data.paymentProvider as PaymentProvider | undefined,
       status: data.status as CheckoutStatus | undefined,
@@ -884,7 +984,7 @@ export async function updateCheckoutSession(
         : undefined,
       legalEntityId,
       legalEntitySnapshot,
-      shippingPayload: data.shippingPayload as Prisma.InputJsonValue | undefined,
+      shippingPayload: normalizedShippingPayload as Prisma.InputJsonValue | undefined,
     },
     include: { lines: true, merchant: true },
   }).then(async (session) => {
@@ -938,9 +1038,12 @@ function buildPromoCartDiscountSnapshot(
     customAttributes?: unknown;
   } | null,
   input: {
+    /** Total discount: loyalty + promo code. */
     discountCents: number;
     promoTitle: string;
     pricingMode: string;
+    loyaltyCents?: number;
+    loyaltyTitle?: string;
   }
 ) {
   if (!session) throw new Error("Session not found");
@@ -962,12 +1065,17 @@ function buildPromoCartDiscountSnapshot(
 
   const lineDiscountCents = Math.max(0, grossSubtotalCents - session.subtotal);
   const promoPrefix = "Промокод";
+  const loyaltyCents = Math.max(0, Math.round(input.loyaltyCents ?? 0));
+  const promoCents = Math.max(0, input.discountCents - loyaltyCents);
+  const isLoyaltyRow = (title: string) => /loyalty|лояльн/i.test(title);
   const discountRows: Array<{ title: string; amountCents: number }> = [];
 
   for (const row of existingSnapshot?.discountRows ?? []) {
     const title = String(row?.title ?? "").trim();
     const amountCents = Math.max(0, Math.round(row?.amountCents ?? 0));
     if (!title || amountCents <= 0 || title.startsWith(promoPrefix)) continue;
+    // The cart row holds the pre-code tier; we re-add the re-evaluated one below.
+    if (loyaltyCents > 0 && isLoyaltyRow(title)) continue;
     discountRows.push({ title, amountCents });
   }
 
@@ -978,8 +1086,15 @@ function buildPromoCartDiscountSnapshot(
     });
   }
 
-  if (input.discountCents > 0) {
-    discountRows.push({ title: input.promoTitle, amountCents: input.discountCents });
+  if (loyaltyCents > 0) {
+    discountRows.push({
+      title: input.loyaltyTitle?.trim() || "Програма лояльності",
+      amountCents: loyaltyCents,
+    });
+  }
+
+  if (promoCents > 0) {
+    discountRows.push({ title: input.promoTitle, amountCents: promoCents });
   }
 
   const totalDueCents = Math.max(
@@ -1018,16 +1133,38 @@ export async function applyCheckoutDiscountCode(publicToken: string, rawCode: st
 
   const discount = await fetchCheckoutDiscountByCode(session.merchantId, code);
   const subtotalCents = linesSubtotalCents(session.lines);
-  const discountCents = computeCheckoutDiscountCents({ subtotalCents, discount });
-  if (discountCents <= 0) {
+  const promoCents = computeCheckoutDiscountCents({
+    subtotalCents,
+    discount,
+    eligibleSubtotalCents: eligibleSubtotalCents(session.lines, discount),
+  });
+  if (promoCents <= 0) {
     throw new CheckoutDiscountError("Промокод не дає знижки для поточного замовлення");
   }
+
+  // The loyalty ladder the cart granted stays on top of the code, only its tier is
+  // re-picked on the subtotal left after the code (see createSessionFromCart).
+  const cartAutoDiscountCents = Math.max(
+    0,
+    Math.round(typeof attrs.cartAutoDiscountCents === "number" ? attrs.cartAutoDiscountCents : 0)
+  );
+  const reevaluated =
+    cartAutoDiscountCents > 0
+      ? computeLoyaltyDiscount(
+          await fetchOrderLoyaltyLadder(session.merchantId),
+          Math.max(0, subtotalCents - promoCents)
+        )
+      : { tier: null, discountCents: 0 };
+  const loyaltyCents = reevaluated.discountCents;
+  const discountCents = promoCents + loyaltyCents;
 
   const promoTitle = promoDiscountRowTitle(code, discount.title);
   const cartDiscountSnapshot = buildPromoCartDiscountSnapshot(session, {
     discountCents,
     promoTitle,
     pricingMode,
+    loyaltyCents,
+    loyaltyTitle: reevaluated.tier?.title ?? "",
   });
   const totals = calcTotals(session.lines, session.shippingAmount, discountCents);
 
@@ -1042,6 +1179,7 @@ export async function applyCheckoutDiscountCode(publicToken: string, rawCode: st
         ...attrs,
         appliedDiscountCode: code,
         cartDiscountSnapshot,
+        loyaltyDiscountCents: loyaltyCents,
       } as Prisma.InputJsonValue,
     },
     include: {
@@ -1118,6 +1256,10 @@ export function serializePublicSession(
     shippingProvider: session.shippingProvider,
     shippingPayload: session.shippingPayload,
     paymentProvider: session.paymentProvider,
+    postomatAllowed: canUseNovaPoshtaPostomat({
+      totalAmountCents: session.totalAmount,
+      shopifyCustomerGid: session.shopifyCustomerGid,
+    }),
     customAttributes: editableAttributes,
     legalEntityId: session.legalEntityId,
     legalEntityV2Enabled: legalEntityV2Enabled(),

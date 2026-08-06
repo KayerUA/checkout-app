@@ -5,6 +5,8 @@ export type PartnerDiscountRule = {
   collection_handle: string;
   pct: number;
   label?: string;
+  /** When true, rule applies to every product (B2B Pro "all products"). */
+  all?: boolean;
 };
 
 export type PartnerPricingContext = {
@@ -115,10 +117,17 @@ export function parsePartnerDiscountRules(raw: unknown): PartnerDiscountRule[] {
   const rules: PartnerDiscountRule[] = [];
   for (const rule of parsed) {
     if (!rule || typeof rule !== "object") continue;
-    const handle = String((rule as PartnerDiscountRule).collection_handle ?? "").trim();
     const pct = Number((rule as PartnerDiscountRule).pct);
-    if (!handle || !Number.isFinite(pct) || pct <= 0) continue;
-    const entry: PartnerDiscountRule = { collection_handle: handle, pct };
+    if (!Number.isFinite(pct) || pct <= 0) continue;
+    const all = Boolean((rule as { all?: unknown }).all);
+    const handle = String((rule as PartnerDiscountRule).collection_handle ?? "").trim();
+    // B2B Pro stores {"all":true,"pct":19} without a collection handle.
+    if (!all && !handle) continue;
+    const entry: PartnerDiscountRule = {
+      collection_handle: handle || "*",
+      pct,
+      ...(all ? { all: true } : {}),
+    };
     if (typeof (rule as PartnerDiscountRule).label === "string") {
       entry.label = (rule as PartnerDiscountRule).label;
     }
@@ -135,6 +144,10 @@ export function bestPartnerDiscountPct(
   const handles = new Set(collectionHandles);
   let best = 0;
   for (const rule of rules) {
+    if (rule.all || rule.collection_handle === "*") {
+      if (rule.pct > best) best = rule.pct;
+      continue;
+    }
     if (handles.has(rule.collection_handle) && rule.pct > best) {
       best = rule.pct;
     }

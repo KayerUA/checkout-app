@@ -134,6 +134,7 @@ describe("Idempotency transitions", () => {
   it("allows DRAFT to READY", async () => {
     const { canTransition } = await import("@/lib/checkout/state-machine");
     expect(canTransition("DRAFT", "READY")).toBe(true);
+    expect(canTransition("ABANDONED", "READY")).toBe(true);
     expect(canTransition("PAID", "DRAFT")).toBe(false);
   });
 });
